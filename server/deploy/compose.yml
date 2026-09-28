@@ -1,0 +1,55 @@
+# docker compose -f deploy/compose.yml up -d --build
+# Only reachable from this machine (127.0.0.1); a tunnel brings players in. See deploy/README.md.
+services:
+  relay:
+    build: ..
+    image: hyrule-hide-and-seek-relay
+    container_name: hide-and-seek-relay
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8787:8787"
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m
+    user: "10001:10001"  # no account on the Pi has this id
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: 256m
+    pids_limit: 64
+    cpus: 1.0
+    logging:
+      driver: json-file
+      options:
+        max-size: 5m
+        max-file: "2"
+
+  # Tailscale Funnel: gives the relay a public https:// address with no open ports on your router,
+  # and players never see your home IP. Start with: docker compose --profile funnel up -d
+  # First run: `docker logs hide-and-seek-tunnel` prints a login link.
+  tunnel:
+    profiles: [funnel]
+    image: tailscale/tailscale:stable
+    container_name: hide-and-seek-tunnel
+    hostname: hyrule-hide-and-seek
+    restart: unless-stopped
+    depends_on: [relay]
+    environment:
+      TS_HOSTNAME: hyrule-hide-and-seek
+      TS_USERSPACE: "true"
+      TS_STATE_DIR: /var/lib/tailscale
+      TS_SERVE_CONFIG: /config/serve.json
+    volumes:
+      - tailscale-state:/var/lib/tailscale
+      - ./serve.json:/config/serve.json:ro
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+    logging:
+      driver: json-file
+      options:
+        max-size: 5m
+        max-file: "2"
+
+volumes:
+  tailscale-state:

@@ -1,0 +1,151 @@
+#include "settings.hpp"
+
+#include <algorithm>
+#include <cstdio>
+#include <random>
+
+namespace hs::settings {
+
+namespace {
+
+ConfigVarHandle s_name = 0;
+ConfigVarHandle s_color = 0;
+ConfigVarHandle s_server = 0;
+ConfigVarHandle s_room = 0;
+ConfigVarHandle s_tags = 0;
+ConfigVarHandle s_rules = 0;
+
+ConfigVarHandle reg(const char* name, ConfigVarType type, int64_t i = 0, bool b = false,
+    const char* s = nullptr) {
+    ConfigVarDesc desc = CONFIG_VAR_DESC_INIT;
+    desc.name = name;
+    desc.type = type;
+    desc.default_int = i;
+    desc.default_bool = b;
+    desc.default_string = s;
+    ConfigVarHandle h = 0;
+    if (svc_config->register_var(mod_ctx, &desc, &h) != MOD_OK) {
+        mods::log::warn("could not register setting {}", name);
+        return 0;
+    }
+    return h;
+}
+
+std::string get_str(ConfigVarHandle h) {
+    if (h == 0) return {};
+    size_t len = 0;
+    if (svc_config->get_string(mod_ctx, h, nullptr, 0, &len) != MOD_OK) return {};
+    std::string out(len + 1, '\0');
+    if (svc_config->get_string(mod_ctx, h, out.data(), out.size(), nullptr) != MOD_OK) return {};
+    out.resize(len);
+    return out;
+}
+
+int64_t get_int(ConfigVarHandle h, int64_t fallback) {
+    int64_t v = fallback;
+    if (h != 0) svc_config->get_int(mod_ctx, h, &v);
+    return v;
+}
+
+std::mt19937& rng() {
+    static std::mt19937 engine{std::random_device{}()};
+    return engine;
+}
+
+}  // namespace
+
+void init() {
+    s_name = reg("player_name", CONFIG_VAR_STRING);
+    s_color = reg("tunic_color", CONFIG_VAR_INT, -1);
+    s_server = reg("server", CONFIG_VAR_STRING, 0, false, HS_DEFAULT_SERVER);
+    s_room = reg("room_code", CONFIG_VAR_STRING);
+    s_tags = reg("name_tags", CONFIG_VAR_BOOL, 0, true);
+    s_rules = reg("host_rules", CONFIG_VAR_STRING);
+
+    if (s_name != 0 && get_str(s_name).empty()) {
+        const std::string fallback =
+            "Hero" + std::to_string(std::uniform_int_distribution<int>(100, 999)(rng()));
+        svc_config->set_string(mod_ctx, s_name, fallback.c_str());
+    }
+    if (s_color != 0 && get_int(s_color, -1) < 0) {
+        svc_config->set_int(mod_ctx, s_color, std::uniform_int_distribution<int>(1, kMaxPlayers - 1)(rng()));
+    }
+}
+
+std::string name() {
+    std::string n = get_str(s_name);
+    return n.empty() ? "Hero" : n.substr(0, 20);
+}
+
+uint8_t color() {
+    const int64_t c = get_int(s_color, 0);
+    return static_cast<uint8_t>(c >= 0 && c < kMaxPlayers ? c : 0);
+}
+
+void set_color(uint8_t color) {
+    if (s_color != 0) svc_config->set_int(mod_ctx, s_color, color);
+}
+
+std::string server() {
+    std::string s = get_str(s_server);
+    return s.empty() ? HS_DEFAULT_SERVER : s;
+}
+
+std::string room_code() {
+    return get_str(s_room);
+}
+
+void set_room_code(const std::string& code) {
+    if (s_room != 0) svc_config->set_string(mod_ctx, s_room, code.c_str());
+}
+
+bool name_tags() {
+    bool v = true;
+    if (s_tags != 0) svc_config->get_bool(mod_ctx, s_tags, &v);
+    return v;
+}
+
+// Stored as "mode,map,hide,seek,hunters,flags".
+match::Settings host_rules() {
+    match::Settings s;
+    const std::string text = get_str(s_rules);
+    int v[6];
+    if (std::sscanf(text.c_str(), "%d,%d,%d,%d,%d,%d", &v[0], &v[1], &v[2], &v[3], &v[4], &v[5]) == 6) {
+        s.mode = v[0] == 1 ? Mode::HideAndSeek : Mode::PropHunt;
+        s.map = static_cast<uint8_t>(v[1]);
+        s.hideSecs = static_cast<uint16_t>(std::clamp(v[2], 10, 600));
+        s.seekSecs = static_cast<uint16_t>(std::clamp(v[3], 30, 1800));
+        s.hunters = static_cast<uint8_t>(std::clamp(v[4], 0, 8));
+        s.foundJoinHunters = v[5] & 1;
+        s.missPenalty = v[5] & 2;
+        s.autoTaunt = v[5] & 4;
+        s.autoNext = v[5] & 8;
+        s.isPublic = v[5] & 16;
+    }
+    return s;
+}
+
+void save_host_rules(const match::Settings& s) {
+    if (s_rules == 0) return;
+    const int flags = (s.foundJoinHunters ? 1 : 0) | (s.missPenalty ? 2 : 0) | (s.autoTaunt ? 4 : 0) |
+                      (s.autoNext ? 8 : 0) | (s.isPublic ? 16 : 0);
+    char text[64];
+    std::snprintf(text, sizeof(text), "%d,%d,%d,%d,%d,%d", static_cast<int>(s.mode), s.map, s.hideSecs,
+        s.seekSecs, s.hunters, flags);
+    svc_config->set_string(mod_ctx, s_rules, text);
+}
+
+ConfigVarHandle name_var() {
+    return s_name;
+}
+ConfigVarHandle server_var() {
+    return s_server;
+}
+ConfigVarHandle room_code_var() {
+    return s_room;
+}
+ConfigVarHandle name_tags_var() {
+    return s_tags;
+}
+
+}  // namespace hs::settings

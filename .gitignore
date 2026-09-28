@@ -1,0 +1,23 @@
+# Nintendo game data never goes into this repo.
+*.rvz
+*.iso
+*.gcm
+*.ciso
+*.wbfs
+work/
+
+# build output and the fetched Dusklight checkout
+/build*/
+/cmake-build-*/
+/dusklight/
+compile_commands.json
+.cache/
+
+# relay server
+server/node_modules/
+server/.wrangler/
+
+.idea/
+.vscode/
+.DS_Store
+__pycache__/
