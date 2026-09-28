@@ -12,7 +12,9 @@ before(async () => {
     base = process.env.RELAY_URL.replace(/\/$/, "");
     return;
   }
-  server = await startServer({ port: 0, log: () => {}, limits: { maxPerIp: 100, roomsPerIpPerMinute: 100 } });
+  // Keep the production connection cap here so the sixteen-player-room test catches regressions.
+  // Only relax room creation because this file deliberately creates many short-lived rooms.
+  server = await startServer({ port: 0, log: () => {}, limits: { roomsPerIpPerMinute: 100 } });
   base = `ws://127.0.0.1:${server.port}`;
 });
 
@@ -241,11 +243,12 @@ test("rooms hold sixteen players", async () => {
   await h.c.close();
 });
 
-test("public rooms are listed and disappear when they go private", async () => {
+test("public rooms are listed and disappear when they go private", async (t) => {
   const h = await host("Ashei", 7);
+  t.after(() => h.c.close());
   h.c.json({ op: "meta", public: true, label: "Snowpeak fans", mode: 1, map: 4, phase: 0 });
   await new Promise((r) => setTimeout(r, 50));
-  const http = base.replace("ws://", "http://");
+  const http = base.replace(/^ws/, "http");
   let list = await (await fetch(`${http}/rooms?v=7`)).json();
   assert.deepEqual(list.rooms.map((r) => [r.code, r.label, r.players, r.mode, r.map]), [
     [h.welcome.code, "Snowpeak fans", 1, 1, 4],
@@ -257,7 +260,6 @@ test("public rooms are listed and disappear when they go private", async () => {
   await new Promise((r) => setTimeout(r, 50));
   list = await (await fetch(`${http}/rooms?v=7`)).json();
   assert.equal(list.rooms.length, 0);
-  await h.c.close();
 });
 
 test("only the host can kick", async () => {

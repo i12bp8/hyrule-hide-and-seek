@@ -9,7 +9,7 @@ This runs the relay on your own machine and gives it a public `wss://` address t
 
 Both parts run in Docker and are locked down: the relay runs as an unused user id on a read-only
 filesystem with no Linux capabilities, listens only on 127.0.0.1, stores nothing and doesn't log
-addresses. It caps connections (400 total, 12 per address), rooms (300, 10 new per address per
+addresses. It caps connections (400 total, 32 per address), rooms (300, 10 new per address per
 minute), message size and message rate.
 
 ## Set up

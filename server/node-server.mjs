@@ -24,7 +24,7 @@ import {
 
 const DEFAULT_LIMITS = {
   maxConnections: 400, // everyone connected at once
-  maxPerIp: 12, // connections from one address (a LAN party is fine, a flood isn't)
+  maxPerIp: 32, // two full rooms can share one home, school or LAN address
   maxRooms: 300,
   roomsPerIpPerMinute: 10,
   sessionsPerIpPerMinute: 60,
