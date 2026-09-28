@@ -62,6 +62,12 @@ void init() {
     s_tags = reg("name_tags", CONFIG_VAR_BOOL, 0, true);
     s_rules = reg("host_rules", CONFIG_VAR_STRING);
 
+    // v0.1.0/v0.1.1 shipped before the public relay was provisioned. Upgrade only that exact
+    // placeholder, preserving custom and localhost server addresses.
+    if (s_server != 0 && get_str(s_server) == "wss://hyrule-hide-and-seek.example.workers.dev") {
+        svc_config->set_string(mod_ctx, s_server, HS_DEFAULT_SERVER);
+    }
+
     if (s_name != 0 && get_str(s_name).empty()) {
         const std::string fallback =
             "Hero" + std::to_string(std::uniform_int_distribution<int>(100, 999)(rng()));

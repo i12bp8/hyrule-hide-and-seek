@@ -6,7 +6,7 @@ endif ()
 
 # The version shown in the mod manager. Players need the same protocol version (src/protocol.hpp)
 # to play together; the mod version itself may differ.
-project(hyrule_hide_and_seek VERSION 0.1.1 LANGUAGES CXX)
+project(hyrule_hide_and_seek VERSION 0.1.2 LANGUAGES CXX)
 
 # The Dusklight version to build against: a release tag or a commit SHA.
 if (NOT DUSKLIGHT_VERSION)
@@ -19,7 +19,7 @@ add_subdirectory("${DUSKLIGHT_DIR}/sdk" dusklight-sdk EXCLUDE_FROM_ALL)
 
 # The relay every player connects to. Change it after deploying server/ (see server/README.md),
 # or override per player with the "server" setting in the mod's Settings tab.
-set(HS_DEFAULT_SERVER "wss://hyrule-hide-and-seek.example.workers.dev" CACHE STRING "Default relay URL")
+set(HS_DEFAULT_SERVER "wss://hyrule-hide-and-seek.tail5c3d0e.ts.net" CACHE STRING "Default relay URL")
 
 configure_file(mod.json.in "${CMAKE_CURRENT_BINARY_DIR}/mod.json" @ONLY NEWLINE_STYLE LF)
 

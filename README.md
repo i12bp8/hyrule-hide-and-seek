@@ -85,10 +85,10 @@ cmake --build build          # build/mods/hyrule_hide_and_seek.dusk (this platfo
 A local build only works on your own platform. Push to GitHub and the workflow in
 `.github/workflows/build.yml` builds all eight platforms and merges them into one `.dusk`.
 
-### Before the first release
+### Relay hosting
 
-Put the relay online and its `wss://` address in `HS_DEFAULT_SERVER` in `CMakeLists.txt`. Until
-then the mod points at a placeholder. Two free ways:
+The default relay runs on a Raspberry Pi at
+`wss://hyrule-hide-and-seek.tail5c3d0e.ts.net` through Tailscale Funnel. To run another relay:
 
 - On Cloudflare (nothing runs at home): [server/README.md](server/README.md).
 - On your own machine, e.g. a Raspberry Pi, through Tailscale Funnel (no open ports, home IP hidden):
