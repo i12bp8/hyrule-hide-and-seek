@@ -25,7 +25,8 @@ Install one `.dusk`, press **Host**, share the room code, play. No port forwardi
 Peer-to-peer (Crests of Courage) is free to run but fails on networks with strict NAT, and then the
 player has to install Tailscale. That breaks goal 1. This mod sends everything through a small relay:
 
-- Every player makes one outgoing `wss://` connection (Dusklight's WebSocketService). This works
+- Every player makes one outgoing `wss://` connection (Dusklight's WebSocketService). If that
+  service is unavailable, the client uses HTTPS long polling with the same messages. Both work
   everywhere HTTPS works.
 - The relay is dumb: it only knows rooms and forwards bytes. The **host's game** runs the rules.
 - It runs on Cloudflare Workers + Durable Objects (free tier, no credit card), or on any machine with
@@ -33,7 +34,8 @@ player has to install Tailscale. That breaks goal 1. This mod sends everything t
 - Cost estimate: an 8-player round sends about 80 small messages per second into the room, which
   Cloudflare bills at 1/20th of a request each: ~15k requests per game-hour. The free plan's 100k
   requests a day covers about 7 game-hours a day; past that the paid plan costs roughly $0.80 per
-  100 game-hours (see server/README.md).
+  100 game-hours (see server/README.md). The HTTP fallback uses more requests and reaches the free
+  limit sooner.
 
 "Join by address" (LAN / Tailscale, no server at all) can be added later on NetService with the same
 protocol; it isn't needed for v1.

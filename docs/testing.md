@@ -25,8 +25,10 @@ on this computer**.
 
 ## 1. Loads and connects
 
-- [ ] Log shows `Hyrule Hide & Seek 0.1.0 ready`. No "hook ... did not resolve" warnings for
+- [ ] Log shows `Hyrule Hide & Seek 0.1.1 ready`. No "hook ... did not resolve" warnings for
       `daAlink_c::execute`, `daAlink_c::draw`, `daAlink_c::setCutType`.
+- [ ] On the official Linux 2.0.2 build, log shows `using the HTTP relay fallback`; the mod is
+      active rather than failing on a missing WebSocket service.
 - [ ] Hide & Seek tab opens the window with Play / Rules / How to play / Settings.
 - [ ] **Host a game** → toast with a code, code is on the clipboard, HUD shows `Room ABCDE` at the top.
 

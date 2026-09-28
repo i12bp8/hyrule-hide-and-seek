@@ -5,6 +5,11 @@
 //   client -> relay  binary  [u8 to][payload]    to: 0 = everyone else, 255 = host, 1-16 = player
 //   relay  -> client binary  [u8 from][payload]
 //
+// Linux Dusklight 2.0.2 accidentally shipped without its WebSocket backend. The HTTP fallback uses
+// the exact same messages, packed as [u8 kind][u16 little-endian length][bytes]. kind 0 is JSON
+// text and kind 1 is a binary relay frame. A long poll carries server-to-client batches; POSTs
+// carry client-to-server batches.
+//
 // Control messages are JSON text frames:
 //
 //   relay -> client  {op:"welcome", code, you, host, players:[{id,name}], relay}
@@ -31,6 +36,7 @@ const NAME_MAX = 20;
 const LABEL_MAX = 32;
 const RATE_PER_SECOND = 60;
 const RATE_BURST = 120;
+const HTTP_QUEUE_BYTES = 128 * 1024;
 
 export const CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ";
 export const CODE_LENGTH = 5;
@@ -54,6 +60,113 @@ export function cleanName(text) {
     .trim()
     .slice(0, NAME_MAX);
   return name || "Player";
+}
+
+const encoder = new TextEncoder();
+const decoder = new TextDecoder();
+
+export function encodeHttpBatch(messages) {
+  const encoded = messages.map((data) => ({
+    kind: typeof data === "string" ? 0 : 1,
+    bytes: typeof data === "string" ? encoder.encode(data) : new Uint8Array(data),
+  }));
+  const size = encoded.reduce((n, item) => n + 3 + item.bytes.length, 0);
+  const out = new Uint8Array(size);
+  let at = 0;
+  for (const item of encoded) {
+    if (item.bytes.length > 0xffff) throw new Error("HTTP relay message is too large");
+    out[at++] = item.kind;
+    out[at++] = item.bytes.length & 0xff;
+    out[at++] = item.bytes.length >> 8;
+    out.set(item.bytes, at);
+    at += item.bytes.length;
+  }
+  return out;
+}
+
+export function decodeHttpBatch(data) {
+  const bytes = data instanceof Uint8Array ? data : new Uint8Array(data);
+  const out = [];
+  let at = 0;
+  while (at < bytes.length) {
+    if (at + 3 > bytes.length) throw new Error("truncated HTTP relay header");
+    const kind = bytes[at++];
+    const size = bytes[at++] | (bytes[at++] << 8);
+    if ((kind !== 0 && kind !== 1) || size > MAX_MESSAGE_BYTES || at + size > bytes.length) {
+      throw new Error("invalid HTTP relay message");
+    }
+    const payload = bytes.slice(at, at + size);
+    at += size;
+    out.push(kind === 0 ? decoder.decode(payload) : payload);
+  }
+  return out;
+}
+
+// A RoomCore peer backed by HTTP long polling instead of a WebSocket. The owner removes it from
+// the room in onClose, but keeps the token alive until the queued error has been polled.
+export class HttpPeer {
+  constructor(onClose, now = () => Date.now()) {
+    this.info = {};
+    this.closed = false;
+    this.detached = false;
+    this.lastSeen = now();
+    this.queue = [];
+    this.queueBytes = 0;
+    this.waiter = null;
+    this.timer = null;
+    this.onClose = onClose;
+    this.now = now;
+  }
+
+  touch() {
+    this.lastSeen = this.now();
+  }
+
+  send(data) {
+    if (this.closed) return;
+    const size = typeof data === "string" ? encoder.encode(data).length : data.byteLength;
+    if (size > MAX_MESSAGE_BYTES || this.queueBytes + size + 3 > HTTP_QUEUE_BYTES) {
+      this.close(4000, "queue_full");
+      return;
+    }
+    this.queue.push(data);
+    this.queueBytes += size + 3;
+    this.wake();
+  }
+
+  close() {
+    if (this.closed) return;
+    this.closed = true;
+    if (this.onClose) this.onClose();
+    this.wake();
+  }
+
+  wake() {
+    if (!this.waiter) return;
+    const resolve = this.waiter;
+    this.waiter = null;
+    clearTimeout(this.timer);
+    this.timer = null;
+    resolve(this.drain());
+  }
+
+  drain() {
+    const out = encodeHttpBatch(this.queue);
+    this.queue = [];
+    this.queueBytes = 0;
+    return out;
+  }
+
+  poll(waitMs = 8000) {
+    this.touch();
+    if (this.queue.length || this.closed) return Promise.resolve(this.drain());
+    // A second poll supersedes a stale one from the same client.
+    if (this.waiter) this.wake();
+    return new Promise((resolve) => {
+      this.waiter = resolve;
+      this.timer = setTimeout(() => this.wake(), waitMs);
+    });
+  }
 }
 
 function cleanLabel(text) {

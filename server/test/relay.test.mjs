@@ -1,6 +1,7 @@
 import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
 import { startServer } from "../node-server.mjs";
+import { decodeHttpBatch, encodeHttpBatch } from "../src/room.js";
 
 let server;
 let base;
@@ -81,6 +82,36 @@ async function join(code, name, v = 1) {
   return { c, welcome };
 }
 
+function httpUrl(path) {
+  return `${base.replace(/^ws/, "http")}${path}`;
+}
+
+async function httpOpen(path) {
+  const response = await fetch(httpUrl(`/session${path}`), { method: "POST" });
+  assert.equal(response.status, 200);
+  return (await response.json()).session;
+}
+
+async function httpPoll(session) {
+  const response = await fetch(httpUrl(`/session/${session}/poll`));
+  assert.equal(response.status, 200);
+  return decodeHttpBatch(await response.arrayBuffer());
+}
+
+async function httpSend(session, messages) {
+  const response = await fetch(httpUrl(`/session/${session}/send`), {
+    method: "POST",
+    headers: { "content-type": "application/octet-stream" },
+    body: encodeHttpBatch(messages),
+  });
+  assert.equal(response.status, 204);
+}
+
+async function httpLeave(session) {
+  const response = await fetch(httpUrl(`/session/${session}/leave`), { method: "POST" });
+  assert.equal(response.status, 204);
+}
+
 test("host gets a five letter code and id 1", async () => {
   const { c, welcome } = await host();
   assert.match(welcome.code, /^[A-Z]{5}$/);
@@ -105,6 +136,51 @@ test("joining is announced and bytes are forwarded with the sender id", async ()
 
   await j.c.close();
   await h.c.close();
+});
+
+test("HTTP fallback hosts, joins, forwards messages and leaves", async () => {
+  const hostSession = await httpOpen("/host?name=Midna&v=9");
+  const hostWelcome = JSON.parse((await httpPoll(hostSession))[0]);
+  assert.equal(hostWelcome.op, "welcome");
+  assert.equal(hostWelcome.you, 1);
+
+  const joinSession = await httpOpen(`/join/${hostWelcome.code}?name=Ilia&v=9`);
+  const joinWelcome = JSON.parse((await httpPoll(joinSession))[0]);
+  assert.equal(joinWelcome.you, 2);
+  assert.deepEqual(JSON.parse((await httpPoll(hostSession))[0]), { op: "join", id: 2, name: "Ilia" });
+
+  await httpSend(joinSession, [new Uint8Array([0, 7, 8, 9])]);
+  assert.deepEqual([...(await httpPoll(hostSession))[0]], [2, 7, 8, 9]);
+
+  await httpSend(hostSession, [
+    JSON.stringify({ op: "meta", public: true, label: "HTTP room", mode: 0, map: 3, phase: 2 }),
+  ]);
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  const listed = await (await fetch(httpUrl("/rooms?v=9"))).json();
+  assert.deepEqual(listed.rooms.map((room) => [room.code, room.label, room.players]), [
+    [hostWelcome.code, "HTTP room", 2],
+  ]);
+
+  await httpLeave(joinSession);
+  assert.deepEqual(JSON.parse((await httpPoll(hostSession))[0]), { op: "leave", id: 2 });
+  await httpLeave(hostSession);
+});
+
+test("HTTP fallback and WebSocket players can share a room", async () => {
+  const hostPlayer = await host("Zelda", 4);
+  const session = await httpOpen(`/join/${hostPlayer.welcome.code}?name=Link&v=4`);
+  const welcome = JSON.parse((await httpPoll(session))[0]);
+  assert.equal(welcome.you, 2);
+  assert.deepEqual(await hostPlayer.c.op("join"), { op: "join", id: 2, name: "Link" });
+
+  hostPlayer.c.send(0, 11, 12);
+  assert.deepEqual([...(await httpPoll(session))[0]], [1, 11, 12]);
+  await httpSend(session, [new Uint8Array([0, 21, 22])]);
+  assert.deepEqual([...(await hostPlayer.c.binary())], [2, 21, 22]);
+
+  await httpLeave(session);
+  assert.deepEqual(await hostPlayer.c.op("leave"), { op: "leave", id: 2 });
+  await hostPlayer.c.close();
 });
 
 test("to-host messages reach only the host", async () => {

@@ -17,6 +17,10 @@ hunters get a sword and a timer.
 Nothing to set up: no port forwarding, no IP addresses. It works on home wifi, mobile data and
 school networks.
 
+On the official Linux build of Dusklight 2.0.2, the mod automatically uses its HTTP fallback for
+the upstream [missing WebSocket backend](https://github.com/TwilitRealm/dusklight/issues/2629).
+Windows, macOS and fixed Linux builds use WebSockets.
+
 ### A round
 
 | Phase | Props | Hunters |

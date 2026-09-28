@@ -1,8 +1,10 @@
 # Relay server
 
-Every player connects here with one outgoing `wss://` connection. The relay only keeps rooms and
-forwards bytes between the players in a room; the host's game runs the rules. Because nobody
-connects to anybody directly, it works on every network with no port forwarding.
+Every player connects here with one outgoing `wss://` connection. If Dusklight has no WebSocket
+backend (the official Linux 2.0.2 build), the mod automatically uses HTTPS long polling instead.
+The relay only keeps rooms and forwards bytes between the players in a room; the host's game runs
+the rules. Because nobody connects to anybody directly, it works on every network with no port
+forwarding.
 
 The same room logic (`src/room.js`) runs on Cloudflare (`src/index.js`) and on plain Node
 (`node-server.mjs`).
@@ -36,6 +38,9 @@ Cloudflare bills a Durable Object's incoming WebSocket messages at 1/20th of a r
 
 A room only costs anything while players are in it.
 
+The Linux HTTP fallback makes more requests than WebSockets, so a busy public relay can reach the
+Cloudflare free limit sooner. A self-hosted Node relay has no request quota.
+
 ## Run it anywhere else
 
 ```sh
@@ -67,7 +72,7 @@ they hide (hit them!), and chase and tag you when they hunt.
 
 ## Protocol
 
-See the top of [src/room.js](src/room.js) for the relay framing and control messages, and
-[../src/protocol.hpp](../src/protocol.hpp) for the game messages. Bump `kProtocolVersion` in
-`protocol.hpp` (and `PROTOCOL` in `bots.mjs`) on any change; the relay keeps different versions
-apart.
+See the top of [src/room.js](src/room.js) for the WebSocket and HTTP fallback framing and control
+messages, and [../src/protocol.hpp](../src/protocol.hpp) for the game messages. Bump
+`kProtocolVersion` in `protocol.hpp` (and `PROTOCOL` in `bots.mjs`) on any change; the relay keeps
+different versions apart.

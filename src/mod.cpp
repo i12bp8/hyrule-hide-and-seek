@@ -28,7 +28,9 @@
 DEFINE_MOD();
 IMPORT_SERVICE(LogService, svc_log);
 IMPORT_SERVICE(HookService, svc_hook);
-IMPORT_SERVICE(WebSocketService, svc_websocket);
+// Dusklight 2.0.2's official Linux build has no WebSocket backend. net.cpp falls back to the
+// HttpService there, so the WebSocket import must not prevent the mod from loading.
+IMPORT_OPTIONAL_SERVICE(WebSocketService, svc_websocket);
 IMPORT_SERVICE(HttpService, svc_http);
 IMPORT_SERVICE(ConfigService, svc_config);
 IMPORT_SERVICE(UiService, svc_ui);
