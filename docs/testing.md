@@ -77,7 +77,7 @@ Start round. With 4 players (you + 3 bots) there is one hunter; restart until yo
 - [ ] The cucco prop animates when you walk.
 - [ ] Cycling props stays within a varied, map-appropriate pool; test at least one village, water,
       forest, mountain and desert map.
-- [ ] Cycle all 54 selectable catalogue entries across those maps. Every choice draws a model; a bad
+- [ ] Cycle all 50 selectable catalogue entries across those maps. Every choice draws a model; a bad
       optional asset logs a warning and shows the fallback pot instead of making the hider invisible.
 - [ ] Laundry is roughly player-height and rests on the floor instead of appearing tiny/underground.
       Crystal appears near the player at a readable size instead of at its authored world origin.
@@ -99,8 +99,13 @@ Restart until you're the hunter (1 in 4).
 - [ ] Hide phase: black screen with a countdown, you can't walk away from the spawn.
 - [ ] The bots are props standing near you (pots, crates...). No name tags over them.
 - [ ] The mod does not add fake scenery props to the map; only real hiders are drawn as props.
-- [ ] Player-placed decoys are visible during Hide and Hunt but remain walk-through. Hitting one
-      removes it, does not award 5 find points, and is treated as a missed swing.
+- [ ] Stand a disguise next to the real object on the map (crate, pot, gravestone, dresser, fence,
+      pumpkin, boar bones): the two are the same size.
+- [ ] Player-placed decoys and disguised hiders are as solid as the real object: Link can't walk
+      through a crate, pot, fence or table disguise, but can walk through grass or laundry. The hider
+      who places a decoy is not trapped inside it and can walk out; it turns solid once they do.
+- [ ] Hitting a decoy removes it at once for the hunter and a moment later for everyone, opening the
+      passage. It does not award 5 find points, and is treated as a missed swing.
 - [ ] Sword swing (B) hitting a bot prop: spark, "Found Bot N!", the counter at the top drops.
 - [ ] Walking into a hider never pushes, snags or teleports Link; the same prop still registers a
       sword hit throughout its visible footprint.
@@ -198,7 +203,7 @@ original, unmodified Dusklight with `--user-dir <isolated-dir> --mods <isolated-
 --load-save 1 --stage F_SP103,0,13,-1`. Enable frame interpolation and keep the window focused
 (or disable pause-on-focus-loss in the isolated profile).
 
-The driver populates 16 player states, starts a round, cycles all 54 selectable props with 160
+The driver populates 16 player states, starts a round, cycles all 50 selectable props with 160
 decoy snapshots, then leaves and checks cleanup. It checks the actual material/shape lists for
 cycles before rendering and exits successfully only after logging `STOCK_RENDER_TEST PASS`.
 Injected states exercise the real actors and rendering, not 16 independent network clients.

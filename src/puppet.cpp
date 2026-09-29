@@ -17,6 +17,7 @@
 #include "SSystem/SComponent/c_lib.h"
 #include "SSystem/SComponent/c_math.h"
 #include "d/d_bg_s_gnd_chk.h"
+#include "d/d_bg_w.h"
 #include "d/d_cc_d.h"
 #include "d/d_com_inf_game.h"
 #include "d/d_kankyo.h"
@@ -48,6 +49,9 @@ constexpr uint64_t kStaleMs = 4000;
 constexpr float kSnapDistance = 600.0f;
 constexpr float kLinkRadius = 40.0f;
 constexpr float kLinkHeight = 150.0f;
+// After our sword hits a decoy it stays hidden this long while the host confirms. A confirmed hit
+// deletes it; a rejected one (hunter too far away by the host's account) brings it back.
+constexpr uint64_t kDecoyHitHideMs = 1500;
 
 // Human Link's joints (d_a_alink_wolf.inc): head 4, back 5, hands 9 and 14, held items 10 and 15.
 constexpr u16 kJointHead = 4;
@@ -89,6 +93,22 @@ const dCcD_SrcCyl kCylSrc = {
         {0, {{0, 0, 0}, {AT_TYPE_NORMAL_SWORD | AT_TYPE_MASTER_SWORD | AT_TYPE_WOLF_ATTACK | AT_TYPE_WOLF_CUT_TURN, 0x3}, 0}},
         {dCcD_SE_NONE, 0, 0, 0, {0}},
         {dCcD_SE_NONE, 0, 0, 0, {6}},
+        {0},
+    },
+    {{
+        {0.0f, 0.0f, 0.0f},
+        kLinkRadius,
+        kLinkHeight,
+    }},
+};
+
+// The push cylinder of a solid disguise, set like the native pots' and rocks' (Co 0x79): it
+// corrects Link's position but takes no sword hits (kCylSrc does that) and deals no damage.
+const dCcD_SrcCyl kSolidSrc = {
+    {
+        {0, {{0, 0, 0}, {0, 0}, 0x79}},
+        {dCcD_SE_NONE, 0, 0, 0, {0}},
+        {dCcD_SE_NONE, 0, 0, 0, {0}},
         {0},
     },
     {{
@@ -153,6 +173,8 @@ private:
     void updateGround();
     void armHitbox(const match::Player& p, bool disguised, int kind);
     void armDecoyHitbox(int kind);
+    void armSolid(int kind);
+    void releaseSolid();
     void publish(bool visible, float height, bool tracked = false);
     Slot& slot() {
         return mDecoy ? s_decoys[mSlot - 1].slot : (mLocal ? s_localProp : s_slots[mSlot]);
@@ -202,6 +224,14 @@ private:
     dCcD_Stts mStts;
     dCcD_Cyl mCyl;
     bool mCylArmed = false;
+
+    // Solid like the real object: a push cylinder, or the archive's collision mesh.
+    dCcD_Cyl mSolidCyl;
+    dBgW* mBgW = nullptr;
+    Mtx mBgMtx;
+    bool mBgRegistered = false;
+    bool mBgFailed = false;
+    uint64_t mHiddenUntil = 0;
 };
 
 int Puppet::create() {
@@ -232,6 +262,8 @@ int Puppet::create() {
     mStts.Init(0xFF, 0xFF, this);
     mCyl.Set(kCylSrc);
     mCyl.SetStts(&mStts);
+    mSolidCyl.Set(kSolidSrc);
+    mSolidCyl.SetStts(&mStts);
     fopAcM_setCullSizeBox(this, -160.0f, -20.0f, -160.0f, 160.0f, 260.0f, 160.0f);
     return cPhs_COMPLEATE_e;
 }
@@ -434,6 +466,10 @@ bool Puppet::updateProp(int kind, bool moving) {
 }
 
 void Puppet::releaseProp() {
+    // The collision mesh lives in the prop heap: unregister it before the heap goes.
+    releaseSolid();
+    mBgW = nullptr;
+    mBgFailed = false;
     if (mPropHeap != nullptr) {
         mPropHeap->destroy();
         mPropHeap = nullptr;
@@ -485,6 +521,77 @@ void Puppet::armDecoyHitbox(int kind) {
     dComIfG_Ccsp()->Set(&mCyl);
 }
 
+void Puppet::armSolid(int kind) {
+    // Our own disguise never blocks us; everyone else sees it through a puppet of their own.
+    if (mLocal || mPropModel == nullptr) {
+        releaseSolid();
+        return;
+    }
+    const PropInfo& info = prop_info(kind);
+    const PropSolid& solid = prop_solid(kind);
+    // The model's origin, after the catalogue's offset corrections, is where the native actor
+    // would stand. Collision is placed around it rather than around the network position.
+    const MtxP model = mPropModel->getBaseTRMtx();
+    if (solid.kind == Solid::Cylinder) {
+        releaseSolid();
+        mSolidCyl.SetC(cXyz(model[0][3], current.pos.y, model[2][3]));
+        mSolidCyl.SetR(solid.radius > 0.0f ? solid.radius : info.radius);
+        mSolidCyl.SetH(info.height);
+        dComIfG_Ccsp()->Set(&mSolidCyl);
+        return;
+    }
+    if (solid.kind != Solid::Background || mBgFailed) {
+        releaseSolid();
+        return;
+    }
+
+    mDoMtx_stack_c::copy(model);
+    mDoMtx_stack_c::scaleM(solid.bgScaleX, solid.bgScaleY, solid.bgScaleZ);
+    MTXCopy(mDoMtx_stack_c::get(), mBgMtx);
+    if (mBgW == nullptr) {
+        auto* dzb = static_cast<cBgD_t*>(solid.dzb != nullptr
+                ? dComIfG_getObjectRes(mPropArc, solid.dzb)
+                : dComIfG_getObjectRes(mPropArc, solid.dzbIndex));
+        HeapScope scope(mPropHeap);
+        mBgW = dzb != nullptr ? JKR_NEW dBgW() : nullptr;
+        // Set() returns true on failure. A prop without its collision is still a usable disguise.
+        if (mBgW == nullptr || mBgW->Set(dzb, dBgW::MOVE_BG_e, &mBgMtx)) {
+            mods::log::warn("puppet: no collision for {}", info.name);
+            mBgW = nullptr;
+            mBgFailed = true;
+            return;
+        }
+        mBgW->SetCrrFunc(dBgS_MoveBGProc_TypicalRotY);
+    }
+    if (mBgRegistered) {
+        mBgW->Move();
+        return;
+    }
+    // Never close a mesh around us: a decoy appears where its hider is standing, and a disguise
+    // can load in on top of anyone. Become solid once our Link has stepped clear of it.
+    if (fopAc_ac_c* player = dComIfGp_getPlayer(0)) {
+        const cXyz& at = player->current.pos;
+        const float dx = at.x - model[0][3];
+        const float dz = at.z - model[2][3];
+        const float reach = info.radius + kLinkRadius;
+        const bool clear = dx * dx + dz * dz > reach * reach || at.y > current.pos.y + info.height ||
+                           at.y + kLinkHeight < current.pos.y;
+        if (!clear) return;
+    }
+    if (dComIfG_Bgsp().Regist(mBgW, this)) {
+        mods::log::warn("puppet: could not register collision for {}", info.name);
+        mBgFailed = true;
+        return;
+    }
+    mBgRegistered = true;
+    mBgW->Move();
+}
+
+void Puppet::releaseSolid() {
+    if (mBgRegistered && mBgW != nullptr) dComIfG_Bgsp().Release(mBgW);
+    mBgRegistered = false;
+}
+
 void Puppet::publish(bool visible, float height, bool tracked) {
     Slot& s = slot();
     s.visible = visible;
@@ -499,8 +606,10 @@ int Puppet::execute() {
         if (mCyl.GetTgHitAc() == dComIfGp_getPlayer(0)) {
             if (mDecoy) {
                 // A decoy is deliberately a miss: it disappears, but does not suppress the
-                // hunter's one-heart missed-swing penalty.
+                // hunter's one-heart missed-swing penalty. Clear it from our path at once rather
+                // than after the host's round trip; the host's snapshot then deletes it for all.
                 match::report_decoy_hit(mDecoyId);
+                mHiddenUntil = now_ms() + kDecoyHitHideMs;
             } else {
                 local::note_hit();
                 match::report_hit(static_cast<uint8_t>(mSlot));
@@ -511,6 +620,7 @@ int Puppet::execute() {
     // Advance and clear last frame's collision state before registering the target again.
     mStts.Move();
     mCyl.ClrCoHit();
+    mSolidCyl.ClrCoHit();
     mCylArmed = false;
 
     if (mLocal) {
@@ -537,9 +647,15 @@ int Puppet::execute() {
         old.pos = current.pos;
         updateGround();
         const int kind = prop_on_map(mFixedProp, -1) ? mFixedProp : 0;
-        mVisible = updateProp(kind, false);
-        if (mVisible) armDecoyHitbox(mPropKind >= 0 ? mPropKind : kind);
-        publish(mVisible, prop_info(mPropKind >= 0 ? mPropKind : kind).height, false);
+        mVisible = updateProp(kind, false) && now_ms() >= mHiddenUntil;
+        const int shownKind = mPropKind >= 0 ? mPropKind : kind;
+        if (mVisible) {
+            armDecoyHitbox(shownKind);
+            armSolid(shownKind);
+        } else {
+            releaseSolid();
+        }
+        publish(mVisible, prop_info(shownKind).height, false);
         return 1;
     }
 
@@ -547,6 +663,7 @@ int Puppet::execute() {
     const PlayerState& s = p.state;
     mVisible = p.present && p.hasState && same_stage_as_me(s) && now_ms() - p.stateAt < kStaleMs;
     if (!mVisible) {
+        releaseSolid();
         publish(false, 0.0f, false);
         return 1;
     }
@@ -579,6 +696,10 @@ int Puppet::execute() {
     }
     const int shownKind = mDisguised && mPropKind >= 0 ? mPropKind : kind;
     armHitbox(p, mDisguised, shownKind);
+    // A disguised hider blocks the way like the object they copy. Found hiders are out of the
+    // round, and the undisguised hunters keep walking through each other as before.
+    if (mDisguised && mVisible && !p.found) armSolid(shownKind);
+    else releaseSolid();
     publish(mVisible, mDisguised ? prop_info(shownKind).height : kLinkHeight, true);
 #ifdef HS_STOCK_RENDER_TEST
     if (mSlot == 2 && !mDisguised) {
