@@ -86,14 +86,21 @@ Ordon Village, Ordon Ranch, Ordon Spring, South Faron Woods, Kakariko Village, K
 Death Mountain Trail, Zora's Domain, Upper Zora's River, Lake Hylia, Castle Town, Sacred Grove,
 Hidden Village, Gerudo Desert, Hyrule Field, or Random every round. A missing spawn point crashes the
 game (`dStage_playerInit` logs a fatal error), so each map uses a point that `tools/find_spawns.py`
-lists as standing with no event. Players can walk through doors and loading zones; a player is only
-visible to others in the same stage. After changing areas you get 4 s of tag immunity (from SMO
-Online).
+lists as standing with no event. A player is only visible to others in the same stage, so the round
+keeps everyone inside it: scripted doors/events are inert, and a loading zone that leaves the
+selected stage returns that player to the round spawn.
 
 **World state.** Areas look different depending on story progress (twilight, NPCs). The
-**Hide & Seek game mode** on the title screen uses its own save with all twilight cleared, the
-Hero's Clothes, sword, shield and six hearts, so every player's world matches and every hunter has
-a sword. Playing from a normal save works but may not match.
+**Hide & Seek game mode** on the title screen uses its own completed-story save profile. Persistent
+story, dungeon, side-quest, tutorial and forced-conversation flags select the calm late-game layers;
+twilight and transformations are disabled; valid Postman letters are already delivered; first-time
+rupee messages are cleared; and the clock stays at noon. Players get the Hero's Clothes, sword,
+shield and six hearts, so every player's world matches and every hunter has a sword. Scripted event
+orders are rejected, active events are reset, and enemy/boss actors plus encounter controllers are
+removed before they can execute. Damage and drowning cannot end play (the optional hunter miss
+penalty still can remove hearts). The live sandbox protections also apply during an online round
+started from a normal save, but only the dedicated game mode applies the matching completed-story
+save profile.
 
 ## Architecture
 

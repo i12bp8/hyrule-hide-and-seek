@@ -25,8 +25,9 @@ on this computer**.
 
 ## 1. Loads and connects
 
-- [ ] Log shows `Hyrule Hide & Seek 0.1.2 ready`. No "hook ... did not resolve" warnings for
-      `daAlink_c::execute`, `daAlink_c::draw`, `daAlink_c::setCutType`.
+- [ ] Log shows `Hyrule Hide & Seek 0.1.3 ready`. No "hook ... did not resolve" warnings for
+      `daAlink_c::execute`, `daAlink_c::draw`, `daAlink_c::setCutType`,
+      `daAlink_c::setDamagePoint`, `fopAc_Execute`, or `dComIfGp_event_order`.
 - [ ] On the official Linux 2.0.2 build, log shows `using the HTTP relay fallback`; the mod is
       active rather than failing on a missing WebSocket service.
 - [ ] Hide & Seek tab opens the window with Play / Rules / How to play / Settings.
@@ -59,6 +60,10 @@ Start round. With 4 players (you + 3 bots) there is one hunter; restart until yo
 - [ ] "Get ready" → then `HIDE!` banner and a countdown.
 - [ ] You turn into a pot (Link disappears, a pot is drawn where he stands, with a shadow).
 - [ ] D-pad right next to a real pot/crate/barrel: you copy it. Away from one: next prop. D-pad left: previous.
+- [ ] The replacement is visible from the first Hide frame and after changing props; Link never
+      disappears before its prop model is ready.
+- [ ] D-pad left/right/down performs only the Hide & Seek action. The vanilla Items and Map menus
+      do not open underneath it.
 - [ ] The cucco prop animates when you walk.
 - [ ] The hunter bot waits at the spawn during Hide, then chases you during the hunt and tags you:
       "You were found!", you become Link again (and a hunter).
@@ -95,6 +100,16 @@ With a friend (or two copies of Dusklight with different `--mods` folders and pr
 - [ ] A new file skips the story: you land in Ordon Village in the Hero's Clothes with a sword,
       shield and six hearts, and the Hide & Seek window opens.
 - [ ] Faron, Kakariko and Lake Hylia have no twilight.
+- [ ] Ordon Village, Kakariko, Lake Hylia, Sacred Grove and Hidden Village load directly into
+      normal play: no story camera, forced dialogue, tutorial, minigame, Postman or item popup.
+- [ ] The world stays at noon and Link cannot turn into a wolf.
+- [ ] NPCs, chests and story triggers cannot start dialogue, item-get scenes or missions.
+- [ ] No enemies or bosses remain, including ones spawned by another mod; no encounter-complete
+      cutscene or timer starts when they disappear.
+- [ ] Damage does not remove hearts and underwater air stays full. A hunter's missed sword swing
+      still removes a quarter heart when that rule is enabled.
+- [ ] Leave through a loading zone after the round begins: the client returns to the selected map's
+      spawn and rejoins the round.
 
 ## 9. Every map
 

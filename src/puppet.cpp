@@ -246,6 +246,9 @@ void Puppet::poseLink(const PlayerState& s) {
     mDoMtx_stack_c::transS(current.pos.x, current.pos.y, current.pos.z);
     mDoMtx_stack_c::YrotM(shape_angle.y);
     mBody->setBaseTRMtx(mDoMtx_stack_c::get());
+    // The actor system uses this matrix to transform our custom culling box. Without it, the
+    // replacement can be culled even while standing directly in front of the camera.
+    fopAcM_SetMtx(this, mBody->getBaseTRMtx());
 
     // Same split as daAlink_c::changeModelDataDirect: legs follow the lower body animation,
     // the torso the upper one. This model data is ours, so nothing else touches these.
@@ -344,15 +347,10 @@ bool Puppet::updateProp(int kind, bool moving) {
     mDoMtx_stack_c::YrotM(shape_angle.y);
     mDoMtx_stack_c::scaleM(info.scale, info.scale, info.scale);
     mPropModel->setBaseTRMtx(mDoMtx_stack_c::get());
+    fopAcM_SetMtx(this, mPropModel->getBaseTRMtx());
 
-    J3DModelData* data = mPropModel->getModelData();
-    JointGuard guard(data);
     mDoExt_bckAnm* anm = moving && mPropMove != nullptr ? mPropMove : mPropIdle;
-    if (anm != nullptr) {
-        anm->play();
-        anm->entry(data);
-    }
-    mPropModel->calc();
+    if (anm != nullptr) anm->play();
     mPropMoving = moving;
     return true;
 }
@@ -415,8 +413,8 @@ int Puppet::execute() {
 
     if (mLocal) {
         fopAc_ac_c* player = dComIfGp_getPlayer(0);
-        mVisible = player != nullptr && local::disguised();
-        if (!mVisible) {
+        if (player == nullptr) {
+            mVisible = false;
             publish(false, 0.0f);
             return 1;
         }
@@ -424,8 +422,11 @@ int Puppet::execute() {
         current.pos = player->current.pos;
         shape_angle.y = player->shape_angle.y;
         updateGround();
-        mVisible = updateProp(local::prop(), moving);
-        publish(mVisible, prop_info(local::prop()).height);
+        // Keep the selected prop loaded while we are in the room. When Hide begins, the prop can
+        // replace Link in the same frame instead of leaving an invisible archive-loading gap.
+        const bool ready = updateProp(local::prop(), local::disguised() && moving);
+        mVisible = local::disguised() && ready;
+        publish(mVisible, mVisible ? prop_info(local::prop()).height : 0.0f);
         return 1;
     }
 
@@ -475,7 +476,14 @@ int Puppet::draw() {
     if (mDisguised || mLocal) {
         if (mPropModel == nullptr) return 1;
         g_env_light.setLightTevColorType_MAJI(mPropModel, &tevStr);
-        mDoExt_modelEntryDL(mPropModel);
+        // Carryable objects use modelUpdateDL(), not a separate calc()/entryDL() pair. Keep the
+        // shared resource's actor callbacks out of the whole update so our model cannot run a
+        // real pot/crate actor's joint callback with this Puppet as its owner.
+        J3DModelData* data = mPropModel->getModelData();
+        JointGuard guard(data);
+        mDoExt_bckAnm* anm = mPropMoving && mPropMove != nullptr ? mPropMove : mPropIdle;
+        if (anm != nullptr) anm->entry(data);
+        mDoExt_modelUpdateDL(mPropModel);
         shadow = prop_info(mPropKind).radius * 1.3f;
     } else {
         J3DModel* models[] = {mBody, mFace, mHead, mHands, mSheath, mSword, mShield};
@@ -598,9 +606,13 @@ void update() {
         manage(s_slots[id], want, id, false, cXyz(p.state.x, p.state.y, p.state.z));
     }
     fopAc_ac_c* player = dComIfGp_getPlayer(0);
-    const bool wantLocal = online && settled && player != nullptr && local::disguised();
+    const bool wantLocal = online && settled && player != nullptr && !net::room_code().empty();
     manage(s_localProp, wantLocal, me != 0 ? me : 1, true,
         player != nullptr ? player->current.pos : cXyz(0.0f, 0.0f, 0.0f));
+}
+
+bool local_prop_visible() {
+    return s_localProp.visible;
 }
 
 bool anchor(int id, cXyz& feet, float& height) {

@@ -29,6 +29,7 @@
 DEFINE_HOOK(&daAlink_c::execute, HsLinkExecute);
 DEFINE_HOOK(&daAlink_c::draw, HsLinkDraw);
 DEFINE_HOOK(&daAlink_c::setCutType, HsLinkSetCutType);
+DEFINE_HOOK(&daAlink_c::setDamagePoint, HsLinkDamage);
 
 namespace hs::local {
 
@@ -42,6 +43,8 @@ constexpr uint64_t kSettleMs = 1500;
 constexpr uint64_t kWarpRetryMs = 12000;
 constexpr float kTouchDistance = 90.0f;
 constexpr float kCopyDistance = 300.0f;
+constexpr u32 kRoundDpadMask =
+    PAD_BUTTON_UP | PAD_BUTTON_DOWN | PAD_BUTTON_LEFT | PAD_BUTTON_RIGHT;
 
 // Link's own voice is always loaded, so these work on every map.
 constexpr uint32_t kTaunts[] = {
@@ -104,7 +107,9 @@ void on_link_execute_post(ModContext*, void* args, void*, void*) {
 }
 
 HookAction on_link_draw_pre(ModContext*, void*, void* retval, void*) {
-    if (!s_disguised) return HOOK_CONTINUE;
+    // Loading an archive takes a few frames. Keep Link as the fallback until the replacement has
+    // completed an update; a missing model must never turn the local player invisible.
+    if (!s_disguised || !puppet::local_prop_visible()) return HOOK_CONTINUE;
     if (retval != nullptr) *static_cast<int*>(retval) = 1;
     return HOOK_SKIP_ORIGINAL;
 }
@@ -121,6 +126,19 @@ void on_set_cut_type_post(ModContext*, void* args, void*, void*) {
     s_swinging = true;
     s_swingHit = false;
     s_swingAt = now_ms();
+}
+
+HookAction on_link_damage_pre(ModContext*, void* args, void* retval, void*) {
+    // Enemy and environmental damage can otherwise kill a player while the network round keeps
+    // going. The miss penalty writes hearts directly, so it still works.
+    const int amount = mods::arg<int>(args, 1);
+    const bool protectedPlay = game_mode::active() ||
+                               (net::status() == net::Status::Online && match::in_round());
+    if (amount <= 0 || !protectedPlay) {
+        return HOOK_CONTINUE;
+    }
+    if (retval != nullptr) *static_cast<int*>(retval) = 0;
+    return HOOK_SKIP_ORIGINAL;
 }
 
 // ---- helpers ---------------------------------------------------------------------------------
@@ -207,6 +225,7 @@ void follow_round(daAlink_c* l) {
     const bool busy = dComIfGp_isEnableNextStage() || dComIfGp_event_runCheck();
     if (s_warpPending && l != nullptr && (!busy || now - s_warpedAt > kWarpRetryMs)) {
         mods::log::info("warping to {} ({} room {} point {})", map.name, map.stage, map.room, map.point);
+        game_mode::prepare_stage();
         dComIfGp_setNextStage(map.stage, map.point, map.room, -1);
         s_warpPending = false;
         s_warpedAt = now;
@@ -215,7 +234,12 @@ void follow_round(daAlink_c* l) {
     }
     const bool there = l != nullptr && std::strncmp(s_stage, map.stage, 8) == 0 && !busy;
     if (there && s_arrivedAt == 0 && now - s_warpedAt > 500) s_arrivedAt = now;
-    if (!there) s_arrivedAt = 0;
+    if (!there) {
+        s_arrivedAt = 0;
+        // A loading zone must not let a hider escape into a different stage. Once this client has
+        // reported ready for the round, bring it straight back after any accidental stage exit.
+        if (l != nullptr && !busy && s_readyRound == m.round) s_warpPending = true;
+    }
     if (s_arrivedAt != 0 && now - s_arrivedAt > kSettleMs && s_readyRound != m.round) {
         s_readyRound = m.round;
         match::report_ready();
@@ -223,10 +247,16 @@ void follow_round(daAlink_c* l) {
 }
 
 void on_phase_change(Phase from, Phase to) {
+    if (to == Phase::Gather && playing_prop_hunt()) {
+        // Choose during the gathering/warp phase so the replacement model is already loaded when
+        // the hider becomes disguised at the start of Hide.
+        s_prop = random_prop();
+    }
     if (to == Phase::Hide) {
         // Everyone starts the round with full hearts.
         dComIfGs_setLife(static_cast<u16>(dComIfGs_getMaxLifeGauge()));
-        s_prop = random_prop();
+        // A late join can first learn about a round after Gather has already ended.
+        if (from != Phase::Gather && playing_prop_hunt()) s_prop = random_prop();
         s_lastAutoTaunt = now_ms();
     }
     (void)from;
@@ -298,6 +328,9 @@ bool init() {
     if (mods::hook::add_post<HsLinkSetCutType>(on_set_cut_type_post) != MOD_OK) {
         mods::log::warn("sword swing hook unavailable: no miss penalty");
     }
+    if (mods::hook::add_pre<HsLinkDamage>(on_link_damage_pre) != MOD_OK) {
+        mods::log::warn("damage hook unavailable: world hazards can hurt players");
+    }
     if (!s_hooked) mods::log::warn("Link hooks unavailable: hunters won't be held and props stay visible");
     match::set_hooks({.taunt = play_taunt, .roundStarted = nullptr, .foundMe = nullptr});
     return true;
@@ -341,6 +374,14 @@ void update() {
     if (l != nullptr && s_inWorld && !dComIfGp_event_runCheck()) {
         if (role == Role::Hider) hider_controls(l);
         if (role == Role::Hunter) hunter_controls(l);
+    }
+
+    if (online && match::in_round()) {
+        // We read the triggers above, then consume every D-pad direction before Link's actor runs.
+        // This keeps prop selection and taunts from also opening the vanilla Items/Map menus.
+        interface_of_controller_pad& pad = mDoCPd_c::getCpadInfo(PAD_1);
+        pad.mButtonFlags &= ~kRoundDpadMask;
+        pad.mPressedButtonFlags &= ~kRoundDpadMask;
     }
 
     if (online && l != nullptr && s_inWorld) {

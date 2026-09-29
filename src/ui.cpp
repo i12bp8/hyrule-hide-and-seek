@@ -380,10 +380,11 @@ ModResult build_help(ModContext*, UiWindowHandle, UiElementHandle left, UiElemen
         nullptr);
     svc_ui->pane_add_section(mod_ctx, left, "Tips");
     svc_ui->pane_add_rml(mod_ctx, left,
-        "<p>Stand still next to real pots. Moving props give themselves away. Doors and loading zones "
-        "work: you get a few seconds of safety after entering a new area.</p>"
-        "<p>For the same world for everyone (no twilight, same items), start from the "
-        "<b>Hide &amp; Seek</b> game mode on the title screen.</p>",
+        "<p>Stand still next to real pots. Moving props give themselves away. If you leave the round "
+        "stage through a loading zone, you return to its spawn.</p>"
+        "<p>For the same completed world for everyone (no cutscenes, missions, enemies or bosses; "
+        "fixed daylight and the same items), start from the <b>Hide &amp; Seek</b> game mode on the "
+        "title screen.</p>",
         nullptr);
     return MOD_OK;
 }

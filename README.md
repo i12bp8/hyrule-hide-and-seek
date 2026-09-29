@@ -8,7 +8,9 @@ hunters get a sword and a timer.
 
 1. Put `hyrule_hide_and_seek.dusk` in Dusklight's `mods` folder (or install it from the in-game mod browser).
 2. On the title screen pick the **Hide & Seek** game mode and start a new file. It's a separate save,
-   set up so everyone's world matches: no twilight, Hero's Clothes, sword and shield, six hearts.
+   set up as a completed-story sandbox so everyone's world matches: no story cutscenes or quest
+   interruptions, enemies or bosses; no twilight; fixed daylight; Hero's Clothes, sword and shield;
+   six hearts; and unlimited air underwater.
    (You can also play from any save; the world just might look different for each player.)
 3. The Hide & Seek window opens. **Host a game**: you get a five-letter room code, already copied to
    your clipboard. Friends type it in and press **Join**, or pick your room from **Public games**.
@@ -53,8 +55,8 @@ rounds automatically, and whether the room is listed publicly.
 
 Ordon Village, Ordon Ranch, Ordon Spring, South Faron Woods, Kakariko Village, Kakariko Graveyard,
 Death Mountain Trail, Zora's Domain, Upper Zora's River, Lake Hylia, Castle Town, Sacred Grove,
-Hidden Village, Gerudo Desert, Hyrule Field. Doors and loading zones work; after entering a new area
-you're safe for a few seconds.
+Hidden Village, Gerudo Desert, Hyrule Field. The selected stage is the play area: scripted doors are
+inert, and a loading zone that leaves it returns you to its spawn so nobody can escape the round.
 
 ### Scoring
 
@@ -63,7 +65,8 @@ per find. Scores add up over the whole session.
 
 ## Not compatible with
 
-Other multiplayer mods (Crests of Courage, MFB Multiplayer): turn them off while playing this.
+Other multiplayer mods (Crests of Courage, MFB Multiplayer), Randomizer, and mods that change story
+flags or stage layouts: turn them off while playing this.
 
 ## For developers
 

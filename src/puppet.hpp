@@ -18,6 +18,10 @@ bool unregister_actor();
 // Spawns/removes puppets to match who is in our stage. Call once per frame.
 void update();
 
+// True only after the local replacement prop has loaded and is ready to draw. Link stays visible
+// until this becomes true, so a slow or failed resource load can never make the player invisible.
+bool local_prop_visible();
+
 // Where a player's puppet is drawn right now (interpolated), for name tags.
 bool anchor(int id, cXyz& feet, float& height);
 
