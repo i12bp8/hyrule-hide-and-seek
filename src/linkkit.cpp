@@ -54,7 +54,7 @@ struct AnimEntry {
     u16 idx = 0xFFFF;
     J3DAnmTransform* anm = nullptr;
     u8* buffer = nullptr;
-    bool failed = false;
+    uint64_t failedAt = 0;
 };
 AnimEntry s_anims[kAnimCacheSize];
 
@@ -160,7 +160,13 @@ JKRHeap* heap() {
 }
 
 bool ready() {
-    return load_files();
+    if (!load_files()) return false;
+    // Cache both poses while the local Link's archive is known to be live. Remote actors are
+    // recreated during a map warp; asking for their first animation in that transition window was
+    // the reason a hunter could have a name tag but no body for the whole Seek phase.
+    anim(kIdleAnim);
+    anim(kWalkAnim);
+    return true;
 }
 
 const LinkModels* link_models(uint8_t color) {
@@ -196,8 +202,17 @@ const LinkModels* link_models(uint8_t color) {
 J3DAnmTransform* anim(uint16_t idx) {
     if (idx == 0xFFFF || heap() == nullptr) return nullptr;
     AnimEntry* slot = nullptr;
+    const uint64_t now = now_ms();
     for (AnimEntry& e : s_anims) {
-        if (e.idx == idx) return e.failed ? nullptr : e.anm;
+        if (e.idx == idx) {
+            if (e.failedAt == 0) return e.anm;
+            if (now - e.failedAt < 1000) return nullptr;
+            // Resource reads can fail briefly while AlAnm is being remounted for a stage. A
+            // transient miss must not permanently make every remote Link invisible.
+            e = AnimEntry{};
+            slot = &e;
+            break;
+        }
         if (slot == nullptr && e.idx == 0xFFFF) slot = &e;
     }
     if (slot == nullptr) return nullptr;  // cache full: the puppet falls back to idle
@@ -209,13 +224,13 @@ J3DAnmTransform* anim(uint16_t idx) {
     }
     u8* buffer = static_cast<u8*>(s_heap->alloc(kAnimBufferSize, 32));
     if (buffer == nullptr) {
-        slot->failed = true;
+        slot->failedAt = now;
         return nullptr;
     }
     const u32 read = JKRReadIdxResource(buffer, kAnimBufferSize, idx, arc);
     if (read == 0) {
         s_heap->free(buffer);
-        slot->failed = true;
+        slot->failedAt = now;
         return nullptr;
     }
     s_heap->resize(buffer, (read + 31) & ~31u);
@@ -226,7 +241,7 @@ J3DAnmTransform* anim(uint16_t idx) {
     }
     if (loaded == nullptr || loaded->getKind() != 0) {  // 0 = transform (bck)
         s_heap->free(buffer);
-        slot->failed = true;
+        slot->failedAt = now;
         return nullptr;
     }
     slot->anm = static_cast<J3DAnmTransform*>(loaded);

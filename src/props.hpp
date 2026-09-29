@@ -17,9 +17,12 @@ struct PropInfo {
     float scale;
     int bmdIndex = -1;    // archives whose model has no stable filename in the headers
     uint16_t mapMask = 0x7FFF;  // one bit per entry in maps.cpp
-    // Multiplier for the generic round blob shadow. Zero lets flat, translucent or water props use
-    // only the map's lighting instead of advertising themselves with an impossible black circle.
+    // Whether this native actor has a dynamic shadow. Zero is intentional for static scenery and
+    // flat/translucent objects whose real versions rely on the map's lighting instead.
     float shadowScale = 1.0f;
+    // Soft scenery should still be sword-targetable when it is a hider, but never stop Link. Solid
+    // scenery uses the same object-correction cylinder for both hiders and authored decoys.
+    bool solid = true;
 };
 
 int prop_count();

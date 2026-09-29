@@ -22,14 +22,19 @@ struct CoverPoint {
     float x;
     float y;
     float z;
+    uint8_t prop;
+    int16_t yaw;
 };
 
-constexpr int kCoverPointCount = 18;
+// Six deliberately authored scenery pairs per map: enough cover to break up empty spaces without
+// making the hunter's starting area a junk pile.
+constexpr int kCoverPointCount = 12;
 
 int map_count();
 const MapInfo& map_info(int index);
-// Deterministic areas used for harmless scenery props. Points are spread across the selected room
-// rather than radiating from the player spawn; the actor's ground ray validates each final point.
+// Authored scenery placements based on the map's native actor layout. Each includes its exact prop
+// and facing; layouts do not rotate or randomise between rounds. The actor's ground ray remains the
+// final safety check.
 int cover_point_count(int map);
 CoverPoint cover_point(int map, int ordinal);
 // A random map index, different from `avoid` when there is a choice.

@@ -485,10 +485,29 @@ static void test_maps() {
         CHECK(cover_point_count(m) == kCoverPointCount);
         const CoverPoint first = cover_point(m, 0);
         CHECK(std::isfinite(first.x) && std::isfinite(first.y) && std::isfinite(first.z));
+        if (!(first.prop < prop_count() && prop_on_map(first.prop, m))) {
+            std::printf("    map %d cover point 0 uses prop %u\n", m, first.prop);
+        }
+        CHECK(first.prop < prop_count() && prop_on_map(first.prop, m));
+        if (std::hypot(first.x - map.spawnX, first.z - map.spawnZ) <= 350.0f) {
+            std::printf("    map %d cover point 0 is too close to the spawn\n", m);
+        }
+        CHECK(std::hypot(first.x - map.spawnX, first.z - map.spawnZ) > 350.0f);
         bool spread = false;
         for (int i = 1; i < cover_point_count(m); ++i) {
             const CoverPoint p = cover_point(m, i);
             CHECK(std::isfinite(p.x) && std::isfinite(p.y) && std::isfinite(p.z));
+            if (!(p.prop < prop_count() && prop_on_map(p.prop, m))) {
+                std::printf("    map %d cover point %d uses prop %u\n", m, i, p.prop);
+            }
+            CHECK(p.prop < prop_count() && prop_on_map(p.prop, m));
+            if (std::hypot(p.x - map.spawnX, p.z - map.spawnZ) <= 350.0f) {
+                std::printf("    map %d cover point %d is too close to the spawn\n", m, i);
+            }
+            CHECK(std::hypot(p.x - map.spawnX, p.z - map.spawnZ) > 350.0f);
+            const CoverPoint again = cover_point(m, i);
+            CHECK(p.x == again.x && p.y == again.y && p.z == again.z && p.prop == again.prop &&
+                  p.yaw == again.yaw);
             if (std::hypot(p.x - first.x, p.z - first.z) > 500.0f) spread = true;
         }
         CHECK(spread);
@@ -514,6 +533,19 @@ static void test_props() {
     CHECK(std::strcmp(prop_info(20).name, "Gravestone") == 0);
     CHECK(std::strcmp(prop_info(58).name, "Map Table") == 0);
     CHECK(prop_info(27).shadowScale == 0.0f);  // Lily Pad must not have a black ground blob
+    CHECK(prop_info(5).shadowScale > 0.0f);    // real pumpkins use a simple shadow
+    CHECK(prop_info(8).shadowScale == 0.0f);   // native static rock has no dynamic shadow
+    CHECK(prop_info(9).shadowScale > 0.0f);    // Cucco uses its exact projected shadow
+    CHECK(prop_info(16).shadowScale == 0.0f);  // native static furniture has no dynamic shadow
+    CHECK(prop_info(35).shadowScale > 0.0f);   // oil jar uses a projected shadow
+    CHECK(prop_info(2).solid);                  // crates stop Link
+    CHECK(!prop_info(19).solid);                // low bones can be stepped through
+    CHECK(!prop_info(21).solid);                // Bomb Flower
+    CHECK(!prop_info(27).solid);                // Lily Pad
+    CHECK(!prop_info(31).solid);                // Seaweed
+    CHECK(!prop_info(40).solid);                // Hawk Grass
+    CHECK(!prop_info(41).solid);                // Horse Grass
+    CHECK(!prop_info(46).solid);                // Pumpkin Leaves
     CHECK(prop_for_carry_type(3) == 10);   // cannonball
     CHECK(prop_for_carry_type(6) == 11);   // Deku nut
     CHECK(prop_for_carry_type(10) == 12);  // big blue pot

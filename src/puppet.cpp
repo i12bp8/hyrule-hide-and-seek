@@ -40,7 +40,6 @@ constexpr u32 kLocalFlag = 0x100;
 constexpr u32 kDecoyFlag = 0x200;
 constexpr int kPropShift = 16;
 constexpr int kDecoyCount = kCoverPointCount;
-constexpr int kDecoyVariety = 6;
 constexpr u32 kPuppetHeapSize = 640 * 1024;
 constexpr u32 kPropHeapSize = 128 * 1024;
 constexpr uint64_t kStaleMs = 4000;
@@ -131,6 +130,55 @@ bool same_stage_as_me(const PlayerState& s) {
     return (s.flags & STATE_IN_WORLD) != 0 && std::strncmp(s.stage, local::stage(), 8) == 0;
 }
 
+// Match the native actor's shadow instead of giving every disguise the same telltale dark blob.
+// Carryables and a few movable objects use simple shadows with fixed sizes; most static scenery
+// has no dynamic shadow at all (encoded by PropInfo::shadowScale == 0).
+float native_simple_shadow_size(int kind) {
+    switch (kind) {
+    case 0: return 40.0f;  // pot
+    case 1: return 50.0f;  // big pot
+    case 2: return 87.0f;  // crate (the base game's value)
+    case 3: return 50.0f;  // barrel
+    case 4: return 40.0f;  // skull
+    case 5: return 50.0f;  // pumpkin
+    case 6: return 40.0f;  // Kakariko pot
+    case 10: return 40.0f; // cannonball
+    case 11: return 45.0f; // Deku nut
+    case 12: return 50.0f; // big blue pot
+    case 13: return 40.0f; // small Twilight pot
+    case 14: return 50.0f; // big Twilight pot
+    case 22: return 25.0f; // bomb
+    case 52: return 40.0f; // small mountain rock
+    case 53: return 65.0f; // large mountain rock
+    case 56: return 90.0f; // pushable grave
+    default: return 0.0f;
+    }
+}
+
+struct ModelShadowProfile {
+    float yOffset;
+    float depth;
+    float footprint;
+};
+
+ModelShadowProfile native_model_shadow(int kind, const PropInfo& info) {
+    switch (kind) {
+    case 7: return {50.0f, 500.0f, 0.0f};   // small crate
+    case 9: return {100.0f, 400.0f, 40.0f}; // Cucco
+    case 15: return {0.0f, 400.0f, 0.0f};   // sign
+    case 23: return {50.0f, 400.0f, 0.0f};  // beehive dropped on the ground
+    case 35: return {0.0f, 800.0f, 120.0f}; // oil jar
+    case 38: return {0.0f, 500.0f, 0.0f};   // howling stone
+    case 42: return {0.0f, 400.0f, 20.0f};  // pole target
+    case 43: return {0.0f, 400.0f, 20.0f};  // board target
+    case 48: return {0.0f, 500.0f, 0.0f};   // Sacred Grove stone
+    case 51: return {0.0f, 2000.0f, 0.0f};  // volcanic ball
+    case 58: return {100.0f, 500.0f, 0.0f}; // map table
+    default:
+        return {std::max(info.height, 40.0f), std::max(info.height * 4.0f, 400.0f), 0.0f};
+    }
+}
+
 class Puppet : public fopAc_ac_c {
 public:
     Puppet() : mLinkCalc(1, &mLinkAnim) {}
@@ -186,6 +234,7 @@ private:
     mDoExt_bckAnm* mPropIdle = nullptr;
     mDoExt_bckAnm* mPropMove = nullptr;
     bool mPropMoving = false;
+    int mWantedProp = -1;
 
     // Ground, shadow and the hunters' target
     dBgS_ObjGndChk mGndChk;
@@ -193,6 +242,7 @@ private:
     dCcD_Stts mStts;
     dCcD_Cyl mCyl;
     bool mCylArmed = false;
+    u32 mShadowKey = 0;
 };
 
 int Puppet::create() {
@@ -219,6 +269,7 @@ int Puppet::create() {
     mStts.Init(0xFF, 0xFF, this);
     mCyl.Set(kCylSrc);
     mCyl.SetStts(&mStts);
+    if (mDecoy) mCyl.OffTgSetBit();
     fopAcM_setCullSizeBox(this, -160.0f, -20.0f, -160.0f, 160.0f, 260.0f, 160.0f);
     return cPhs_COMPLEATE_e;
 }
@@ -332,12 +383,21 @@ bool Puppet::poseLink(const PlayerState& s, bool moving) {
 }
 
 bool Puppet::updateProp(int kind, bool moving) {
-    if (kind != mPropKind) {
+    if (kind != mWantedProp) {
         releaseProp();
+        mWantedProp = kind;
         mPropKind = kind;
-        mPropArc = prop_info(kind).arc;
     }
-    if (mPropFailed) return false;
+    if (mPropKind < 0) mPropKind = kind;
+    // Never make a player or decoy disappear because one optional model failed. Retry the known
+    // good first catalogue entry (the small Ordon pot) until the player chooses another prop.
+    if (mPropFailed) {
+        if (mPropKind == 0) return false;
+        mods::log::warn("puppet: {} failed; showing Pot instead", prop_info(mPropKind).name);
+        releaseProp();
+        mPropKind = 0;
+    }
+    mPropArc = prop_info(mPropKind).arc;
     if (mPropModel == nullptr) {
         const cPhs_Step step = static_cast<cPhs_Step>(dComIfG_resLoad(&mPropPhase, mPropArc));
         mPropRequested = true;
@@ -347,7 +407,7 @@ bool Puppet::updateProp(int kind, bool moving) {
             return false;
         }
         if (step != cPhs_COMPLEATE_e) return false;
-        const PropInfo& info = prop_info(kind);
+        const PropInfo& info = prop_info(mPropKind);
         auto* data = static_cast<J3DModelData*>(info.bmd != nullptr
                 ? dComIfG_getObjectRes(mPropArc, info.bmd)
                 : dComIfG_getObjectRes(mPropArc, info.bmdIndex));
@@ -375,12 +435,13 @@ bool Puppet::updateProp(int kind, bool moving) {
         mPropIdle = bck(info.idleBck);
         mPropMove = bck(info.moveBck);
         if (mPropModel == nullptr) {
+            mods::log::warn("puppet: could not create {} model", info.name);
             mPropFailed = true;
             return false;
         }
     }
 
-    const PropInfo& info = prop_info(kind);
+    const PropInfo& info = prop_info(mPropKind);
     mDoMtx_stack_c::transS(current.pos.x, current.pos.y, current.pos.z);
     mDoMtx_stack_c::YrotM(shape_angle.y);
     mDoMtx_stack_c::scaleM(info.scale, info.scale, info.scale);
@@ -428,7 +489,7 @@ void Puppet::armHitbox(const match::Player& p, bool disguised, int kind) {
     // Prop hiders participate in the game's normal object-correction collision on the hunter's
     // client. Link is pushed around the cylinder just like an NPC, while the network-owned prop
     // remains authoritative and cannot be shoved out of place. Human hiders stay non-solid.
-    mCyl.SetCoSPrm(disguised ? 0x79 : 0);
+    mCyl.SetCoSPrm(disguised && prop_info(kind).solid ? 0x79 : 0);
     mCyl.SetC(current.pos);
     mCyl.SetR(r);
     mCyl.SetH(h);
@@ -469,6 +530,16 @@ int Puppet::execute() {
             }
         }
         mVisible = mGrounded && updateProp(mFixedProp, false);
+        if (mVisible && prop_info(mPropKind).solid) {
+            // Decorative props use correction collision only: a wrong sword guess remains a miss,
+            // but Link can no longer walk through a crate, pot, rock or piece of furniture.
+            const PropInfo& info = prop_info(mPropKind);
+            mCyl.SetCoSPrm(0x79);
+            mCyl.SetC(current.pos);
+            mCyl.SetR(std::clamp(info.radius * 0.85f, 25.0f, 110.0f));
+            mCyl.SetH(info.height);
+            dComIfG_Ccsp()->Set(&mCyl);
+        }
         return 1;
     }
 
@@ -487,7 +558,7 @@ int Puppet::execute() {
         // replace Link in the same frame instead of leaving an invisible archive-loading gap.
         const bool ready = updateProp(local::prop(), local::disguised() && moving);
         mVisible = local::disguised() && ready;
-        publish(mVisible, mVisible ? prop_info(local::prop()).height : 0.0f, mVisible);
+        publish(mVisible, mVisible ? prop_info(mPropKind).height : 0.0f, mVisible);
         return 1;
     }
 
@@ -525,8 +596,9 @@ int Puppet::execute() {
         // silhouette rather than making that player disappear from this mode.
         mVisible = mBody != nullptr && poseLink(s, moving);
     }
-    armHitbox(p, mDisguised, kind);
-    publish(mVisible, mDisguised ? prop_info(kind).height : kLinkHeight, true);
+    const int shownKind = mDisguised && mPropKind >= 0 ? mPropKind : kind;
+    armHitbox(p, mDisguised, shownKind);
+    publish(mVisible, mDisguised ? prop_info(shownKind).height : kLinkHeight, true);
     return 1;
 }
 
@@ -534,6 +606,7 @@ int Puppet::draw() {
     if (!mVisible) return 1;
     g_env_light.settingTevStruct(0, &current.pos, &tevStr);
     float shadow = kLinkRadius;
+    bool modelShadow = false;
     if (mDisguised || mLocal) {
         if (mPropModel == nullptr) return 1;
         g_env_light.setLightTevColorType_MAJI(mPropModel, &tevStr);
@@ -546,9 +619,14 @@ int Puppet::draw() {
         if (anm != nullptr) anm->entry(data);
         mDoExt_modelUpdateDL(mPropModel);
         const PropInfo& info = prop_info(mPropKind);
-        shadow = info.shadowScale <= 0.0f
-                     ? 0.0f
-                     : std::clamp(info.radius * info.shadowScale, 18.0f, 85.0f);
+        if (info.shadowScale <= 0.0f) {
+            shadow = 0.0f;
+        } else if (const float nativeSize = native_simple_shadow_size(mPropKind); nativeSize > 0.0f) {
+            shadow = nativeSize;
+        } else {
+            shadow = 1.0f;  // a positive sentinel; projected shadows use their profile below
+            modelShadow = true;
+        }
     } else {
         // modelEntryDL alone does not submit custom actors on Dusklight's interpolated PC frames.
         // Updating the body and rigid attachments here keeps a complete Link visible every render
@@ -567,8 +645,18 @@ int Puppet::draw() {
         }
     }
     if (mGroundY != -G_CM3D_F_INF && shadow > 0.0f) {
-        dComIfGd_setSimpleShadow(&current.pos, mGroundY, shadow, mGndChk, 0, 1.0f,
-            dDlst_shadowControl_c::getSimpleTex());
+        if (modelShadow && mPropModel != nullptr) {
+            const PropInfo& info = prop_info(mPropKind);
+            const ModelShadowProfile profile = native_model_shadow(mPropKind, info);
+            cXyz shadowPos = current.pos;
+            shadowPos.y += profile.yOffset;
+            mShadowKey = dComIfGd_setShadow(mShadowKey, 1, mPropModel, &shadowPos, profile.depth,
+                profile.footprint, current.pos.y, mGroundY, mGndChk, &tevStr, shape_angle.y, 1.0f,
+                dDlst_shadowControl_c::getSimpleTex());
+        } else {
+            dComIfGd_setSimpleShadow(&current.pos, mGroundY, shadow, mGndChk, shape_angle.y,
+                1.0f, dDlst_shadowControl_c::getSimpleTex());
+        }
     }
     return 1;
 }
@@ -725,8 +813,8 @@ void update() {
         return;
     }
     if (s_decoyRound != m.round || s_decoyMap != mapIndex) {
-        // A repeated map still gets a newly rotated layout and prop mix. Remove the old actors
-        // first; the next update creates the new generation after deletion has been requested.
+        // Remove the old actors first; the next update creates this map's authored layout after
+        // deletion has been requested. Keeping layouts stable is what makes the scenery believable.
         for (int i = 0; i < kDecoyCount; ++i) {
             manage_decoy(s_decoys[i], false, i, 0, cXyz(0.0f, 0.0f, 0.0f), 0);
         }
@@ -734,18 +822,12 @@ void update() {
         s_decoyMap = mapIndex;
         return;
     }
-    const int rotation = static_cast<int>((m.round * 5u) % kDecoyCount);
     for (int i = 0; i < kDecoyCount; ++i) {
-        const CoverPoint point = cover_point(mapIndex, (i + rotation) % kDecoyCount);
-        // Start above a verified area. The actor grounds itself before becoming visible, so a
-        // nearby offset over a ledge or missing floor never leaves a floating prop.
+        const CoverPoint point = cover_point(mapIndex, i);
+        // Start above an authored point. The actor grounds itself before becoming visible, so a
+        // changed stage layout or missing floor never leaves a floating prop.
         const cXyz at(point.x, point.y + 1200.0f, point.z);
-        // Repeating a small set gives varied cover without keeping many large object archives
-        // mounted at once.
-        const int kind = prop_for_map(
-            mapIndex, (i % kDecoyVariety) * 7 + static_cast<int>(m.round) * 3);
-        const s16 yaw = static_cast<s16>(i * 0x25A1 + mapIndex * 0x071D + m.round * 0x0137);
-        manage_decoy(s_decoys[i], propRound, i, kind, at, yaw);
+        manage_decoy(s_decoys[i], propRound, i, point.prop, at, point.yaw);
     }
 }
 

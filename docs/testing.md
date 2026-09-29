@@ -25,7 +25,7 @@ on this computer**.
 
 ## 1. Loads and connects
 
-- [ ] Log shows `Hyrule Hide & Seek 0.1.6 ready`. No "hook ... did not resolve" warnings for
+- [ ] Log shows `Hyrule Hide & Seek 0.1.7 ready`. No "hook ... did not resolve" warnings for
       `daAlink_c::execute`, `daAlink_c::draw`, `daAlink_c::setCutType`,
       `daAlink_c::setDamagePoint`, `daAlink_c::checkNotBattleStage`, `fopAc_Execute`, or
       `dComIfGp_event_order`.
@@ -71,6 +71,8 @@ Start round. With 4 players (you + 3 bots) there is one hunter; restart until yo
 - [ ] The cucco prop animates when you walk.
 - [ ] Cycling props stays within a varied, map-appropriate pool; test at least one village, water,
       forest, mountain and desert map.
+- [ ] Cycle all 59 catalogue entries across those maps. Every choice draws a model; a bad optional
+      asset logs a warning and shows the fallback pot instead of making the hider invisible.
 - [ ] The hunter bot waits at the spawn during Hide, then chases you during the hunt and tags you:
       "You were found!", you become Link again (and a hunter).
 - [ ] D-pad down taunts: a Link shout plays, the taunt bar fills, and the hunter gets a five-second
@@ -79,8 +81,8 @@ Start round. With 4 players (you + 3 bots) there is one hunter; restart until yo
       it off leaves manual and stationary taunts only.
 - [ ] The stationary auto-taunt defaults to 60 seconds. Moving more than a small step resets its
       timer; Off disables it, and a shorter setting fires at the selected delay.
-- [ ] Flat/translucent props (lily pad, seaweed, grasses and crop leaves) have no telltale round black
-      blob; large props' shadows stay proportionate rather than growing beyond the model.
+- [ ] A prop Cucco, pumpkin, target and oil jar match the real actor's shadow. Carryables use their
+      native footprint; static rocks/furniture and flat/translucent plants have no added black blob.
 
 ## 5. A round as the hunter
 
@@ -88,13 +90,17 @@ Restart until you're the hunter (1 in 4).
 
 - [ ] Hide phase: black screen with a countdown, you can't walk away from the spawn.
 - [ ] The bots are props standing near you (pots, crates...). No name tags over them.
-- [ ] Eighteen extra scenery props are distributed across the map instead of clustered around the
-      hunter spawn. They have no name tags or collision and disappear outside a Prop Hunt round.
+- [ ] Twelve extra scenery props appear as six sensible pairs beside native scenery across the map,
+      never in a random pile or blocking a door/road. They disappear outside a Prop Hunt round.
+- [ ] Fake pots, crates, furniture and rocks stop Link. Fake grass, leaves, flowers and low bones are
+      walk-through, and none of the fake props can be hit as if it were a real hider.
 - [ ] Sword swing (B) hitting a bot prop: spark, "Found Bot N!", the counter at the top drops.
 - [ ] Walking into a real hider prop blocks Link instead of letting the hunter pass through it.
 - [ ] While swimming, get close to a prop and press B: the prop is found even though Link cannot use
       his sword. B keeps its normal swimming behaviour, and distant props are not tagged.
 - [ ] Castle Town still allows drawing and swinging the sword during the hunt.
+- [ ] From a hider's client, the hunter's complete Link body remains visible while idle, running and
+      swinging throughout Hide, Hunt and Results—never only a face/sword, a T-pose or a name tag.
 - [ ] Swinging at nothing costs a quarter heart (never the last one). Hitting a real pot also costs one.
 - [ ] Hitting every prop ends the round: "HUNTERS WIN!", the scoreboard, then a new round.
 

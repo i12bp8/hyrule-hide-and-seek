@@ -44,8 +44,9 @@ Windows, macOS and fixed Linux builds use WebSockets.
 
 There are 59 props drawn from across Hyrule: pots, crates, furniture, village signs and targets,
 forest plants, desert and mountain rocks, Zora ice and water props, plus a walking cucco. Selection
-is themed to the current map. Prop Hunt also places 18 harmless scenery decoys across map-wide
-cover areas, with no dense pile around the player spawn.
+is themed to the current map. Prop Hunt also places 12 scenery props in six hand-authored pairs
+beside native scenery across the map, never as a dense pile around the hunter spawn. Pots, crates,
+rocks and furniture are solid; grass, leaves, flowers and other soft cover remain walk-through.
 
 ### Rules the host can change
 
@@ -79,7 +80,7 @@ flags or stage layouts: turn them off while playing this.
 src/        the mod (C++, Dusklight mod SDK)
 server/     the relay: Cloudflare Worker + a plain Node version, tests and test bots
 tests/      rules test (no game needed) and a tunic-colour preview
-tools/      find_spawns.py: lists safe spawn points from your own disc files
+tools/      disc tools for safe spawns, native actor layouts and exact-case prop validation
 docs/       design notes and the in-game test checklist
 ```
 
@@ -105,11 +106,13 @@ The default relay runs on a Raspberry Pi at
 ### Tests
 
 ```sh
-tests/run.sh                    # the rules: rounds, hits, scoring, host migration (~280 checks)
+tests/run.sh                    # the rules: rounds, hits, scoring, maps and props (2,000+ checks)
 cd server && npm install && npm test   # the relay and the bots
 ```
 
 `tests/recolor_preview.py <disc> out.png` renders every tunic colour from your own game files.
+`tools/validate_prop_assets.py <disc>` checks every archive, model and animation name against an
+extracted disc, including exact letter case and numeric model IDs.
 
 ### Try it alone
 

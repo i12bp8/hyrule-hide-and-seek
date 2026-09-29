@@ -59,13 +59,14 @@ Prop Hunt is the main mode; classic Hide & Seek comes along for free.
 
 ### Prop Hunt
 
-- Props: 59 objects drawn from every region, with map-themed selection, plus 18 deterministic visual
-  decoys spread between six map-wide areas to give sparse maps believable cover. Models are
-  read from the player's own game files.
+- Props: 59 objects drawn from every region, with map-themed selection, plus 12 deterministic
+  scenery props in six hand-authored pairs beside native scenery. This gives sparse maps believable
+  cover without a random pile at the hunter spawn. Models are read from the player's own game files.
 - D-pad right copies the pot/crate/barrel you stand next to, like "become the prop you look at" in
   Garry's Mod; with nothing nearby it cycles. D-pad left goes back.
-- Hunters hit props with a real sword swing: each prop carries a solid cylinder that Link cannot
-  walk through and that only Link's sword (and wolf attacks) can hit. While swimming, where the game
+- Hunters hit props with a real sword swing: physical props carry a solid cylinder that Link cannot
+  walk through and that only Link's sword (and wolf attacks) can hit. Grass, leaves, flowers and
+  other soft scenery stay walk-through but remain sword targets. While swimming, where the game
   prevents sword use, B performs a close-range prop tag. A sword swing that hits no prop costs a
   quarter heart (never the last one).
 - D-pad down taunts for a point. Hunters hear a Link shout and get a direction, distance and
@@ -160,13 +161,15 @@ A custom actor (`HSPupt`, registered through ActorService) per remote player in 
   sheath and Hylian Shield) into the mod's own heap. The body and cap are loaded once per tunic
   colour with the green shifted in the CMPR texture data (`src/recolor.cpp`), so every player looks
   different and none of it is shared with the local Link.
-- Animation: the sender's three lower-body and three upper-body animation slots (index, frame,
-  blend weight) from `daAlink_c`, loaded from the global `AlAnm` archive into a shared cache and
-  blended with `mDoExt_MtxCalcAnmBlendTbl`, split at the same joints as Link (0 and 16 lower, 1 upper).
+- Animation: a known-complete idle or walk pose from the global `AlAnm` archive, cached before map
+  warps and retried after transient remount failures. A single full-skeleton blend calculator avoids
+  cutscene-only or half-loaded sender animations making a remote Link disappear or T-pose.
 - Props: the prop's archive model through the resource manager, drawn at the player's position;
   joint callbacks and animations the real objects put on the shared model data are swapped out
   around our `calc()`.
-- Position is interpolated between 10 Hz updates; simple shadows from a ground check.
+- Position is interpolated between 10 Hz updates. Carryables use their native simple-shadow sizes,
+  actors such as Cuccos and targets use their native model-projection profile, and static or
+  flat/translucent scenery casts no extra dynamic blob—matching the corresponding real actor.
 - The local player's own tunic is recoloured with TextureService pointer-keyed replacements.
 
 The local player in prop mode: Link's draw is skipped by a pre-hook on `daAlink_c::draw` and the
