@@ -10,6 +10,7 @@
 #include "JSystem/J3DGraphBase/J3DTexture.h"
 #include "JSystem/J3DGraphLoader/J3DAnmLoader.h"
 #include "JSystem/JKernel/JKRArchive.h"
+#include "JSystem/JKernel/JKRDecomp.h"
 #include "JSystem/JKernel/JKRExpHeap.h"
 #include "JSystem/JKernel/JKRHeap.h"
 #include "d/actor/d_a_alink.h"
@@ -145,7 +146,7 @@ struct LocalTex {
     const void* pointer = nullptr;
     TextureReplacementHandle handle = 0;
 };
-LocalTex s_local[8];
+std::vector<LocalTex> s_local;
 int s_localColor = -1;
 
 }  // namespace
@@ -244,13 +245,25 @@ J3DAnmTransform* anim(uint16_t idx) {
         slot->failedAt = now;
         return nullptr;
     }
-    void* resource = s_animArchive->getIdxResource(idx);
+    auto* resource = static_cast<u8*>(s_animArchive->getIdxResource(idx));
+    // AlAnm's entries can be Yaz0-compressed inside the archive, and getIdxResource() on a memory
+    // archive hands back those raw bytes. The animation loader rejects them, which left every
+    // remote Link in the bind pose (a T-pose). Expand them the way JKRReadIdxResource() does.
+    const JKRCompression compression =
+        resource != nullptr ? JKRCheckCompressed_noASR(resource) : COMPRESSION_NONE;
     // A resource lookup miss reports its size as (u32)-1, not 0; never trust it past a sane cap
-    // (the largest of Link's BCKs is well under this) for an allocation and memcpy length.
+    // (the largest of Link's BCKs is well under this) for an allocation and copy length.
     constexpr u32 kMaxAnimSize = 256 * 1024;
-    const u32 size = resource != nullptr ? s_animArchive->getResSize(resource) : 0;
+    u32 size = 0;
+    if (resource != nullptr) {
+        size = compression == COMPRESSION_NONE ? s_animArchive->getResSize(resource)
+                                               : JKRDecompExpandSize(resource);
+    }
     u8* buffer = size != 0 && size <= kMaxAnimSize ? static_cast<u8*>(s_heap->alloc(size, 32)) : nullptr;
-    if (buffer != nullptr) std::memcpy(buffer, resource, size);
+    if (buffer != nullptr) {
+        if (compression == COMPRESSION_NONE) std::memcpy(buffer, resource, size);
+        else JKRDecompress(resource, buffer, size, 0);
+    }
     if (buffer == nullptr) {
         mods::log::warn("linkkit: could not copy animation #{:#x}", idx);
         slot->failedAt = now;
@@ -262,6 +275,8 @@ J3DAnmTransform* anim(uint16_t idx) {
         loaded = J3DAnmLoaderDataBase::load(buffer);
     }
     if (loaded == nullptr || loaded->getKind() != 0) {  // 0 = transform (bck)
+        static int s_warned = 0;
+        if (s_warned++ < 4) mods::log::warn("linkkit: animation #{:#x} did not load", idx);
         s_heap->free(buffer);
         slot->failedAt = now;
         return nullptr;
@@ -275,65 +290,69 @@ void recolor_local_link(uint8_t color) {
     if (svc_texture == nullptr) return;
     daAlink_c* link = daAlink_getAlinkActorClass();
     if (link == nullptr || link->checkWolf()) return;
-    J3DModel* models[2] = {link->mpLinkModel, link->mpLinkHatModel};
-    const void* pointers[8] = {};
-    int n = 0;
-    for (J3DModel* model : models) {
+    // Every CMPR texture of the body and the cap, each image once. A fixed list of eight filled
+    // up with the body's textures first, so the cap kept its green.
+    struct Wanted {
+        u8* data;
+        const ResTIMG* timg;
+    };
+    std::vector<Wanted> wanted;
+    for (J3DModel* model : {link->mpLinkModel, link->mpLinkHatModel}) {
         if (model == nullptr) continue;
         J3DTexture* tex = model->getModelData()->getTexture();
-        for (u16 i = 0; tex != nullptr && i < tex->getNum() && n < 8; ++i) {
-            if (tex->getResTIMG(i)->format == GX_TF_CMPR) pointers[n++] = tex->getImgDataPtr(i);
+        for (u16 i = 0; tex != nullptr && i < tex->getNum(); ++i) {
+            const ResTIMG* timg = tex->getResTIMG(i);
+            u8* data = tex->getImgDataPtr(i);
+            if (timg->format != GX_TF_CMPR || data == nullptr) continue;
+            const bool seen = std::any_of(wanted.begin(), wanted.end(),
+                [&](const Wanted& w) { return w.data == data; });
+            if (!seen) wanted.push_back({data, timg});
         }
     }
-    bool same = s_localColor == color;
-    for (int i = 0; i < 8 && same; ++i) same = s_local[i].pointer == pointers[i];
+    bool same = s_localColor == color && (color == 0 || s_local.size() == wanted.size());
+    for (size_t i = 0; i < wanted.size() && same; ++i) same = s_local[i].pointer == wanted[i].data;
     if (same) return;
 
     for (LocalTex& t : s_local) {
         if (t.handle != 0) svc_texture->unregister(mod_ctx, t.handle);
-        t = LocalTex{};
     }
+    s_local.clear();
     s_localColor = color;
     if (color == 0) return;
-    int k = 0;
-    for (J3DModel* model : models) {
-        if (model == nullptr) continue;
-        J3DTexture* tex = model->getModelData()->getTexture();
-        for (u16 i = 0; tex != nullptr && i < tex->getNum() && k < 8; ++i) {
-            const ResTIMG* timg = tex->getResTIMG(i);
-            if (timg->format != GX_TF_CMPR) continue;
-            const u32 w = timg->width, h = timg->height;
-            const u32 mips = std::max<u32>(timg->mipmapCount, 1);
-            const u32 bytes = recolor::cmpr_size(w, h, mips);
-            std::vector<u8> copy(tex->getImgDataPtr(i), tex->getImgDataPtr(i) + bytes);
-            recolor::cmpr(copy.data(), bytes, color_of(color));
-            TextureKey key = TEXTURE_KEY_INIT;
-            key.kind = TEXTURE_KEY_POINTER;
-            key.pointer = tex->getImgDataPtr(i);
-            key.width = w;
-            key.height = h;
-            key.gx_format = GX_TF_CMPR;
-            TextureData data = TEXTURE_DATA_INIT;
-            data.data = copy.data();
-            data.size = bytes;
-            data.width = w;
-            data.height = h;
-            data.mip_count = mips;
-            data.gx_format = GX_TF_CMPR;
-            s_local[k].pointer = key.pointer;
-            svc_texture->register_data(mod_ctx, &key, &data, &s_local[k].handle);
-            ++k;
-        }
+    for (const Wanted& w : wanted) {
+        const u32 width = w.timg->width, height = w.timg->height;
+        const u32 mips = std::max<u32>(w.timg->mipmapCount, 1);
+        const u32 bytes = recolor::cmpr_size(width, height, mips);
+        std::vector<u8> copy(w.data, w.data + bytes);
+        recolor::cmpr(copy.data(), bytes, color_of(color));
+        TextureKey key = TEXTURE_KEY_INIT;
+        key.kind = TEXTURE_KEY_POINTER;
+        key.pointer = w.data;
+        key.width = width;
+        key.height = height;
+        key.gx_format = GX_TF_CMPR;
+        TextureData data = TEXTURE_DATA_INIT;
+        data.data = copy.data();
+        data.size = bytes;
+        data.width = width;
+        data.height = height;
+        data.mip_count = mips;
+        data.gx_format = GX_TF_CMPR;
+        LocalTex t;
+        t.pointer = w.data;
+        svc_texture->register_data(mod_ctx, &key, &data, &t.handle);
+        s_local.push_back(t);
     }
+    mods::log::info("linkkit: your tunic is {} ({} textures)", color_of(color).name, s_local.size());
 }
 
 void shutdown() {
     if (svc_texture != nullptr) {
         for (LocalTex& t : s_local) {
             if (t.handle != 0) svc_texture->unregister(mod_ctx, t.handle);
-            t = LocalTex{};
         }
     }
+    s_local.clear();
     s_localColor = -1;
     // Everything below lives in our heap; destroying it frees all of it at once. Puppets are
     // gone by now (the actors are deleted before the mod unloads).
