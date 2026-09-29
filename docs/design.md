@@ -185,8 +185,14 @@ A custom actor (`HSPupt`, registered through ActorService) per remote player in 
   fixed at host-approved snapshot positions. Carryables and a few movable actors use cheap
   native-sized simple shadows; static or flat/translucent scenery casts no extra dynamic blob.
   Disguises never use model-projected shadows, which would submit complex geometry again and can
-  overflow older Dusklight builds' fixed per-frame index buffer. Large rooms require Aurora's
-  expanded geometry staging buffers.
+  consume older Dusklight builds' fixed per-frame index buffer unnecessarily. Models calculate on
+  simulation ticks and use `modelEntryDL` for drawing, so presentation frames reuse retained packets
+  without inserting them again. Puppets belong to the stage layer, avoiding a second submission by
+  the root-layer iterator. Re-entering a packet can make a cyclic list that draws forever; a larger
+  GPU buffer only delays that abort. No patched Dusklight is required.
+- Link's privately loaded BMWR models have their warp texture stages disabled, as native Link
+  does during model initialization. Their shared display lists are regenerated afterward;
+  leaving the warp stage enabled can discard the entire body while its name tag remains visible.
 - The local player's own tunic is recoloured with TextureService pointer-keyed replacements.
 
 The local player in prop mode: Link's draw is skipped by a pre-hook on `daAlink_c::draw` and the

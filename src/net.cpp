@@ -201,6 +201,12 @@ void start_http_send() {
 void start_http(const std::string& server, const std::string& path) {
     s_transport = Transport::Http;
     s_httpBase = http_base(server);
+    // Stock HttpService accepts HTTPS only, even for loopback. WebSocket-capable builds can
+    // still use a plain local relay, but this fallback must fail with an actionable message.
+    if (s_httpBase.rfind("https://", 0) != 0) {
+        closed("This Dusklight build requires an HTTPS relay. Use the default server or a secure custom relay.");
+        return;
+    }
     const uint32_t generation = s_httpGeneration;
     mods::http::Request request{
         .method = HTTP_METHOD_POST,
@@ -221,7 +227,10 @@ void start_http(const std::string& server, const std::string& path) {
         s_httpSession = body["session"].str();
         mods::log::info("Dusklight WebSockets unavailable; using the HTTP relay fallback");
     });
-    if (!s_httpOpen) closed("Dusklight's network services are unavailable.");
+    if (!s_httpOpen) {
+        mods::log::warn("HTTP relay open failed (service result {})", static_cast<int>(s_httpOpen.result()));
+        closed("Dusklight's network services are unavailable.");
+    }
 }
 
 void connect_room(const std::string& server, const std::string& path) {

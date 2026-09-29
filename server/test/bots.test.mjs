@@ -41,7 +41,7 @@ function stateBytes({ stage, x, y, z, flags = 1 }) {
 }
 
 test("bots follow the host, get ready and turn into props", async () => {
-  const host = new WebSocket(`${base}/host?name=Human&v=4`);
+  const host = new WebSocket(`${base}/host?name=Human&v=5`);
   host.binaryType = "arraybuffer";
   const states = new Map(); // bot id -> latest decoded state
   const readies = new Set();

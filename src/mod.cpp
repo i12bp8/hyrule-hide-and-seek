@@ -38,6 +38,12 @@ IMPORT_SERVICE(ActorService, svc_actor);
 IMPORT_OPTIONAL_SERVICE(TextureService, svc_texture);
 IMPORT_OPTIONAL_SERVICE(GameModeService, svc_game_mode);
 
+#ifdef HS_STOCK_RENDER_TEST
+namespace hs::testing {
+void stock_render_update();
+}
+#endif
+
 namespace {
 
 void wire_network() {
@@ -80,6 +86,9 @@ MOD_EXPORT ModResult mod_initialize(ModError* error) {
 MOD_EXPORT ModResult mod_update(ModError*) {
     hs::net::update();
     hs::match::update();
+#ifdef HS_STOCK_RENDER_TEST
+    hs::testing::stock_render_update();
+#endif
     hs::local::update();
     hs::puppet::update();
     hs::game_mode::update();

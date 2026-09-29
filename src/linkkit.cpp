@@ -127,7 +127,16 @@ J3DModelData* load_model(const Raw& raw, bool copy, int color) {
         if (color > 0) recolor::bmd(data, raw.size, static_cast<uint8_t>(color));
     }
     HeapScope scope(s_heap);
-    return dRes_info_c::loaderBasicBmd('BMWR', data);
+    J3DModelData* model = dRes_info_c::loaderBasicBmd('BMWR', data);
+    if (model != nullptr) {
+        // BMWR loading enables Link's warp-disappearance texture stage. Native Link turns it
+        // off during initModel(); without that step the entire puppet can fail the alpha test.
+        // Rebuild the shared lists too: our permanent, non-warping models do not carry Link's
+        // per-frame texgen/TEV-count diff flags to patch the original warp-enabled lists.
+        dRes_info_c::offWarpMaterial(model);
+        model->makeSharedDL();
+    }
+    return model;
 }
 
 // ---- local tunic ----------------------------------------------------------------------------
@@ -336,6 +345,13 @@ void shutdown() {
     s_shared = LinkModels{};
     s_sharedLoaded = false;
     s_files = Files{};
+    // A mounted archive is linked into JKR's global volume list. Unlink it before freeing
+    // its heap, or the next archive lookup/reload can follow a dangling list node.
+    if (s_animArchive != nullptr) {
+        s_animArchive->unmount();
+        s_animArchive = nullptr;
+    }
+    s_animArchiveTried = false;
     if (s_heap != nullptr) {
         s_heap->destroy();
         s_heap = nullptr;

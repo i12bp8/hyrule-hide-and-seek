@@ -27,6 +27,9 @@
 #include <cmath>
 #include <cstring>
 #include <vector>
+#ifdef HS_STOCK_RENDER_TEST
+#include <cstdio>
+#endif
 
 // actor.h has no extern declaration of its own; mod.cpp imports it.
 extern const ActorService* svc_actor;
@@ -203,6 +206,10 @@ private:
 
 int Puppet::create() {
     fopAcM_ct(this, Puppet);
+    // ActorService creates in the current layer, which can still be the root when a room joins.
+    // Put world actors in the play scene like native actors: a root-layer puppet is also drawn
+    // by the presentation root iterator after the play scene's actor queue already drew it.
+    fopAcM_setStageLayer(&LEAFDRAW_BASE(this));
     const u32 prm = fopAcM_GetParam(this);
     mSlot = static_cast<int>(prm & 0xFF);
     mLocal = (prm & kLocalFlag) != 0;
@@ -415,6 +422,14 @@ bool Puppet::updateProp(int kind, bool moving) {
     mDoExt_bckAnm* anm = moving && mPropMove != nullptr ? mPropMove : mPropIdle;
     if (anm != nullptr) anm->play();
     mPropMoving = moving;
+    // Calculate on the simulation tick, while our animation and callback overrides are active.
+    // Drawing uses modelEntryDL: presentation frames reuse the simulation's packets instead of
+    // registering them again in the still-live draw buffers.
+    {
+        JointGuard guard(mPropModel->getModelData());
+        if (anm != nullptr) anm->entry(mPropModel->getModelData());
+        mPropModel->calc();
+    }
     return true;
 }
 
@@ -565,6 +580,17 @@ int Puppet::execute() {
     const int shownKind = mDisguised && mPropKind >= 0 ? mPropKind : kind;
     armHitbox(p, mDisguised, shownKind);
     publish(mVisible, mDisguised ? prop_info(shownKind).height : kLinkHeight, true);
+#ifdef HS_STOCK_RENDER_TEST
+    if (mSlot == 2 && !mDisguised) {
+        static uint64_t last = 0;
+        if (now_ms() - last > 3000) {
+            last = now_ms();
+            mods::log::info("HUNTER_DEBUG: visible={} body={} condition={} pos=({},{},{})", mVisible,
+                mBody != nullptr, static_cast<int>(actor_condition), current.pos.x, current.pos.y, current.pos.z);
+            std::fflush(nullptr);
+        }
+    }
+#endif
     return 1;
 }
 
@@ -575,28 +601,39 @@ int Puppet::draw() {
     if (mDisguised || mLocal) {
         if (mPropModel == nullptr) return 1;
         g_env_light.setLightTevColorType_MAJI(mPropModel, &tevStr);
-        // Carryable objects use modelUpdateDL(), not a separate calc()/entryDL() pair. Keep the
-        // shared resource's actor callbacks out of the whole update so our model cannot run a
-        // real pot/crate actor's joint callback with this Puppet as its owner.
+        // Keep shared resource callbacks away from our model. Its matrices were calculated in
+        // execute(); EntryDL refreshes materials on presentation frames without re-entering the
+        // packets that Dusklight retained from the last simulation tick.
         J3DModelData* data = mPropModel->getModelData();
         JointGuard guard(data);
         mDoExt_bckAnm* anm = mPropMoving && mPropMove != nullptr ? mPropMove : mPropIdle;
         if (anm != nullptr) anm->entry(data);
-        mDoExt_modelUpdateDL(mPropModel);
+        mDoExt_modelEntryDL(mPropModel);
         // Never use model-projected shadows here: those redraw the prop's geometry into the shadow
         // pass. A metadata-sized simple quad is cheap and cannot double a complex model's indices.
         shadow = prop_info(mPropKind).simpleShadowSize;
     } else {
-        // modelEntryDL alone does not submit custom actors on Dusklight's interpolated PC frames.
-        // Updating the body and rigid attachments here keeps a complete Link visible every render
-        // frame. Hands retain Link's normal entry path because their two joint matrices are placed
-        // manually after calc().
+#ifdef HS_STOCK_RENDER_TEST
+        if (mSlot == 2) {
+            static uint64_t last = 0;
+            if (now_ms() - last > 3000) {
+                last = now_ms();
+                mods::log::info("HUNTER_DEBUG: draw body joints={} mtxY={} shapes={} rootY={}",
+                    mBody->getModelData()->getJointNum(), mBody->getBaseTRMtx()[1][3],
+                    mBody->getModelData()->getShapeNum(), mBody->getAnmMtx(0)[1][3]);
+                std::fflush(nullptr);
+            }
+        }
+#endif
+        // poseLink() has already calculated the body and every attachment. Only enter their
+        // packets on simulation frames: UpdateDL's locked-model path also enters on presentation
+        // frames, creating cycles in the retained material list and an unbounded geometry stream.
         if (mPoseAnim != nullptr) mPoseAnim->setFrame(mPoseFrame);
         J3DModel* updated[] = {mBody, mFace, mHead, mSheath, mSword, mShield};
         for (J3DModel* model : updated) {
             if (model == nullptr) continue;
             g_env_light.setLightTevColorType_MAJI(model, &tevStr);
-            mDoExt_modelUpdateDL(model);
+            mDoExt_modelEntryDL(model);
         }
         if (mHands != nullptr) {
             g_env_light.setLightTevColorType_MAJI(mHands, &tevStr);

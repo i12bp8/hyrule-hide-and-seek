@@ -18,7 +18,7 @@ const args = Object.fromEntries(
 const server = String(args.server || "ws://127.0.0.1:8787").replace(/\/$/, "");
 const room = String(args.room || "").toUpperCase();
 const count = Number(args.count || 3);
-const PROTOCOL = 4;
+const PROTOCOL = 5;
 if (!room) {
   console.error("usage: node bots.mjs --room ABCDE [--count 3] [--server ws://127.0.0.1:8787]");
   process.exit(2);

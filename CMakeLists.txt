@@ -6,7 +6,7 @@ endif ()
 
 # The version shown in the mod manager. Players need the same protocol version (src/protocol.hpp)
 # to play together; the mod version itself may differ.
-project(hyrule_hide_and_seek VERSION 0.1.10 LANGUAGES CXX)
+project(hyrule_hide_and_seek VERSION 0.1.11 LANGUAGES CXX)
 
 # The Dusklight version to build against: a release tag or a commit SHA.
 if (NOT DUSKLIGHT_VERSION)
@@ -49,3 +49,11 @@ add_mod(hyrule_hide_and_seek
 target_compile_definitions(hyrule_hide_and_seek PRIVATE
         HS_DEFAULT_SERVER="${HS_DEFAULT_SERVER}"
         HS_MOD_VERSION="${PROJECT_VERSION}")
+
+# Opt-in game integration test; never enabled in distributed bundles.
+option(HS_STOCK_RENDER_TEST "Exercise stock Dusklight's retained draw lists in the game" OFF)
+if (HS_STOCK_RENDER_TEST)
+    target_sources(hyrule_hide_and_seek PRIVATE tests/stock_render_driver.cpp)
+    target_include_directories(hyrule_hide_and_seek PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
+    target_compile_definitions(hyrule_hide_and_seek PRIVATE HS_STOCK_RENDER_TEST=1)
+endif ()

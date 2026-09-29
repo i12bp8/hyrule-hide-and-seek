@@ -25,7 +25,7 @@ on this computer**.
 
 ## 1. Loads and connects
 
-- [ ] Log shows `Hyrule Hide & Seek 0.1.7 ready`. No "hook ... did not resolve" warnings for
+- [ ] Log shows `Hyrule Hide & Seek 0.1.11 ready`. No "hook ... did not resolve" warnings for
       `daAlink_c::execute`, `daAlink_c::draw`, `daAlink_c::setCutType`,
       `daAlink_c::setDamagePoint`, `daAlink_c::checkNotBattleStage`, `fopAc_Execute`, or
       `dComIfGp_event_order`.
@@ -72,7 +72,8 @@ Start round. With 4 players (you + 3 bots) there is one hunter; restart until yo
       counts down 5 → 0; they remain fixed after you move away, are at least a prop-width apart, and
       placing a sixth free one fails cleanly.
 - [ ] Set **Free decoys per hider** to 0 and 10 in separate rounds. Zero starts with none; ten grants
-      ten placement charges while only five from that hider and eight room-wide remain active.
+      ten placement charges and retains all ten from that hider. With eight players, each hider
+      can retain ten without evicting anyone else's decoys; the structural room capacity is 160.
 - [ ] The cucco prop animates when you walk.
 - [ ] Cycling props stays within a varied, map-appropriate pool; test at least one village, water,
       forest, mountain and desert map.
@@ -176,3 +177,32 @@ Drop maps that misbehave from `src/maps.cpp`.
 - [ ] Deploy the relay (server/README.md), set the address in Settings (or build with it), host and
       join from two different networks.
 - [ ] Rules → List this room publicly: it shows up in Play → Public games on the other machine.
+
+## Stock-render regression (developers)
+
+The v0.1.10 lobby/decoy abort was caused by duplicate model submissions forming cyclic retained
+draw lists. Models must calculate in execute, enter through `mDoExt_modelEntryDL`, and belong to
+the stage layer. Increasing Dusklight's GPU buffers does not fix that cycle.
+
+Build the opt-in integration driver separately (never distribute this test bundle):
+
+```sh
+cmake -B build-stock-render -DHS_STOCK_RENDER_TEST=ON
+cmake --build build-stock-render --parallel
+```
+
+Use the default secure relay, or configure another HTTPS relay (stock Linux's HttpService rejects
+plain HTTP, including loopback). Copy the test bundle into an isolated user directory's `mods`
+folder, configure its disc path, and copy a playable save into its `USA/Card A` folder. Launch the
+original, unmodified Dusklight with `--user-dir <isolated-dir> --mods <isolated-dir>/mods
+--load-save 1 --stage F_SP103,0,13,-1`. Enable frame interpolation and keep the window focused
+(or disable pause-on-focus-loss in the isolated profile).
+
+The driver populates 16 player states, starts a round, cycles all 54 selectable props with 160
+decoy snapshots, then leaves and checks cleanup. It checks the actual material/shape lists for
+cycles before rendering and exits successfully only after logging `STOCK_RENDER_TEST PASS`.
+Injected states exercise the real actors and rendering, not 16 independent network clients.
+
+- [ ] Run on stock Linux and Windows, both with interpolation on and off.
+- [ ] Separately join real cross-platform clients and place decoys with D-pad up.
+- [ ] Repeat rounds, leave/rejoin, change stage, and verify complete animated Link bodies.
