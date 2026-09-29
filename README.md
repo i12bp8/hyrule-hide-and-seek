@@ -29,8 +29,8 @@ Windows, macOS and fixed Linux builds use WebSockets.
 | Phase | Props | Hunters |
 | --- | --- | --- |
 | Get ready | Everyone is warped to the map. | |
-| Hide (45 s) | Run, pick a disguise, find a spot. | Black screen and a countdown. |
-| Hunt (4 min) | Stay still. Taunt for points. | Hit every prop with your sword before time runs out. |
+| Hide (45 s) | Run, pick a disguise, place decoys, find a spot. | Black screen and a countdown. |
+| Hunt (4 min) | Stay hidden; taunt or buy extra decoys with round points. | Hit every real prop before time runs out. |
 | Results | Scoreboard. The next round starts with new hunters. | |
 
 ### Controls
@@ -39,21 +39,28 @@ Windows, macOS and fixed Linux builds use WebSockets.
 | --- | --- |
 | **D-pad right** | Props: copy the pot, crate or barrel next to you (or the next prop) |
 | **D-pad left** | Props: previous prop |
-| **D-pad down** | Props: taunt (+1 point, every 5 s; reveals you to hunters for 5 s) |
-| **B** | Hunters: swing; while swimming, tag a nearby prop. A missed sword swing costs a quarter heart. |
+| **D-pad up** | Props: place a decoy during Hide or Hunt |
+| **D-pad down** | Props: taunt (+1 point every 10 s at most; reveals you to hunters for 5 s) |
+| **B** | Hunters: swing; while swimming, tag a nearby prop. A miss costs one heart. |
 
-There are 59 props drawn from across Hyrule: pots, crates, furniture, village signs and targets,
-forest plants, desert and mountain rocks, Zora ice and water props, plus a walking cucco. Selection
-is themed to the current map. Prop Hunt also places 12 scenery props in six hand-authored pairs
-beside native scenery across the map, never as a dense pile around the hunter spawn. Pots, crates,
-rocks and furniture are solid; grass, leaves, flowers and other soft cover remain walk-through.
+There are 54 selectable props drawn from across Hyrule: pots, crates, furniture, village signs and
+targets, forest plants, mountain rocks, Zora ice and water props, plus a walking cucco. Selection is
+themed to the current map. Disguises are sword targets but stay walk-through, avoiding stale
+network collision pushing the hunter away from what they see.
+
+Each hider starts with five free decoy placements (host-adjustable from 0–10). After those are used,
+an extra decoy costs 3 points earned in that round and is available only during Hunt. A hider can
+keep five active; the room keeps at most eight for rendering safety, replacing the oldest when full.
+Decoys have no physical collision, disappear when hit, give no hunter points, and deliberately count
+as a missed swing.
 
 ### Rules the host can change
 
 Mode (Prop Hunt / Hide & Seek), map (or a random one every round), hiding and round time, number of
 hunters, whether found props join the hunters, the miss penalty, how long a prop may stay still
-before automatically taunting (60 seconds by default, or Off), optional extra last-minute taunts
-(off by default), starting rounds automatically, and whether the room is listed publicly.
+before automatically taunting (60 seconds by default, or Off), free decoys per hider, optional extra
+last-minute taunts (off by default), starting rounds automatically, and whether the room is listed
+publicly.
 
 **Hide & Seek mode**: everyone stays Link and hunters tag hiders by touching them, like SMO Online.
 
@@ -66,8 +73,9 @@ inert, and a loading zone that leaves it returns you to its spawn so nobody can 
 
 ### Scoring
 
-Props get 1 point per 10 seconds hidden, 5 for surviving the round, and 1 per taunt. Hunters get 5
-per find. Scores add up over the whole session.
+Props earn 1 point live for every 10 seconds hidden, 5 for surviving the round, and 1 per taunt at
+most once every 10 seconds. Hunters get 5 per find. Paid decoys subtract 3 current-round points and
+3 from the room total, so they are a real tactical tradeoff. Scores otherwise add up for the session.
 
 ## Not compatible with
 
@@ -106,7 +114,7 @@ The default relay runs on a Raspberry Pi at
 ### Tests
 
 ```sh
-tests/run.sh                    # the rules: rounds, hits, scoring, maps and props (2,000+ checks)
+tests/run.sh                    # the rules: rounds, hits, decoys, scoring, maps and props (1,600+ checks)
 cd server && npm install && npm test   # the relay and the bots
 ```
 
@@ -143,5 +151,5 @@ animation and sound is read from your own copy of the game at runtime.
 
 ### AI assistance
 
-The code, relay, tests and documentation were written with the help of an AI assistant (Claude, by
-Anthropic) and reviewed by i12bp8. Tag it as AI-assisted when uploading.
+The code, relay, tests and documentation were written with help from AI assistants (Claude by
+Anthropic and Codex by OpenAI) and reviewed by i12bp8. Tag it as AI-assisted when uploading.

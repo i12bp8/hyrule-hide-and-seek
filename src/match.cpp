@@ -18,6 +18,10 @@ constexpr uint64_t kStateIntervalMs = 100;
 constexpr uint64_t kMetaIntervalMs = 30000;
 constexpr uint64_t kImmunityMs = 4000;   // after a player loads into a new area
 constexpr float kMaxHitDistance = 450.0f;  // sword reach plus network lag
+constexpr uint64_t kDecoyCooldownMs = 750;
+constexpr uint64_t kFreshStateMs = 2000;
+constexpr float kMinDecoySpacing = 100.0f;
+constexpr int kMaxOwnerDecoys = 5;
 constexpr int kFindPoints = 5;
 constexpr int kSurvivePoints = 5;
 constexpr int kSecondsPerPoint = 10;
@@ -31,6 +35,8 @@ uint64_t s_lastStateSent = 0;
 uint64_t s_lastMeta = 0;
 uint64_t s_seekStartedAt = 0;  // host clock, for survival points
 uint64_t s_lastHitSent[kSlots] = {};
+uint64_t s_lastDecoyHitSent[kMaxActiveDecoys + 1] = {};
+uint8_t s_nextDecoyId = 1;
 std::mt19937 s_rng{std::random_device{}()};
 
 Player& P(int id) {
@@ -109,6 +115,24 @@ Writer roster_msg() {
         w.u16(p.roundPoints);
         w.u8(static_cast<uint8_t>((p.found ? 1 : 0) | (p.ready ? 2 : 0)));
         w.u8(p.hunterRounds);
+        w.u8(p.decoysUsed);
+    }
+    return w;
+}
+
+Writer decoys_msg() {
+    Writer w(MSG_DECOYS);
+    w.u32(s_match.round);
+    w.u8(s_match.decoyCount);
+    for (int i = 0; i < s_match.decoyCount; ++i) {
+        const Decoy& d = s_match.decoys[i];
+        w.u8(d.id);
+        w.u8(d.owner);
+        w.u8(d.prop);
+        w.f32(d.x);
+        w.f32(d.y);
+        w.f32(d.z);
+        w.s16(d.yaw);
     }
     return w;
 }
@@ -177,14 +201,124 @@ void give(int id, int points) {
     p.score = static_cast<uint16_t>(std::min(65535, p.score + points));
 }
 
+bool award_survival(int id, uint64_t until) {
+    Player& p = P(id);
+    const uint16_t earned = static_cast<uint16_t>(std::min(65535, survival_points(until)));
+    if (earned <= p.survivalAwarded) return false;
+    give(id, earned - p.survivalAwarded);
+    p.survivalAwarded = earned;
+    return true;
+}
+
+void clear_decoys() {
+    s_match.decoyCount = 0;
+    for (Decoy& d : s_match.decoys) d = Decoy{};
+}
+
+void erase_decoy(int index) {
+    if (index < 0 || index >= s_match.decoyCount) return;
+    for (int i = index + 1; i < s_match.decoyCount; ++i) {
+        s_match.decoys[i - 1] = s_match.decoys[i];
+    }
+    --s_match.decoyCount;
+    s_match.decoys[s_match.decoyCount] = Decoy{};
+}
+
+int decoy_index(uint8_t id) {
+    for (int i = 0; i < s_match.decoyCount; ++i) {
+        if (s_match.decoys[i].id == id) return i;
+    }
+    return -1;
+}
+
+uint8_t take_decoy_id() {
+    for (int tries = 0; tries < 255; ++tries) {
+        const uint8_t id = s_nextDecoyId++;
+        if (s_nextDecoyId == 0) s_nextDecoyId = 1;
+        if (id != 0 && decoy_index(id) < 0) return id;
+    }
+    return 0;
+}
+
+void host_place_decoy(int owner) {
+    Player& p = P(owner);
+    const uint64_t now = now_ms();
+    if (s_match.settings.mode != Mode::PropHunt ||
+        (s_match.phase != Phase::Hide && s_match.phase != Phase::Seek) || !p.present ||
+        p.role != Role::Hider || p.found || !p.hasState || now - p.stateAt > kFreshStateMs ||
+        !(p.state.flags & STATE_IN_WORLD) || !(p.state.flags & STATE_DISGUISED) ||
+        std::strncmp(p.state.stage, map_info(s_match.map).stage, 8) != 0 ||
+        !prop_on_map(p.state.prop, s_match.map) || now - p.lastDecoyAt < kDecoyCooldownMs ||
+        !std::isfinite(p.state.x) || !std::isfinite(p.state.y) || !std::isfinite(p.state.z)) {
+        return;
+    }
+
+    const bool free = p.decoysUsed < s_match.settings.freeDecoys;
+    if (!free && (s_match.phase != Phase::Seek || p.roundPoints < kExtraDecoyCost)) return;
+    for (int i = 0; i < s_match.decoyCount; ++i) {
+        const Decoy& d = s_match.decoys[i];
+        const float dx = d.x - p.state.x, dy = d.y - p.state.y, dz = d.z - p.state.z;
+        if (dx * dx + dy * dy + dz * dz < kMinDecoySpacing * kMinDecoySpacing) return;
+    }
+
+    int owned = 0;
+    int oldestOwned = -1;
+    for (int i = 0; i < s_match.decoyCount; ++i) {
+        if (s_match.decoys[i].owner == owner) {
+            if (oldestOwned < 0) oldestOwned = i;
+            ++owned;
+        }
+    }
+    if (owned >= kMaxOwnerDecoys) erase_decoy(oldestOwned);
+    if (s_match.decoyCount >= kMaxActiveDecoys) erase_decoy(0);
+
+    const uint8_t id = take_decoy_id();
+    if (id == 0) return;
+    if (!free) {
+        p.roundPoints = static_cast<uint16_t>(p.roundPoints - kExtraDecoyCost);
+        p.score = static_cast<uint16_t>(p.score >= kExtraDecoyCost ? p.score - kExtraDecoyCost : 0);
+    }
+    p.decoysUsed = static_cast<uint8_t>(std::min(255, static_cast<int>(p.decoysUsed) + 1));
+    p.lastDecoyAt = now;
+    Decoy& d = s_match.decoys[s_match.decoyCount++];
+    d.id = id;
+    d.owner = static_cast<uint8_t>(owner);
+    d.prop = p.state.prop;
+    d.x = p.state.x;
+    d.y = p.state.y;
+    d.z = p.state.z;
+    d.yaw = p.state.propYaw;
+    announce(decoys_msg());
+    announce(roster_msg());
+}
+
+void host_hit_decoy(int attacker, uint8_t id) {
+    if (s_match.settings.mode != Mode::PropHunt || s_match.phase != Phase::Seek) return;
+    Player& p = P(attacker);
+    const int index = decoy_index(id);
+    if (index < 0 || !p.present || p.role != Role::Hunter || !p.hasState ||
+        now_ms() - p.stateAt > kFreshStateMs || !(p.state.flags & STATE_IN_WORLD) ||
+        std::strncmp(p.state.stage, map_info(s_match.map).stage, 8) != 0) {
+        return;
+    }
+    const Decoy& d = s_match.decoys[index];
+    const float dx = p.state.x - d.x, dy = p.state.y - d.y, dz = p.state.z - d.z;
+    if (std::sqrt(dx * dx + dy * dy + dz * dz) > kMaxHitDistance) return;
+    erase_decoy(index);
+    announce(decoys_msg());
+}
+
 void finish(int winner) {
     const uint64_t now = now_ms();
     for (int id = 1; id <= kMaxPlayers; ++id) {
         Player& p = P(id);
         if (p.present && p.role == Role::Hider && !p.found) {
-            give(id, survival_points(now) + (winner == 0 ? kSurvivePoints : 0));
+            award_survival(id, now);
+            if (winner == 0) give(id, kSurvivePoints);
         }
     }
+    clear_decoys();
+    announce(decoys_msg());
     Writer w(MSG_RESULTS);
     w.u32(s_match.round);
     w.u8(static_cast<uint8_t>(winner));
@@ -197,7 +331,7 @@ void found(int target, int by) {
     Player& t = P(target);
     t.found = true;
     t.role = s_match.settings.foundJoinHunters ? Role::Hunter : Role::Spectator;
-    give(target, survival_points(now_ms()));
+    award_survival(target, now_ms());
     give(by, kFindPoints);
     Writer w(MSG_FOUND);
     w.u32(s_match.round);
@@ -244,6 +378,16 @@ void host_update() {
         if (now >= s_match.phaseEnd) go_phase(Phase::Seek, s_match.settings.seekSecs * 1000u);
         break;
     case Phase::Seek:
+        {
+            bool changed = false;
+            for (int id = 1; id <= kMaxPlayers; ++id) {
+                const Player& p = P(id);
+                if (p.present && p.role == Role::Hider && !p.found) {
+                    changed = award_survival(id, now) || changed;
+                }
+            }
+            if (changed) announce(roster_msg());
+        }
         if (count_role(Role::Hider) == 0) {
             finish(1);
         } else if (count_role(Role::Hunter) == 0) {
@@ -288,6 +432,7 @@ void handle_roster(Reader& r) {
         const uint16_t roundPoints = r.u16();
         const uint8_t flags = r.u8();
         const uint8_t hunterRounds = r.u8();
+        const uint8_t decoysUsed = r.u8();
         if (!r.ok() || id < 1 || id > kMaxPlayers) break;
         Player& p = P(id);
         listed[id] = true;
@@ -299,6 +444,7 @@ void handle_roster(Reader& r) {
         p.found = (flags & 1) != 0;
         p.ready = (flags & 2) != 0;
         p.hunterRounds = hunterRounds;
+        p.decoysUsed = decoysUsed;
     }
     (void)listed;
 }
@@ -327,12 +473,14 @@ void Settings::write(Writer& w) const {
     w.u8(static_cast<uint8_t>((foundJoinHunters ? 1 : 0) | (missPenalty ? 2 : 0) |
                               (autoTaunt ? 4 : 0) | (autoNext ? 8 : 0) | (isPublic ? 16 : 0)));
     w.u16(idleTauntSecs);
+    w.u8(freeDecoys);
 }
 
 void Settings::read(Reader& r) {
     const uint8_t m = r.u8();
     mode = m < static_cast<uint8_t>(Mode::Count) ? static_cast<Mode>(m) : Mode::PropHunt;
-    map = r.u8();
+    const uint8_t wantedMap = r.u8();
+    map = wantedMap == kRandomMap || wantedMap < map_count() ? wantedMap : kRandomMap;
     hideSecs = std::clamp<uint16_t>(r.u16(), 10, 600);
     seekSecs = std::clamp<uint16_t>(r.u16(), 30, 1800);
     hunters = r.u8();
@@ -343,6 +491,7 @@ void Settings::read(Reader& r) {
     autoNext = f & 8;
     isPublic = f & 16;
     idleTauntSecs = std::clamp<uint16_t>(r.u16(), 0, 600);
+    freeDecoys = std::clamp<uint8_t>(r.u8(), 0, 10);
 }
 
 // ---- queries ---------------------------------------------------------------------------------
@@ -380,6 +529,43 @@ int count_role(Role role) {
 
 int hiders_left() {
     return count_role(Role::Hider);
+}
+
+int decoy_count() {
+    return s_match.decoyCount;
+}
+
+const Decoy& decoy(int index) {
+    static Decoy none;
+    return index >= 0 && index < s_match.decoyCount ? s_match.decoys[index] : none;
+}
+
+int my_decoys_left() {
+    const Player& me = P(self());
+    return std::max(0, static_cast<int>(s_match.settings.freeDecoys) - me.decoysUsed);
+}
+
+bool can_place_decoy() {
+    const Player& me = P(self());
+    const uint64_t now = now_ms();
+    if (s_match.settings.mode != Mode::PropHunt ||
+        (s_match.phase != Phase::Hide && s_match.phase != Phase::Seek) || !me.present ||
+        me.role != Role::Hider || me.found || !me.hasState || now - me.stateAt > kFreshStateMs ||
+        !(me.state.flags & STATE_IN_WORLD) || !(me.state.flags & STATE_DISGUISED) ||
+        std::strncmp(me.state.stage, map_info(s_match.map).stage, 8) != 0 ||
+        !prop_on_map(me.state.prop, s_match.map) || !std::isfinite(me.state.x) ||
+        !std::isfinite(me.state.y) || !std::isfinite(me.state.z)) {
+        return false;
+    }
+    // Mirror the host's spacing rule so D-pad feedback is truthful. The host still repeats every
+    // check because a modified or lagged client must never be authoritative.
+    for (int i = 0; i < s_match.decoyCount; ++i) {
+        const Decoy& d = s_match.decoys[i];
+        const float dx = d.x - me.state.x, dy = d.y - me.state.y, dz = d.z - me.state.z;
+        if (dx * dx + dy * dy + dz * dz < kMinDecoySpacing * kMinDecoySpacing) return false;
+    }
+    return my_decoys_left() > 0 ||
+           (s_match.phase == Phase::Seek && me.roundPoints >= kExtraDecoyCost);
 }
 
 const std::vector<Notice>& notices() {
@@ -434,6 +620,9 @@ void start_round() {
         p.found = false;
         p.ready = false;
         p.roundPoints = 0;
+        p.lastDecoyAt = 0;
+        p.survivalAwarded = 0;
+        p.decoysUsed = 0;
     }
 
     s_match.round += 1;
@@ -441,8 +630,11 @@ void start_round() {
                                                      : s_match.settings.map;
     s_match.winner = -1;
     s_seekStartedAt = 0;
+    s_nextDecoyId = 1;
+    clear_decoys();
     announce(roster_msg());
     announce(round_msg());
+    announce(decoys_msg());
     go_phase(Phase::Gather, kGatherMs);
 }
 
@@ -509,6 +701,33 @@ void report_hit(uint8_t target) {
     net::send(net::kToHost, w.bytes());
 }
 
+void place_decoy() {
+    if (!can_place_decoy()) return;
+    if (host()) {
+        host_place_decoy(self());
+        return;
+    }
+    Writer w(MSG_PLACE_DECOY);
+    w.u32(s_match.round);
+    net::send(net::kToHost, w.bytes());
+}
+
+void report_decoy_hit(uint8_t decoyId) {
+    if (decoyId == 0) return;
+    const uint64_t now = now_ms();
+    const int throttle = decoyId % (kMaxActiveDecoys + 1);
+    if (now - s_lastDecoyHitSent[throttle] < 500) return;
+    s_lastDecoyHitSent[throttle] = now;
+    if (host()) {
+        host_hit_decoy(self(), decoyId);
+        return;
+    }
+    Writer w(MSG_HIT_DECOY);
+    w.u32(s_match.round);
+    w.u8(decoyId);
+    net::send(net::kToHost, w.bytes());
+}
+
 void send_taunt(uint8_t sound) {
     Writer w(MSG_TAUNT);
     w.u8(sound);
@@ -538,6 +757,7 @@ void on_welcome() {
         assign_color(self());
         announce(settings_msg());
         announce(roster_msg());
+        announce(decoys_msg());
         notice("Room " + net::room_code() + " is open. Share the code!", -1, false);
     } else {
         notice("Joined room " + net::room_code(), -1, false);
@@ -559,6 +779,7 @@ void on_joined(uint8_t id) {
     if (in_round() || s_match.phase == Phase::Results) {
         net::send(id, round_msg().bytes());
         net::send(id, phase_msg().bytes());
+        net::send(id, decoys_msg().bytes());
     }
     send_meta();
 }
@@ -568,6 +789,14 @@ void on_left(uint8_t id) {
     P(id).present = false;
     P(id).hasState = false;
     if (host()) {
+        bool removed = false;
+        for (int i = s_match.decoyCount - 1; i >= 0; --i) {
+            if (s_match.decoys[i].owner == id) {
+                erase_decoy(i);
+                removed = true;
+            }
+        }
+        if (removed) announce(decoys_msg());
         announce(roster_msg());
         send_meta();
     }
@@ -580,14 +809,24 @@ void on_host_changed(uint8_t id) {
         if (s_match.phase == Phase::Seek && s_seekStartedAt == 0) {
             s_seekStartedAt = now_ms() - (s_match.settings.seekSecs * 1000u - ms_left());
         }
+        for (int i = s_match.decoyCount - 1; i >= 0; --i) {
+            if (!P(s_match.decoys[i].owner).present) erase_decoy(i);
+        }
+        s_nextDecoyId = 1;
+        while (decoy_index(s_nextDecoyId) >= 0 && s_nextDecoyId != 0) ++s_nextDecoyId;
+        if (s_nextDecoyId == 0) s_nextDecoyId = 1;
+        const uint16_t survived = static_cast<uint16_t>(std::max(0, survival_points(now_ms())));
+        for (int player = 1; player <= kMaxPlayers; ++player) {
+            P(player).survivalAwarded = survived;
+        }
         announce(roster_msg());
+        announce(decoys_msg());
         send_meta();
     }
 }
 
 void on_disconnected() {
-    s_match.phase = Phase::Lobby;
-    for (Player& p : s_match.players) p = Player{};
+    s_match = Match{};
 }
 
 void on_message(uint8_t from, const uint8_t* data, size_t size) {
@@ -614,6 +853,37 @@ void on_message(uint8_t from, const uint8_t* data, size_t size) {
     case MSG_ROSTER:
         if (fromHost) handle_roster(r);
         break;
+
+    case MSG_DECOYS: {
+        if (!fromHost) break;
+        const uint32_t round = r.u32();
+        const uint8_t count = r.u8();
+        Decoy incoming[kMaxActiveDecoys];
+        bool ids[256] = {};
+        bool valid = true;
+        if (count > kMaxActiveDecoys) break;
+        for (int i = 0; i < count && r.ok(); ++i) {
+            Decoy& d = incoming[i];
+            d.id = r.u8();
+            d.owner = r.u8();
+            d.prop = r.u8();
+            d.x = r.f32();
+            d.y = r.f32();
+            d.z = r.f32();
+            d.yaw = r.s16();
+            if (d.id == 0 || ids[d.id] || d.owner < 1 || d.owner > kMaxPlayers ||
+                !prop_on_map(d.prop, -1) || !std::isfinite(d.x) || !std::isfinite(d.y) ||
+                !std::isfinite(d.z)) {
+                valid = false;
+            }
+            ids[d.id] = true;
+        }
+        if (!r.ok() || !valid || round != s_match.round) break;
+        clear_decoys();
+        s_match.decoyCount = count;
+        for (int i = 0; i < count; ++i) s_match.decoys[i] = incoming[i];
+        break;
+    }
 
     case MSG_ROUND: {
         if (!fromHost) break;
@@ -710,6 +980,21 @@ void on_message(uint8_t from, const uint8_t* data, size_t size) {
         const uint8_t target = r.u8();
         if (!r.ok() || !host() || round != s_match.round) break;
         host_hit(from, target);
+        break;
+    }
+
+    case MSG_PLACE_DECOY: {
+        const uint32_t round = r.u32();
+        if (!r.ok() || !host() || round != s_match.round) break;
+        host_place_decoy(from);
+        break;
+    }
+
+    case MSG_HIT_DECOY: {
+        const uint32_t round = r.u32();
+        const uint8_t id = r.u8();
+        if (!r.ok() || !host() || round != s_match.round) break;
+        host_hit_decoy(from, id);
         break;
     }
 

@@ -59,16 +59,23 @@ Prop Hunt is the main mode; classic Hide & Seek comes along for free.
 
 ### Prop Hunt
 
-- Props: 59 objects drawn from every region, with map-themed selection, plus 12 deterministic
-  scenery props in six hand-authored pairs beside native scenery. This gives sparse maps believable
-  cover without a random pile at the hunter spawn. Models are read from the player's own game files.
+- Props: 54 selectable objects drawn from every region, with map-themed selection. Models are read
+  from the player's own game files. Five legacy IDs remain reserved for protocol compatibility but
+  are not offered because their native actors require multiple models, particles or environment
+  placement that a standalone disguise cannot reproduce safely.
 - D-pad right copies the pot/crate/barrel you stand next to, like "become the prop you look at" in
   Garry's Mod; with nothing nearby it cycles. D-pad left goes back.
-- Hunters hit props with a real sword swing: physical props carry a solid cylinder that Link cannot
-  walk through and that only Link's sword (and wolf attacks) can hit. Grass, leaves, flowers and
-  other soft scenery stay walk-through but remain sword targets. While swimming, where the game
-  prevents sword use, B performs a close-range prop tag. A sword swing that hits no prop costs a
-  quarter heart (never the last one).
+- D-pad up places a copy of the current disguise. The default allowance is five free placements per
+  hider and the host can choose 0–10. Once used, extra placements are available during Hunt for 3
+  points earned in that round. A hider keeps at most five active decoys and the room keeps at most
+  eight, replacing the oldest; this bounds draw load even in a 16-player room. Placements have a
+  short cooldown and minimum spacing, are target-only rather than solid, give no hunter points, and
+  count as a miss when struck.
+- Hunters hit props with a real sword swing. Each hider has a target-only cylinder for Link's sword
+  (and wolf attacks), but no object-correction collision: every disguise stays walk-through rather
+  than pushing the hunter at an interpolated network position. While swimming, where the game
+  prevents sword use, B performs a close-range prop tag. A sword swing that hits no real hider costs
+  one heart (never the last quarter-heart).
 - D-pad down taunts for a point. Hunters hear a Link shout and get a direction, distance and
   through-scenery world marker for five seconds. By default a prop that has not moved for 60 seconds
   automatically taunts; hosts can choose Off/30/45/60/90/120 seconds. Extra automatic taunts every
@@ -82,7 +89,8 @@ shows up for hunters only up close.
 
 ### Scoring
 
-- Props: 1 point per 10 s hidden during the hunt, +5 for surviving, +1 per taunt (every 5 s at most).
+- Props: 1 point per 10 s hidden during the hunt, awarded live; +5 for surviving; +1 per taunt (every
+  10 s at most). After the free allowance, an extra decoy spends 3 current-round points.
 - Hunters: +5 per find.
 - Totals are kept for the room until the host resets them.
 
@@ -124,9 +132,11 @@ save profile.
 ### Authority
 
 The room's host (first player, or the next lowest id if the host leaves) is authoritative for the
-round: roles, phase timers, tags and scores. Other clients send claims ("I tagged 4") and the host
-checks them against its own view of both positions before announcing them. Every message the host
-sends is also applied locally, so the host's own game follows the same code path.
+round: roles, phase timers, tags, scores and decoys. Placement requests contain no client-supplied
+model or coordinates: the host uses that player's latest state, verifies role, phase, disguise, map,
+freshness, spacing, cooldown and points, then broadcasts the complete bounded snapshot. Hit claims
+are checked against hunter role, stage and distance. Every message the host sends is also applied
+locally, so the host's own game follows the same code path.
 
 ### Wire protocol
 
@@ -151,7 +161,10 @@ Game payloads start with a `u8` type; all numbers little-endian (`src/protocol.h
 | `HIT` | → host | "my sword hit / I touched player N" |
 | `FOUND` | host → all | target, hunter |
 | `RESULTS` | host → all | winner |
+| `DECOYS` | host → all | complete active-decoy snapshot (maximum 8) |
 | `TAUNT` | all | sound id |
+| `PLACE_DECOY` | → host | placement request for the current round |
+| `HIT_DECOY` | → host | decoy id struck by a hunter |
 
 ### Drawing other players
 
@@ -161,15 +174,18 @@ A custom actor (`HSPupt`, registered through ActorService) per remote player in 
   sheath and Hylian Shield) into the mod's own heap. The body and cap are loaded once per tunic
   colour with the green shifted in the CMPR texture data (`src/recolor.cpp`), so every player looks
   different and none of it is shared with the local Link.
-- Animation: a known-complete idle or walk pose from the global `AlAnm` archive, cached before map
-  warps and retried after transient remount failures. A single full-skeleton blend calculator avoids
-  cutscene-only or half-loaded sender animations making a remote Link disappear or T-pose.
+- Animation: a known-complete idle or walk pose copied through a private short-lived mount of
+  `AlAnm.arc`, rather than borrowing the game's archive while it may be remounted during a warp. A
+  single full-skeleton calculator is used, with an always-visible bind-pose fallback if loading still
+  fails; a missing animation can therefore never hide the complete remote Link body.
 - Props: the prop's archive model through the resource manager, drawn at the player's position;
   joint callbacks and animations the real objects put on the shared model data are swapped out
   around our `calc()`.
-- Position is interpolated between 10 Hz updates. Carryables use their native simple-shadow sizes,
-  actors such as Cuccos and targets use their native model-projection profile, and static or
-  flat/translucent scenery casts no extra dynamic blob—matching the corresponding real actor.
+- Position is interpolated between 10 Hz updates. Player decoys use the same prop renderer but stay
+  fixed at host-approved snapshot positions. Carryables and a few movable actors use cheap
+  native-sized simple shadows; static or flat/translucent scenery casts no extra dynamic blob.
+  Disguises never use model-projected shadows, which would submit complex geometry again and can
+  overflow Dusklight's fixed per-frame index buffer.
 - The local player's own tunic is recoloured with TextureService pointer-keyed replacements.
 
 The local player in prop mode: Link's draw is skipped by a pre-hook on `daAlink_c::draw` and the

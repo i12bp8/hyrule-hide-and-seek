@@ -4,7 +4,7 @@ What's been verified without the game:
 
 - Everything compiles for Linux with GCC and Clang against Dusklight v2.0.2 (the other platforms build in CI).
 - The rules (`tests/run.sh`): rounds, hunter rotation, gather timeout, hit validation, tag immunity,
-  scoring, late joiners, host leaving mid-round, unique colours.
+  live scoring, bounded/paid decoys, late joiners, host leaving mid-round, unique colours.
 - The relay (`server/`, `npm test`): on Node and on the actual Cloudflare Worker via `wrangler dev`.
 - The test bots speak the game's wire format.
 - The tunic recolour on Link's real textures (`tests/recolor_preview.py`).
@@ -66,13 +66,20 @@ Start round. With 4 players (you + 3 bots) there is one hunter; restart until yo
 - [ ] D-pad right next to a real pot/crate/barrel: you copy it. Away from one: next prop. D-pad left: previous.
 - [ ] The replacement is visible from the first Hide frame and after changing props; Link never
       disappears before its prop model is ready.
-- [ ] D-pad left/right/down performs only the Hide & Seek action. The vanilla Items and Map menus
+- [ ] D-pad left/right/up/down performs only the Hide & Seek action. The vanilla Items and Map menus
       do not open underneath it.
+- [ ] During Hide, D-pad up places five free copies of the current disguise at your position. The HUD
+      counts down 5 → 0; they remain fixed after you move away, are at least a prop-width apart, and
+      placing a sixth free one fails cleanly.
+- [ ] Set **Free decoys per hider** to 0 and 10 in separate rounds. Zero starts with none; ten grants
+      ten placement charges while only five from that hider and eight room-wide remain active.
 - [ ] The cucco prop animates when you walk.
 - [ ] Cycling props stays within a varied, map-appropriate pool; test at least one village, water,
       forest, mountain and desert map.
-- [ ] Cycle all 59 catalogue entries across those maps. Every choice draws a model; a bad optional
-      asset logs a warning and shows the fallback pot instead of making the hider invisible.
+- [ ] Cycle all 54 selectable catalogue entries across those maps. Every choice draws a model; a bad
+      optional asset logs a warning and shows the fallback pot instead of making the hider invisible.
+- [ ] Laundry is roughly player-height and rests on the floor instead of appearing tiny/underground.
+      Crystal appears near the player at a readable size instead of at its authored world origin.
 - [ ] The hunter bot waits at the spawn during Hide, then chases you during the hunt and tags you:
       "You were found!", you become Link again (and a hunter).
 - [ ] D-pad down taunts: a Link shout plays, the taunt bar fills, and the hunter gets a five-second
@@ -81,8 +88,8 @@ Start round. With 4 players (you + 3 bots) there is one hunter; restart until yo
       it off leaves manual and stationary taunts only.
 - [ ] The stationary auto-taunt defaults to 60 seconds. Moving more than a small step resets its
       timer; Off disables it, and a shorter setting fires at the selected delay.
-- [ ] A prop Cucco, pumpkin, target and oil jar match the real actor's shadow. Carryables use their
-      native footprint; static rocks/furniture and flat/translucent plants have no added black blob.
+- [ ] Cucco, pumpkin and oil jar have one clean circular shadow with a sensible footprint. Static
+      rocks/furniture, targets and flat/translucent plants have no added black blob or duplicate mesh.
 
 ## 5. A round as the hunter
 
@@ -90,18 +97,22 @@ Restart until you're the hunter (1 in 4).
 
 - [ ] Hide phase: black screen with a countdown, you can't walk away from the spawn.
 - [ ] The bots are props standing near you (pots, crates...). No name tags over them.
-- [ ] Twelve extra scenery props appear as six sensible pairs beside native scenery across the map,
-      never in a random pile or blocking a door/road. They disappear outside a Prop Hunt round.
-- [ ] Fake pots, crates, furniture and rocks stop Link. Fake grass, leaves, flowers and low bones are
-      walk-through, and none of the fake props can be hit as if it were a real hider.
+- [ ] The mod does not add fake scenery props to the map; only real hiders are drawn as props.
+- [ ] Player-placed decoys are visible during Hide and Hunt but remain walk-through. Hitting one
+      removes it, does not award 5 find points, and is treated as a missed swing.
 - [ ] Sword swing (B) hitting a bot prop: spark, "Found Bot N!", the counter at the top drops.
-- [ ] Walking into a real hider prop blocks Link instead of letting the hunter pass through it.
+- [ ] Walking into a hider never pushes, snags or teleports Link; the same prop still registers a
+      sword hit throughout its visible footprint.
 - [ ] While swimming, get close to a prop and press B: the prop is found even though Link cannot use
       his sword. B keeps its normal swimming behaviour, and distant props are not tagged.
 - [ ] Castle Town still allows drawing and swinging the sword during the hunt.
 - [ ] From a hider's client, the hunter's complete Link body remains visible while idle, running and
       swinging throughout Hide, Hunt and Results—never only a face/sword, a T-pose or a name tag.
-- [ ] Swinging at nothing costs a quarter heart (never the last one). Hitting a real pot also costs one.
+- [ ] Swinging at nothing costs one full heart when possible (never the last quarter). Hitting a real
+      map pot or a player decoy also costs one; hitting the actual hider does not.
+- [ ] After surviving 30 seconds, the hider HUD shows 3 live round points. With all free placements
+      used, D-pad up buys one extra decoy, replaces the oldest owned one, and reduces both round and
+      total score by 3. Paid decoys cannot be placed during Hide.
 - [ ] Hitting every prop ends the round: "HUNTERS WIN!", the scoreboard, then a new round.
 
 ## 6. Hide & Seek mode
@@ -132,7 +143,7 @@ With a friend (or two copies of Dusklight with different `--mods` folders and pr
 - [ ] No enemies or bosses remain, including ones spawned by another mod; no encounter-complete
       cutscene or timer starts when they disappear.
 - [ ] Damage does not remove hearts and underwater air stays full. A hunter's missed sword swing
-      still removes a quarter heart when that rule is enabled.
+      still removes one heart (without taking the last quarter) when that rule is enabled.
 - [ ] Leave through a loading zone after the round begins: the client returns to the selected map's
       spawn and rejoins the round.
 

@@ -28,7 +28,6 @@ namespace {
 constexpr u32 kHeapWanted = 24u << 20;
 constexpr u32 kHeapMinimum = 6u << 20;
 constexpr u32 kRootReserve = 16u << 20;
-constexpr u32 kAnimBufferSize = 0x10800;  // what daAlink_c's own animation buffers hold
 constexpr int kAnimCacheSize = 256;
 
 JKRExpHeap* s_heap = nullptr;
@@ -207,8 +206,8 @@ J3DAnmTransform* anim(uint16_t idx) {
         if (e.idx == idx) {
             if (e.failedAt == 0) return e.anm;
             if (now - e.failedAt < 1000) return nullptr;
-            // Resource reads can fail briefly while AlAnm is being remounted for a stage. A
-            // transient miss must not permanently make every remote Link invisible.
+            // A mount or allocation can fail briefly during a stage transition. A transient miss
+            // must not permanently leave every remote Link on the bind-pose fallback.
             e = AnimEntry{};
             slot = &e;
             break;
@@ -217,23 +216,27 @@ J3DAnmTransform* anim(uint16_t idx) {
     }
     if (slot == nullptr) return nullptr;  // cache full: the puppet falls back to idle
     slot->idx = idx;
-    JKRArchive* arc = dComIfGp_getAnmArchive();
+    // Do not borrow the live daAlink animation archive here. It is remounted around stage changes,
+    // and JKRReadIdxResource() can return zero even though the entry exists; that exact failure
+    // left remote players with no pose and therefore no body. Mount our own short-lived view,
+    // copy the BCK into persistent storage, then unmount it.
+    JKRArchive* arc =
+        JKRArchive::mount("/res/Object/AlAnm.arc", JKRArchive::MOUNT_MEM, s_heap,
+            JKRArchive::MOUNT_DIRECTION_TAIL);
     if (arc == nullptr) {
-        slot->idx = 0xFFFF;  // try again once the game has its archive
+        slot->failedAt = now;
         return nullptr;
     }
-    u8* buffer = static_cast<u8*>(s_heap->alloc(kAnimBufferSize, 32));
+    void* resource = arc->getIdxResource(idx);
+    const u32 size = resource != nullptr ? arc->getResSize(resource) : 0;
+    u8* buffer = size != 0 ? static_cast<u8*>(s_heap->alloc(size, 32)) : nullptr;
+    if (buffer != nullptr) std::memcpy(buffer, resource, size);
+    arc->unmount();
     if (buffer == nullptr) {
+        mods::log::warn("linkkit: could not copy animation #{:#x}", idx);
         slot->failedAt = now;
         return nullptr;
     }
-    const u32 read = JKRReadIdxResource(buffer, kAnimBufferSize, idx, arc);
-    if (read == 0) {
-        s_heap->free(buffer);
-        slot->failedAt = now;
-        return nullptr;
-    }
-    s_heap->resize(buffer, (read + 31) & ~31u);
     J3DAnmBase* loaded;
     {
         HeapScope scope(s_heap);

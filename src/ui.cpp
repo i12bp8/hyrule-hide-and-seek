@@ -82,6 +82,7 @@ enum Field : intptr_t {
     F_HIDE,
     F_SEEK,
     F_HUNTERS,
+    F_DECOYS,
     F_JOIN,
     F_PENALTY,
     F_TAUNT,
@@ -109,6 +110,7 @@ void get_rule(ModContext*, void* user, UiControlValue* out) {
     case F_HIDE: out->int_value = s.hideSecs; break;
     case F_SEEK: out->int_value = s.seekSecs; break;
     case F_HUNTERS: out->int_value = s.hunters; break;
+    case F_DECOYS: out->int_value = s.freeDecoys; break;
     case F_JOIN: out->bool_value = s.foundJoinHunters; break;
     case F_PENALTY: out->bool_value = s.missPenalty; break;
     case F_TAUNT: out->bool_value = s.autoTaunt; break;
@@ -126,6 +128,7 @@ void set_rule(ModContext*, void* user, const UiControlValue* v) {
     case F_HIDE: s.hideSecs = static_cast<uint16_t>(v->int_value); break;
     case F_SEEK: s.seekSecs = static_cast<uint16_t>(v->int_value); break;
     case F_HUNTERS: s.hunters = static_cast<uint8_t>(v->int_value); break;
+    case F_DECOYS: s.freeDecoys = static_cast<uint8_t>(v->int_value); break;
     case F_JOIN: s.foundJoinHunters = v->bool_value; break;
     case F_PENALTY: s.missPenalty = v->bool_value; break;
     case F_TAUNT: s.autoTaunt = v->bool_value; break;
@@ -181,9 +184,13 @@ ModResult build_rules(ModContext*, UiWindowHandle, UiElementHandle left, UiEleme
         nullptr, 0, 60, 900, 30, " s");
     add_rule(left, UI_CONTROL_DROPDOWN, "Hunters", "How many players start as hunters.", F_HUNTERS, kHunters, 5);
     svc_ui->pane_add_section(mod_ctx, left, "Rules");
+    add_rule(left, UI_CONTROL_NUMBER, "Free decoys per hider",
+        "A disguised hider can place these during hiding or hunting with D-pad up. After using them, "
+        "extra decoys cost 3 points earned in the current round and can only be bought during the hunt.",
+        F_DECOYS, nullptr, 0, 0, 10, 1);
     add_rule(left, UI_CONTROL_TOGGLE, "Found players join the hunters",
         "On: a found prop becomes a hunter. Off: they watch until the next round.", F_JOIN);
-    add_rule(left, UI_CONTROL_TOGGLE, "Missed swings cost a quarter heart",
+    add_rule(left, UI_CONTROL_TOGGLE, "Missed swings cost one heart",
         "Stops hunters from swinging at everything. Never takes the last quarter heart.", F_PENALTY);
     add_rule(left, UI_CONTROL_DROPDOWN, "Taunt when a prop stays still",
         "A prop that has not moved this long automatically taunts. Moving resets the timer. "
@@ -507,11 +514,13 @@ ModResult build_help(ModContext*, UiWindowHandle, UiElementHandle left, UiElemen
         "<p><b>Props</b> turn into an object and hide in plain sight. <b>Hunters</b> wait with a black "
         "screen, then have until the timer runs out to hit every prop with their sword.</p>"
         "<p>Props: <b>D-pad right</b> copies a carryable object you stand next to (or picks the next "
-        "prop), <b>D-pad left</b> goes back, <b>D-pad down</b> taunts for a bonus point. A taunt reveals "
+        "prop), <b>D-pad left</b> goes back, <b>D-pad up</b> places a decoy, and <b>D-pad down</b> "
+        "taunts for a bonus point. A taunt reveals "
         "your direction and position to every hunter for five seconds. The host can also make props "
         "taunt after staying still for a chosen time.</p>"
         "<p>Hunters: swing with <b>B</b>. While swimming, B tags a nearby prop because Link cannot "
-        "draw his sword. A sword swing that hits no prop costs a quarter heart. Follow the direction, "
+        "draw his sword. A sword swing that hits no real prop costs one heart; decoys count as misses. "
+        "Follow the direction, "
         "distance and world marker shown when a prop taunts.</p>",
         nullptr);
     svc_ui->pane_add_section(mod_ctx, left, "Hide & Seek");
@@ -519,8 +528,9 @@ ModResult build_help(ModContext*, UiWindowHandle, UiElementHandle left, UiElemen
         "<p>Everyone stays Link. Hunters catch hiders by touching them or hitting them.</p>", nullptr);
     svc_ui->pane_add_section(mod_ctx, left, "Points");
     svc_ui->pane_add_rml(mod_ctx, left,
-        "<p>Props: 1 point per 10 seconds hidden, 5 for surviving the round, 1 per taunt (once every 5 "
-        "seconds). Hunters: 5 per find.</p>",
+        "<p>Props: 1 point per 10 seconds hidden, 5 for surviving the round, 1 per taunt (at most once "
+        "every 10 seconds). Hunters: 5 per find. Free decoys do not affect score; after they are used, "
+        "an extra decoy costs 3 points earned that round.</p>",
         nullptr);
     svc_ui->pane_add_section(mod_ctx, left, "Tips");
     svc_ui->pane_add_rml(mod_ctx, left,

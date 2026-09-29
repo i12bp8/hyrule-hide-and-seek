@@ -24,7 +24,6 @@
 #include "m_Do/m_Do_ext.h"
 #include "m_Do/m_Do_mtx.h"
 
-#include <algorithm>
 #include <cmath>
 #include <cstring>
 #include <vector>
@@ -38,8 +37,8 @@ namespace {
 
 constexpr u32 kLocalFlag = 0x100;
 constexpr u32 kDecoyFlag = 0x200;
-constexpr int kPropShift = 16;
-constexpr int kDecoyCount = kCoverPointCount;
+constexpr u32 kPropShift = 16;
+constexpr u32 kDecoyIdShift = 24;
 constexpr u32 kPuppetHeapSize = 640 * 1024;
 constexpr u32 kPropHeapSize = 128 * 1024;
 constexpr uint64_t kStaleMs = 4000;
@@ -73,10 +72,13 @@ struct Slot {
 };
 Slot s_slots[kSlots];
 Slot s_localProp;
-Slot s_decoys[kDecoyCount];
+struct DecoySlot {
+    Slot slot;
+    uint8_t id = 0;
+    uint8_t kind = 0;
+};
+DecoySlot s_decoys[match::kMaxActiveDecoys];
 uint64_t s_worldSince = 0;
-uint32_t s_decoyRound = 0;
-int s_decoyMap = -1;
 
 // Link's sword can hit these: both swords, plus the wolf in case a hunter transforms.
 const dCcD_SrcCyl kCylSrc = {
@@ -130,55 +132,6 @@ bool same_stage_as_me(const PlayerState& s) {
     return (s.flags & STATE_IN_WORLD) != 0 && std::strncmp(s.stage, local::stage(), 8) == 0;
 }
 
-// Match the native actor's shadow instead of giving every disguise the same telltale dark blob.
-// Carryables and a few movable objects use simple shadows with fixed sizes; most static scenery
-// has no dynamic shadow at all (encoded by PropInfo::shadowScale == 0).
-float native_simple_shadow_size(int kind) {
-    switch (kind) {
-    case 0: return 40.0f;  // pot
-    case 1: return 50.0f;  // big pot
-    case 2: return 87.0f;  // crate (the base game's value)
-    case 3: return 50.0f;  // barrel
-    case 4: return 40.0f;  // skull
-    case 5: return 50.0f;  // pumpkin
-    case 6: return 40.0f;  // Kakariko pot
-    case 10: return 40.0f; // cannonball
-    case 11: return 45.0f; // Deku nut
-    case 12: return 50.0f; // big blue pot
-    case 13: return 40.0f; // small Twilight pot
-    case 14: return 50.0f; // big Twilight pot
-    case 22: return 25.0f; // bomb
-    case 52: return 40.0f; // small mountain rock
-    case 53: return 65.0f; // large mountain rock
-    case 56: return 90.0f; // pushable grave
-    default: return 0.0f;
-    }
-}
-
-struct ModelShadowProfile {
-    float yOffset;
-    float depth;
-    float footprint;
-};
-
-ModelShadowProfile native_model_shadow(int kind, const PropInfo& info) {
-    switch (kind) {
-    case 7: return {50.0f, 500.0f, 0.0f};   // small crate
-    case 9: return {100.0f, 400.0f, 40.0f}; // Cucco
-    case 15: return {0.0f, 400.0f, 0.0f};   // sign
-    case 23: return {50.0f, 400.0f, 0.0f};  // beehive dropped on the ground
-    case 35: return {0.0f, 800.0f, 120.0f}; // oil jar
-    case 38: return {0.0f, 500.0f, 0.0f};   // howling stone
-    case 42: return {0.0f, 400.0f, 20.0f};  // pole target
-    case 43: return {0.0f, 400.0f, 20.0f};  // board target
-    case 48: return {0.0f, 500.0f, 0.0f};   // Sacred Grove stone
-    case 51: return {0.0f, 2000.0f, 0.0f};  // volcanic ball
-    case 58: return {100.0f, 500.0f, 0.0f}; // map table
-    default:
-        return {std::max(info.height, 40.0f), std::max(info.height * 4.0f, 400.0f), 0.0f};
-    }
-}
-
 class Puppet : public fopAc_ac_c {
 public:
     Puppet() : mLinkCalc(1, &mLinkAnim) {}
@@ -196,14 +149,17 @@ private:
     void releaseProp();
     void updateGround();
     void armHitbox(const match::Player& p, bool disguised, int kind);
+    void armDecoyHitbox(int kind);
     void publish(bool visible, float height, bool tracked = false);
-    Slot& slot() { return mLocal ? s_localProp : s_slots[mSlot]; }
+    Slot& slot() {
+        return mDecoy ? s_decoys[mSlot - 1].slot : (mLocal ? s_localProp : s_slots[mSlot]);
+    }
 
     int mSlot = 0;
     bool mLocal = false;
     bool mDecoy = false;
-    bool mGrounded = false;
-    int mFixedProp = 0;
+    uint8_t mDecoyId = 0;
+    uint8_t mFixedProp = 0;
     bool mVisible = false;
     bool mDisguised = false;
     bool mHaveTarget = false;
@@ -220,6 +176,7 @@ private:
     J3DModel* mShield = nullptr;
     mDoExt_AnmRatioPack mLinkAnim;
     mDoExt_MtxCalcAnmBlendTbl mLinkCalc;
+    J3DMtxCalcNoAnm<J3DMtxCalcCalcTransformMaya, J3DMtxCalcJ3DSysInitMaya> mBindCalc;
     J3DAnmTransform* mPoseAnim = nullptr;
     float mPoseFrame = 0.0f;
 
@@ -242,7 +199,6 @@ private:
     dCcD_Stts mStts;
     dCcD_Cyl mCyl;
     bool mCylArmed = false;
-    u32 mShadowKey = 0;
 };
 
 int Puppet::create() {
@@ -251,14 +207,14 @@ int Puppet::create() {
     mSlot = static_cast<int>(prm & 0xFF);
     mLocal = (prm & kLocalFlag) != 0;
     mDecoy = (prm & kDecoyFlag) != 0;
-    mFixedProp = static_cast<int>((prm >> kPropShift) & 0xFF);
-    const int maxSlot = mDecoy ? kDecoyCount : kMaxPlayers;
-    if (mSlot < 1 || mSlot > maxSlot || (mDecoy && mFixedProp >= prop_count()) ||
-        linkkit::heap() == nullptr) {
+    mFixedProp = static_cast<uint8_t>(prm >> kPropShift);
+    mDecoyId = static_cast<uint8_t>(prm >> kDecoyIdShift);
+    const int maxSlot = mDecoy ? match::kMaxActiveDecoys : kMaxPlayers;
+    if (mSlot < 1 || mSlot > maxSlot || (mDecoy && mDecoyId == 0) || linkkit::heap() == nullptr) {
         return cPhs_ERROR_e;
     }
-    // Only a remote human Link needs the large private model heap. Local props and decorative
-    // decoys allocate only their small prop-model heap.
+    // Only a remote human Link needs the large private model heap. The local disguise only needs
+    // its small prop-model heap.
     if (!mLocal && !mDecoy) {
         mHeap = JKRExpHeap::create(kPuppetHeapSize, linkkit::heap(), false);
         if (mHeap == nullptr) {
@@ -269,7 +225,6 @@ int Puppet::create() {
     mStts.Init(0xFF, 0xFF, this);
     mCyl.Set(kCylSrc);
     mCyl.SetStts(&mStts);
-    if (mDecoy) mCyl.OffTgSetBit();
     fopAcM_setCullSizeBox(this, -160.0f, -20.0f, -160.0f, 160.0f, 260.0f, 160.0f);
     return cPhs_COMPLEATE_e;
 }
@@ -309,24 +264,27 @@ void Puppet::freeLink() {
 }
 
 bool Puppet::poseLink(const PlayerState& s, bool moving) {
-    // Remote animation blends can briefly reference cutscene-only resources or half-loaded upper
-    // body poses. For multiplayer readability, use one known complete animation for the whole
-    // skeleton: idle while still, walk while moving. Never fall back to an unanimated bind pose.
+    // For multiplayer readability, use one known complete animation for the whole skeleton: idle
+    // while still, walk while moving. Animation loading is optional: the bind pose is much better
+    // than hiding an entire hunter while an archive is unavailable.
     J3DAnmTransform* wanted = linkkit::anim(moving ? linkkit::kWalkAnim : linkkit::kIdleAnim);
     if (wanted == nullptr && mPoseAnim == nullptr) wanted = linkkit::anim(linkkit::kIdleAnim);
     if (wanted != nullptr && wanted != mPoseAnim) {
         mPoseAnim = wanted;
         mPoseFrame = 0.0f;
     }
-    if (mPoseAnim == nullptr) return false;
-
-    const float maxFrame = static_cast<float>(mPoseAnim->getFrameMax());
-    mPoseFrame += moving ? 1.1f : 0.45f;
-    if (maxFrame > 0.0f) mPoseFrame = std::fmod(mPoseFrame, maxFrame);
-    else mPoseFrame = 0.0f;
-    mPoseAnim->setFrame(mPoseFrame);
-    mLinkAnim.setAnmTransform(mPoseAnim);
-    mLinkAnim.setRatio(1.0f);
+    if (mPoseAnim != nullptr) {
+        const float maxFrame = static_cast<float>(mPoseAnim->getFrameMax());
+        mPoseFrame += moving ? 1.1f : 0.45f;
+        if (maxFrame > 0.0f) mPoseFrame = std::fmod(mPoseFrame, maxFrame);
+        else mPoseFrame = 0.0f;
+        mPoseAnim->setFrame(mPoseFrame);
+        mLinkAnim.setAnmTransform(mPoseAnim);
+        mLinkAnim.setRatio(1.0f);
+    } else {
+        mLinkAnim.setAnmTransform(nullptr);
+        mLinkAnim.setRatio(0.0f);
+    }
 
     mDoMtx_stack_c::transS(current.pos.x, current.pos.y, current.pos.z);
     mDoMtx_stack_c::YrotM(shape_angle.y);
@@ -338,7 +296,9 @@ bool Puppet::poseLink(const PlayerState& s, bool moving) {
     // One calculator at the root drives every joint. Clear the old split joints in case this model
     // was rebuilt after a colour or stage change.
     J3DModelData* data = mBody->getModelData();
-    data->getJointNodePointer(0)->setMtxCalc(&mLinkCalc);
+    data->getJointNodePointer(0)->setMtxCalc(
+        mPoseAnim != nullptr ? static_cast<J3DMtxCalc*>(&mLinkCalc)
+                             : static_cast<J3DMtxCalc*>(&mBindCalc));
     if (data->getJointNum() > 1) data->getJointNodePointer(1)->setMtxCalc(nullptr);
     if (data->getJointNum() > kJointLegs) data->getJointNodePointer(kJointLegs)->setMtxCalc(nullptr);
     mBody->calc();
@@ -383,13 +343,16 @@ bool Puppet::poseLink(const PlayerState& s, bool moving) {
 }
 
 bool Puppet::updateProp(int kind, bool moving) {
+    // Disabled legacy IDs can still arrive from an older peer or saved local state. Keep packet
+    // numbering stable but display the known-good pot instead of a broken composite/world model.
+    if (!prop_on_map(kind, -1)) kind = 0;
     if (kind != mWantedProp) {
         releaseProp();
         mWantedProp = kind;
         mPropKind = kind;
     }
     if (mPropKind < 0) mPropKind = kind;
-    // Never make a player or decoy disappear because one optional model failed. Retry the known
+    // Never make a player disappear because one optional model failed. Retry the known
     // good first catalogue entry (the small Ordon pot) until the player chooses another prop.
     if (mPropFailed) {
         if (mPropKind == 0) return false;
@@ -445,6 +408,7 @@ bool Puppet::updateProp(int kind, bool moving) {
     mDoMtx_stack_c::transS(current.pos.x, current.pos.y, current.pos.z);
     mDoMtx_stack_c::YrotM(shape_angle.y);
     mDoMtx_stack_c::scaleM(info.scale, info.scale, info.scale);
+    mDoMtx_stack_c::transM(info.offsetX, info.offsetY, info.offsetZ);
     mPropModel->setBaseTRMtx(mDoMtx_stack_c::get());
     fopAcM_SetMtx(this, mPropModel->getBaseTRMtx());
 
@@ -486,18 +450,27 @@ void Puppet::armHitbox(const match::Player& p, bool disguised, int kind) {
     if (!mCylArmed) return;
     const float r = disguised ? prop_info(kind).radius : kLinkRadius;
     const float h = disguised ? prop_info(kind).height : kLinkHeight;
-    // Prop hiders participate in the game's normal object-correction collision on the hunter's
-    // client. Link is pushed around the cylinder just like an NPC, while the network-owned prop
-    // remains authoritative and cannot be shoved out of place. Human hiders stay non-solid.
-    mCyl.SetCoSPrm(disguised && prop_info(kind).solid ? 0x79 : 0);
+    // This cylinder is a sword target only. Network-owned correction cylinders push Link at stale
+    // positions and behave badly for thin/offset models, so disguises never register as solids.
+    mCyl.SetCoSPrm(0);
     mCyl.SetC(current.pos);
     mCyl.SetR(r);
     mCyl.SetH(h);
     dComIfG_Ccsp()->Set(&mCyl);
 }
 
+void Puppet::armDecoyHitbox(int kind) {
+    const match::Match& m = match::get();
+    mCylArmed = m.phase == Phase::Seek && match::my_role() == Role::Hunter;
+    if (!mCylArmed) return;
+    mCyl.SetCoSPrm(0);
+    mCyl.SetC(current.pos);
+    mCyl.SetR(prop_info(kind).radius);
+    mCyl.SetH(prop_info(kind).height);
+    dComIfG_Ccsp()->Set(&mCyl);
+}
+
 void Puppet::publish(bool visible, float height, bool tracked) {
-    if (mDecoy) return;
     Slot& s = slot();
     s.visible = visible;
     s.tracked = tracked;
@@ -509,39 +482,21 @@ int Puppet::execute() {
     // A sword hit registered by last frame's collision pass.
     if (mCylArmed && mCyl.ChkTgHit()) {
         if (mCyl.GetTgHitAc() == dComIfGp_getPlayer(0)) {
-            local::note_hit();
-            match::report_hit(static_cast<uint8_t>(mSlot));
+            if (mDecoy) {
+                // A decoy is deliberately a miss: it disappears, but does not suppress the
+                // hunter's one-heart missed-swing penalty.
+                match::report_decoy_hit(mDecoyId);
+            } else {
+                local::note_hit();
+                match::report_hit(static_cast<uint8_t>(mSlot));
+            }
         }
         mCyl.ClrTgHit();
     }
-    // Apply/clear last frame's object-correction result before registering the cylinder again.
+    // Advance and clear last frame's collision state before registering the target again.
     mStts.Move();
     mCyl.ClrCoHit();
     mCylArmed = false;
-
-    if (mDecoy) {
-        mDisguised = true;
-        if (!mGrounded) {
-            updateGround();
-            if (mGroundY != -G_CM3D_F_INF) {
-                current.pos.y = mGroundY;
-                old.pos = current.pos;
-                mGrounded = true;
-            }
-        }
-        mVisible = mGrounded && updateProp(mFixedProp, false);
-        if (mVisible && prop_info(mPropKind).solid) {
-            // Decorative props use correction collision only: a wrong sword guess remains a miss,
-            // but Link can no longer walk through a crate, pot, rock or piece of furniture.
-            const PropInfo& info = prop_info(mPropKind);
-            mCyl.SetCoSPrm(0x79);
-            mCyl.SetC(current.pos);
-            mCyl.SetR(std::clamp(info.radius * 0.85f, 25.0f, 110.0f));
-            mCyl.SetH(info.height);
-            dComIfG_Ccsp()->Set(&mCyl);
-        }
-        return 1;
-    }
 
     if (mLocal) {
         fopAc_ac_c* player = dComIfGp_getPlayer(0);
@@ -559,6 +514,17 @@ int Puppet::execute() {
         const bool ready = updateProp(local::prop(), local::disguised() && moving);
         mVisible = local::disguised() && ready;
         publish(mVisible, mVisible ? prop_info(mPropKind).height : 0.0f, mVisible);
+        return 1;
+    }
+
+    if (mDecoy) {
+        mDisguised = true;
+        old.pos = current.pos;
+        updateGround();
+        const int kind = prop_on_map(mFixedProp, -1) ? mFixedProp : 0;
+        mVisible = updateProp(kind, false);
+        if (mVisible) armDecoyHitbox(mPropKind >= 0 ? mPropKind : kind);
+        publish(mVisible, prop_info(mPropKind >= 0 ? mPropKind : kind).height, false);
         return 1;
     }
 
@@ -584,7 +550,7 @@ int Puppet::execute() {
     updateGround();
 
     mDisguised = (s.flags & STATE_DISGUISED) != 0;
-    const int kind = s.prop < prop_count() ? s.prop : 0;
+    const int kind = prop_on_map(s.prop, -1) ? s.prop : 0;
     const bool moving = (current.pos - before).abs() > 1.0f;
     if (mDisguised) {
         mVisible = updateProp(kind, moving);
@@ -606,7 +572,6 @@ int Puppet::draw() {
     if (!mVisible) return 1;
     g_env_light.settingTevStruct(0, &current.pos, &tevStr);
     float shadow = kLinkRadius;
-    bool modelShadow = false;
     if (mDisguised || mLocal) {
         if (mPropModel == nullptr) return 1;
         g_env_light.setLightTevColorType_MAJI(mPropModel, &tevStr);
@@ -618,15 +583,9 @@ int Puppet::draw() {
         mDoExt_bckAnm* anm = mPropMoving && mPropMove != nullptr ? mPropMove : mPropIdle;
         if (anm != nullptr) anm->entry(data);
         mDoExt_modelUpdateDL(mPropModel);
-        const PropInfo& info = prop_info(mPropKind);
-        if (info.shadowScale <= 0.0f) {
-            shadow = 0.0f;
-        } else if (const float nativeSize = native_simple_shadow_size(mPropKind); nativeSize > 0.0f) {
-            shadow = nativeSize;
-        } else {
-            shadow = 1.0f;  // a positive sentinel; projected shadows use their profile below
-            modelShadow = true;
-        }
+        // Never use model-projected shadows here: those redraw the prop's geometry into the shadow
+        // pass. A metadata-sized simple quad is cheap and cannot double a complex model's indices.
+        shadow = prop_info(mPropKind).simpleShadowSize;
     } else {
         // modelEntryDL alone does not submit custom actors on Dusklight's interpolated PC frames.
         // Updating the body and rigid attachments here keeps a complete Link visible every render
@@ -645,18 +604,8 @@ int Puppet::draw() {
         }
     }
     if (mGroundY != -G_CM3D_F_INF && shadow > 0.0f) {
-        if (modelShadow && mPropModel != nullptr) {
-            const PropInfo& info = prop_info(mPropKind);
-            const ModelShadowProfile profile = native_model_shadow(mPropKind, info);
-            cXyz shadowPos = current.pos;
-            shadowPos.y += profile.yOffset;
-            mShadowKey = dComIfGd_setShadow(mShadowKey, 1, mPropModel, &shadowPos, profile.depth,
-                profile.footprint, current.pos.y, mGroundY, mGndChk, &tevStr, shape_angle.y, 1.0f,
-                dDlst_shadowControl_c::getSimpleTex());
-        } else {
-            dComIfGd_setSimpleShadow(&current.pos, mGroundY, shadow, mGndChk, shape_angle.y,
-                1.0f, dDlst_shadowControl_c::getSimpleTex());
-        }
+        dComIfGd_setSimpleShadow(&current.pos, mGroundY, shadow, mGndChk, shape_angle.y, 1.0f,
+            dDlst_shadowControl_c::getSimpleTex());
     }
     return 1;
 }
@@ -667,7 +616,7 @@ int Puppet::destroy() {
         mHeap->destroy();
         mHeap = nullptr;
     }
-    if (!mDecoy) publish(false, 0.0f, false);
+    publish(false, 0.0f, false);
     this->~Puppet();
     return 1;
 }
@@ -703,52 +652,33 @@ const ActorProfileDesc kProfile = {
     .draw_function = puppet_draw,
 };
 
-void manage(Slot& slot, bool want, int id, bool local, const cXyz& at) {
+void manage(Slot& slot, bool want, int id, bool local, const cXyz& at, bool decoy = false,
+    uint8_t kind = 0, uint8_t decoyId = 0, int16_t yaw = 0) {
     if (slot.actor != fpcM_ERROR_PROCESS_ID_e && fopAcM_SearchByID(slot.actor) == nullptr) {
         slot.actor = fpcM_ERROR_PROCESS_ID_e;
         slot.visible = false;
         slot.tracked = false;
     }
-    if (!local && want && slot.actor != fpcM_ERROR_PROCESS_ID_e) {
-        // Rebuilt in the new colour by the actor itself; nothing to do here.
-    }
     if (want && slot.actor == fpcM_ERROR_PROCESS_ID_e) {
         ActorSpawnParams params{};
-        params.parameters = static_cast<uint32_t>(id) | (local ? kLocalFlag : 0u);
+        params.parameters = static_cast<uint32_t>(id) | (local ? kLocalFlag : 0u) |
+                            (decoy ? kDecoyFlag : 0u) |
+                            (static_cast<uint32_t>(kind) << kPropShift) |
+                            (static_cast<uint32_t>(decoyId) << kDecoyIdShift);
         params.room_num = -1;
         params.position = {at.x, at.y, at.z};
+        params.angle.y = yaw;
         params.scale = {1.0f, 1.0f, 1.0f};
         ActorId created = 0;
         if (svc_actor->create_actor(mod_ctx, s_procName, &params, &created) == MOD_OK) {
             slot.actor = created;
         }
     } else if (!want && slot.actor != fpcM_ERROR_PROCESS_ID_e) {
-        svc_actor->delete_actor(mod_ctx, slot.actor);
-        slot.actor = fpcM_ERROR_PROCESS_ID_e;
-        slot.visible = false;
-        slot.tracked = false;
-    }
-}
-
-void manage_decoy(Slot& slot, bool want, int number, int kind, const cXyz& at, s16 yaw) {
-    if (slot.actor != fpcM_ERROR_PROCESS_ID_e && fopAcM_SearchByID(slot.actor) == nullptr) {
-        slot.actor = fpcM_ERROR_PROCESS_ID_e;
-    }
-    if (want && slot.actor == fpcM_ERROR_PROCESS_ID_e) {
-        ActorSpawnParams params{};
-        params.parameters = static_cast<uint32_t>(number + 1) | kDecoyFlag |
-                            (static_cast<uint32_t>(kind) << kPropShift);
-        params.room_num = -1;
-        params.position = {at.x, at.y, at.z};
-        params.angle = {0, yaw, 0};
-        params.scale = {1.0f, 1.0f, 1.0f};
-        ActorId created = 0;
-        if (svc_actor->create_actor(mod_ctx, s_procName, &params, &created) == MOD_OK) {
-            slot.actor = created;
+        if (svc_actor->delete_actor(mod_ctx, slot.actor) == MOD_OK) {
+            slot.actor = fpcM_ERROR_PROCESS_ID_e;
+            slot.visible = false;
+            slot.tracked = false;
         }
-    } else if (!want && slot.actor != fpcM_ERROR_PROCESS_ID_e) {
-        svc_actor->delete_actor(mod_ctx, slot.actor);
-        slot.actor = fpcM_ERROR_PROCESS_ID_e;
     }
 }
 
@@ -770,9 +700,7 @@ bool unregister_actor() {
     s_registered = false;
     for (Slot& s : s_slots) s = Slot{};
     s_localProp = Slot{};
-    for (Slot& s : s_decoys) s = Slot{};
-    s_decoyRound = 0;
-    s_decoyMap = -1;
+    for (DecoySlot& s : s_decoys) s = DecoySlot{};
     return true;
 }
 
@@ -798,36 +726,30 @@ void update() {
     manage(s_localProp, wantLocal, me != 0 ? me : 1, true,
         player != nullptr ? player->current.pos : cXyz(0.0f, 0.0f, 0.0f));
 
-    const match::Match& m = match::get();
-    const int mapIndex = m.map;
-    const bool propRound = online && settled && match::in_round() &&
-                           m.settings.mode == Mode::PropHunt && mapIndex >= 0 &&
-                           mapIndex < map_count() &&
-                           std::strncmp(local::stage(), map_info(mapIndex).stage, 8) == 0;
-    if (!propRound) {
-        for (int i = 0; i < kDecoyCount; ++i) {
-            manage_decoy(s_decoys[i], false, i, 0, cXyz(0.0f, 0.0f, 0.0f), 0);
+    const match::Match& game = match::get();
+    const bool decoyWorld = online && settled && game.settings.mode == Mode::PropHunt &&
+                            (game.phase == Phase::Hide || game.phase == Phase::Seek) &&
+                            std::strncmp(local::stage(), map_info(game.map).stage, 8) == 0;
+    for (int i = 0; i < match::kMaxActiveDecoys; ++i) {
+        DecoySlot& live = s_decoys[i];
+        const bool exists = i < match::decoy_count();
+        const match::Decoy& d = match::decoy(i);
+        const bool want = decoyWorld && exists;
+        const bool changed = want && (live.id != d.id || live.kind != d.prop);
+        if (changed) {
+            manage(live.slot, false, i + 1, false, cXyz(0.0f, 0.0f, 0.0f));
+            if (live.slot.actor != fpcM_ERROR_PROCESS_ID_e) continue;
         }
-        s_decoyRound = 0;
-        s_decoyMap = -1;
-        return;
-    }
-    if (s_decoyRound != m.round || s_decoyMap != mapIndex) {
-        // Remove the old actors first; the next update creates this map's authored layout after
-        // deletion has been requested. Keeping layouts stable is what makes the scenery believable.
-        for (int i = 0; i < kDecoyCount; ++i) {
-            manage_decoy(s_decoys[i], false, i, 0, cXyz(0.0f, 0.0f, 0.0f), 0);
+        if (want) {
+            live.id = d.id;
+            live.kind = d.prop;
+            manage(live.slot, true, i + 1, false, cXyz(d.x, d.y, d.z), true, d.prop, d.id,
+                d.yaw);
+        } else {
+            manage(live.slot, false, i + 1, false, cXyz(0.0f, 0.0f, 0.0f));
+            live.id = 0;
+            live.kind = 0;
         }
-        s_decoyRound = m.round;
-        s_decoyMap = mapIndex;
-        return;
-    }
-    for (int i = 0; i < kDecoyCount; ++i) {
-        const CoverPoint point = cover_point(mapIndex, i);
-        // Start above an authored point. The actor grounds itself before becoming visible, so a
-        // changed stage layout or missing floor never leaves a floating prop.
-        const cXyz at(point.x, point.y + 1200.0f, point.z);
-        manage_decoy(s_decoys[i], propRound, i, point.prop, at, point.yaw);
     }
 }
 

@@ -47,13 +47,17 @@ static int count_sent(uint8_t type) {
     return n;
 }
 
-static std::vector<uint8_t> state_msg(const char* stage, float x, float y, float z, uint8_t flags = STATE_IN_WORLD) {
+static std::vector<uint8_t> state_msg(const char* stage, float x, float y, float z,
+    uint8_t flags = STATE_IN_WORLD, uint8_t prop = 0, int16_t yaw = 0) {
     PlayerState s;
     s.flags = flags;
     copy_str(s.stage, stage);
     s.x = x;
     s.y = y;
     s.z = z;
+    s.yaw = yaw;
+    s.prop = prop;
+    s.propYaw = yaw;
     Writer w(MSG_STATE);
     s.write(w);
     return w.bytes();
@@ -76,6 +80,19 @@ static std::vector<uint8_t> hit_msg(uint32_t round, uint8_t target) {
     return w.bytes();
 }
 
+static std::vector<uint8_t> place_decoy_msg(uint32_t round) {
+    Writer w(MSG_PLACE_DECOY);
+    w.u32(round);
+    return w.bytes();
+}
+
+static std::vector<uint8_t> hit_decoy_msg(uint32_t round, uint8_t id) {
+    Writer w(MSG_HIT_DECOY);
+    w.u32(round);
+    w.u8(id);
+    return w.bytes();
+}
+
 static void reset_net(int players) {
     g_fake = net::FakeNet{};
     for (int id = 1; id <= players; ++id) g_fake.add(id, ("P" + std::to_string(id)).c_str());
@@ -87,6 +104,7 @@ static void host_room(int players) {
     match::Settings defaults;
     CHECK(!defaults.autoTaunt);
     CHECK(defaults.idleTauntSecs == 60);
+    CHECK(defaults.freeDecoys == 5);
     match::Settings s;
     s.map = 0;
     s.hideSecs = 20;
@@ -170,6 +188,7 @@ static void test_protocol_roundtrip() {
     s.missPenalty = false;
     s.autoTaunt = true;
     s.idleTauntSecs = 90;
+    s.freeDecoys = 99;  // clamps to the host-visible 0..10 range
     s.isPublic = true;
     Writer sw(MSG_SETTINGS);
     s.write(sw);
@@ -181,6 +200,88 @@ static void test_protocol_roundtrip() {
     CHECK(t.hideSecs == 10 && t.seekSecs == 1800);
     CHECK(!t.missPenalty && t.isPublic && t.foundJoinHunters && t.autoTaunt && t.autoNext);
     CHECK(t.idleTauntSecs == 90);
+    CHECK(t.freeDecoys == 10);
+}
+
+static void test_decoy_economy_and_validation() {
+    std::printf("bounded decoys, live points, and authoritative hits\n");
+    host_room(3);
+    match::start_round();
+    const char* stage = map_info(match::get().map).stage;
+    everyone_ready(3, stage);
+    advance(100);
+    CHECK(match::get().phase == Phase::Hide);
+
+    int hiders[2] = {};
+    int hiderCount = 0;
+    const int hunter = hunter_id();
+    for (int id = 1; id <= 3; ++id) {
+        if (match::player(id).role == Role::Hider) hiders[hiderCount++] = id;
+    }
+    CHECK(hunter != 0 && hiderCount == 2);
+
+    const auto state = [&](int id, float x, float z, bool disguised) {
+        const uint8_t flags = static_cast<uint8_t>(STATE_IN_WORLD | (disguised ? STATE_DISGUISED : 0));
+        if (id == g_fake.self) {
+            PlayerState s;
+            s.flags = flags;
+            copy_str(s.stage, stage);
+            s.x = x;
+            s.z = z;
+            s.prop = 0;
+            s.propYaw = static_cast<int16_t>(x);
+            match::set_local_state(s);
+        } else {
+            deliver(static_cast<uint8_t>(id), state_msg(stage, x, 0.0f, z, flags, 0,
+                                                   static_cast<int16_t>(x)));
+        }
+    };
+    const auto place = [&](int id) {
+        if (id == g_fake.self) match::place_decoy();
+        else deliver(static_cast<uint8_t>(id), place_decoy_msg(match::get().round));
+    };
+
+    // Each hider uses all five free placements. The shared render-safety cap keeps only eight
+    // alive, while usage remains per player and cannot be reset by global eviction.
+    for (int n = 0; n < 5; ++n) {
+        for (int h = 0; h < 2; ++h) {
+            state(hiders[h], 200.0f + n * 220.0f, h == 0 ? 0.0f : 500.0f, true);
+            place(hiders[h]);
+        }
+        advance(800);
+    }
+    CHECK(match::decoy_count() == match::kMaxActiveDecoys);
+    CHECK(match::player(hiders[0]).decoysUsed == 5);
+    CHECK(match::player(hiders[1]).decoysUsed == 5);
+    CHECK(match::player(hiders[0]).roundPoints == 0);
+
+    // There are no paid placements during hiding time.
+    state(hiders[0], 1500.0f, 0.0f, true);
+    place(hiders[0]);
+    CHECK(match::player(hiders[0]).decoysUsed == 5);
+    CHECK(match::decoy_count() == match::kMaxActiveDecoys);
+
+    while (match::get().phase == Phase::Hide) advance(1000);
+    CHECK(match::get().phase == Phase::Seek);
+    advance(30'000);
+    CHECK(match::player(hiders[0]).roundPoints == 3);  // awarded live, so it is spendable
+
+    // The sixth placement costs the three points and replaces an old owned decoy.
+    state(hiders[0], 1700.0f, 0.0f, true);
+    place(hiders[0]);
+    CHECK(match::player(hiders[0]).decoysUsed == 6);
+    CHECK(match::player(hiders[0]).roundPoints == 0);
+    CHECK(match::decoy_count() == match::kMaxActiveDecoys);
+
+    const match::Decoy target = match::decoy(0);
+    state(hunter, target.x + 1000.0f, target.z, false);
+    deliver(static_cast<uint8_t>(hunter), hit_decoy_msg(match::get().round, target.id));
+    CHECK(match::decoy_count() == match::kMaxActiveDecoys);  // too far
+    deliver(static_cast<uint8_t>(hiders[1]), hit_decoy_msg(match::get().round, target.id));
+    CHECK(match::decoy_count() == match::kMaxActiveDecoys);  // hiders cannot clear traps
+    state(hunter, target.x, target.z, false);
+    deliver(static_cast<uint8_t>(hunter), hit_decoy_msg(match::get().round, target.id));
+    CHECK(match::decoy_count() == match::kMaxActiveDecoys - 1);
 }
 
 static void test_full_round_two_players() {
@@ -404,6 +505,7 @@ static void test_client_and_host_migration() {
         roster.u16(0);
         roster.u8(0);
         roster.u8(id == 1 ? 1 : 0);
+        roster.u8(0);
     }
     deliver(1, roster.bytes());
     Writer round(MSG_ROUND);
@@ -432,6 +534,7 @@ static void test_client_and_host_migration() {
     fake.u8(0);
     fake.u16(999);
     fake.u16(0);
+    fake.u8(0);
     fake.u8(0);
     fake.u8(0);
     deliver(3, fake.bytes());
@@ -482,35 +585,8 @@ static void test_maps() {
     for (int m = 0; m < map_count(); ++m) {
         const MapInfo& map = map_info(m);
         CHECK(map.stage != nullptr && map.stage[0] != '\0');
-        CHECK(cover_point_count(m) == kCoverPointCount);
-        const CoverPoint first = cover_point(m, 0);
-        CHECK(std::isfinite(first.x) && std::isfinite(first.y) && std::isfinite(first.z));
-        if (!(first.prop < prop_count() && prop_on_map(first.prop, m))) {
-            std::printf("    map %d cover point 0 uses prop %u\n", m, first.prop);
-        }
-        CHECK(first.prop < prop_count() && prop_on_map(first.prop, m));
-        if (std::hypot(first.x - map.spawnX, first.z - map.spawnZ) <= 350.0f) {
-            std::printf("    map %d cover point 0 is too close to the spawn\n", m);
-        }
-        CHECK(std::hypot(first.x - map.spawnX, first.z - map.spawnZ) > 350.0f);
-        bool spread = false;
-        for (int i = 1; i < cover_point_count(m); ++i) {
-            const CoverPoint p = cover_point(m, i);
-            CHECK(std::isfinite(p.x) && std::isfinite(p.y) && std::isfinite(p.z));
-            if (!(p.prop < prop_count() && prop_on_map(p.prop, m))) {
-                std::printf("    map %d cover point %d uses prop %u\n", m, i, p.prop);
-            }
-            CHECK(p.prop < prop_count() && prop_on_map(p.prop, m));
-            if (std::hypot(p.x - map.spawnX, p.z - map.spawnZ) <= 350.0f) {
-                std::printf("    map %d cover point %d is too close to the spawn\n", m, i);
-            }
-            CHECK(std::hypot(p.x - map.spawnX, p.z - map.spawnZ) > 350.0f);
-            const CoverPoint again = cover_point(m, i);
-            CHECK(p.x == again.x && p.y == again.y && p.z == again.z && p.prop == again.prop &&
-                  p.yaw == again.yaw);
-            if (std::hypot(p.x - first.x, p.z - first.z) > 500.0f) spread = true;
-        }
-        CHECK(spread);
+        CHECK(std::isfinite(map.spawnX) && std::isfinite(map.spawnY) &&
+              std::isfinite(map.spawnZ));
     }
     for (int i = 0; i < 200; ++i) {
         const int m = random_map(3);
@@ -526,26 +602,25 @@ static void test_props() {
         CHECK(prop.name != nullptr && prop.arc != nullptr);
         CHECK(prop.bmd != nullptr || prop.bmdIndex >= 0);
         CHECK(prop.radius > 0.0f && prop.height > 0.0f && prop.scale > 0.0f);
-        CHECK(prop.mapMask != 0);
-        CHECK(prop.shadowScale >= 0.0f && prop.shadowScale <= 1.0f);
+        CHECK(prop.simpleShadowSize >= 0.0f && prop.simpleShadowSize <= 200.0f);
+        CHECK(std::isfinite(prop.offsetX) && std::isfinite(prop.offsetY) &&
+              std::isfinite(prop.offsetZ));
     }
     CHECK(std::strcmp(prop_info(15).name, "Sign") == 0);
     CHECK(std::strcmp(prop_info(20).name, "Gravestone") == 0);
     CHECK(std::strcmp(prop_info(58).name, "Map Table") == 0);
-    CHECK(prop_info(27).shadowScale == 0.0f);  // Lily Pad must not have a black ground blob
-    CHECK(prop_info(5).shadowScale > 0.0f);    // real pumpkins use a simple shadow
-    CHECK(prop_info(8).shadowScale == 0.0f);   // native static rock has no dynamic shadow
-    CHECK(prop_info(9).shadowScale > 0.0f);    // Cucco uses its exact projected shadow
-    CHECK(prop_info(16).shadowScale == 0.0f);  // native static furniture has no dynamic shadow
-    CHECK(prop_info(35).shadowScale > 0.0f);   // oil jar uses a projected shadow
-    CHECK(prop_info(2).solid);                  // crates stop Link
-    CHECK(!prop_info(19).solid);                // low bones can be stepped through
-    CHECK(!prop_info(21).solid);                // Bomb Flower
-    CHECK(!prop_info(27).solid);                // Lily Pad
-    CHECK(!prop_info(31).solid);                // Seaweed
-    CHECK(!prop_info(40).solid);                // Hawk Grass
-    CHECK(!prop_info(41).solid);                // Horse Grass
-    CHECK(!prop_info(46).solid);                // Pumpkin Leaves
+    CHECK(prop_count_for_map(-1) == 54);        // five unsafe legacy IDs stay reserved
+    CHECK(prop_info(27).simpleShadowSize == 0.0f); // Lily Pad gets no black ground blob
+    CHECK(prop_info(5).simpleShadowSize == 50.0f); // pumpkins use a cheap native-sized shadow
+    CHECK(prop_info(9).simpleShadowSize == 40.0f); // Cucco no longer redraws into a shadow pass
+    CHECK(prop_info(35).simpleShadowSize == 55.0f); // neither does the oil jar
+    CHECK(prop_info(32).scale == 1.0f && prop_info(32).offsetY > 140.0f); // Laundry
+    CHECK(prop_info(26).scale == 4.0f && std::fabs(prop_info(26).offsetX) > 2000.0f); // Crystal
+    CHECK(!prop_on_map(36, -1)); // environment-sized River Rock
+    CHECK(!prop_on_map(43, -1)); // incomplete two-model Board Target
+    CHECK(!prop_on_map(47, -1)); // particle-dependent Palace Candle
+    CHECK(!prop_on_map(50, -1)); // actor-placed flat Desert Fence rail
+    CHECK(!prop_on_map(57, -1)); // composite Lake Buoy
     CHECK(prop_for_carry_type(3) == 10);   // cannonball
     CHECK(prop_for_carry_type(6) == 11);   // Deku nut
     CHECK(prop_for_carry_type(10) == 12);  // big blue pot
@@ -554,7 +629,7 @@ static void test_props() {
     CHECK(prop_for_carry_type(99) == -1);
     for (int i = 0; i < 200; ++i) {
         const int prop = random_prop();
-        CHECK(prop >= 0 && prop < prop_count());
+        CHECK(prop >= 0 && prop < prop_count() && prop_on_map(prop, -1));
     }
     for (int map = 0; map < map_count(); ++map) {
         CHECK(prop_count_for_map(map) >= 15);
@@ -573,6 +648,7 @@ static void test_props() {
 
 int main() {
     test_protocol_roundtrip();
+    test_decoy_economy_and_validation();
     test_full_round_two_players();
     test_props_win_on_time_and_rotation();
     test_gather_timeout();

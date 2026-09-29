@@ -123,7 +123,7 @@ void draw_blindfold(Painter& p, const Screen& s) {
     p.centered("You're a HUNTER. When the timer ends, find them and hit them with your sword.", cx,
         cy + 50.0f, 16.0f, rgba(200, 200, 200));
     if (match::get().settings.mode == Mode::PropHunt) {
-        p.centered("Props can be objects or furniture. Swinging at nothing costs a quarter heart.",
+        p.centered("Props can be objects or furniture. Swinging at nothing costs one heart.",
             cx, cy + 74.0f, 14.0f, rgba(170, 170, 170));
     }
 }
@@ -186,8 +186,15 @@ void draw_role(Painter& p, const Screen& s) {
         if (!local::has_sword() && m.settings.mode == Mode::PropHunt) hint = "No sword! Play from the Hide & Seek save";
     } else if (role == Role::Hider && !match::player(me).found) {
         if (local::disguised()) {
-            line = std::string("You are a ") + prop_info(local::prop()).name;
-            hint = "D-pad < > prop   D-pad v taunt (+1, reveals you)";
+            const match::Player& mePlayer = match::player(me);
+            line = std::string("You are a ") + prop_info(local::prop()).name + "  |  " +
+                   std::to_string(mePlayer.roundPoints) + " round pts";
+            const int free = match::my_decoys_left();
+            hint = "D-pad ^ decoy (" +
+                   (free > 0 ? std::to_string(free) + " free"
+                             : std::to_string(match::kExtraDecoyCost) + " pts") +
+                   ")   < > prop";
+            if (m.phase == Phase::Seek) hint += "   v taunt (+1, reveals you)";
         } else {
             line = "You are HIDING";
             hint = m.phase == Phase::Seek ? "D-pad v taunt (+1, reveals you)" : "";

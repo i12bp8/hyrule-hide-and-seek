@@ -11,6 +11,9 @@
 
 namespace hs::match {
 
+constexpr int kMaxActiveDecoys = 8;
+constexpr int kExtraDecoyCost = 3;
+
 struct Settings {
     Mode mode = Mode::PropHunt;
     uint8_t map = kRandomMap;
@@ -23,6 +26,7 @@ struct Settings {
     uint16_t idleTauntSecs = 60;  // 0 disables stationary-prop auto-taunts
     bool autoNext = true;
     bool isPublic = false;
+    uint8_t freeDecoys = 5;  // free placements per hider, available from the Hide phase
 
     void write(Writer& w) const;
     void read(Reader& r);
@@ -44,6 +48,17 @@ struct Player {
     uint64_t stateAt = 0;
     uint64_t stageChangedAt = 0;  // tag immunity after loading a new area
     uint64_t lastTauntAt = 0;
+    uint64_t lastDecoyAt = 0;
+    uint16_t survivalAwarded = 0;  // host bookkeeping for live 10-second awards
+    uint8_t decoysUsed = 0;
+};
+
+struct Decoy {
+    uint8_t id = 0;
+    uint8_t owner = 0;
+    uint8_t prop = 0;
+    float x = 0.0f, y = 0.0f, z = 0.0f;
+    int16_t yaw = 0;
 };
 
 struct Match {
@@ -54,6 +69,8 @@ struct Match {
     uint64_t phaseEnd = 0;
     int winner = -1;  // last round: 0 props, 1 hunters
     Player players[kSlots];
+    Decoy decoys[kMaxActiveDecoys];
+    uint8_t decoyCount = 0;
 };
 
 // Short messages for the HUD feed and big centre banners.
@@ -71,6 +88,10 @@ bool in_round();  // Gather, Hide or Seek
 uint32_t ms_left();
 int hiders_left();
 int count_role(Role role);
+int decoy_count();
+const Decoy& decoy(int index);
+int my_decoys_left();  // remaining free placements; extra placements cost kExtraDecoyCost
+bool can_place_decoy();
 
 // Presentation reads these; each Notice is shown for a few seconds.
 const std::vector<Notice>& notices();
@@ -87,6 +108,8 @@ void set_wanted_color(uint8_t color);  // anyone
 void set_local_state(const PlayerState& s);  // every frame; sent at 10 Hz
 void report_ready();
 void report_hit(uint8_t target);
+void place_decoy();
+void report_decoy_hit(uint8_t decoyId);
 void send_taunt(uint8_t sound);
 
 // Wiring to net.

@@ -17,18 +17,20 @@ struct PropInfo {
     float scale;
     int bmdIndex = -1;    // archives whose model has no stable filename in the headers
     uint16_t mapMask = 0x7FFF;  // one bit per entry in maps.cpp
-    // Whether this native actor has a dynamic shadow. Zero is intentional for static scenery and
-    // flat/translucent objects whose real versions rely on the map's lighting instead.
-    float shadowScale = 1.0f;
-    // Soft scenery should still be sword-targetable when it is a hider, but never stop Link. Solid
-    // scenery uses the same object-correction cylinder for both hiders and authored decoys.
-    bool solid = true;
+    // A cheap circular shadow matching the native actor. Zero is intentional: model-projected
+    // shadows submit the geometry a second time and can overflow Dusklight's per-frame FIFO.
+    float simpleShadowSize = 0.0f;
+    // Local-space correction for models authored around a hanging/off-centre native actor origin.
+    float offsetX = 0.0f;
+    float offsetY = 0.0f;
+    float offsetZ = 0.0f;
 };
 
 int prop_count();
 const PropInfo& prop_info(int index);
 // Map-aware selection keeps Zora props near water, village furniture in settlements, and so on.
-// A negative map selects from the full catalogue.
+// A negative map selects from every enabled entry. A zero mapMask keeps a legacy network ID but
+// prevents a composite or environment-sized model from being offered as a disguise.
 bool prop_on_map(int index, int map);
 int prop_count_for_map(int map);
 int prop_for_map(int map, int ordinal);

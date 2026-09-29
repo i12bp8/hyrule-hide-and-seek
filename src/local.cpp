@@ -37,6 +37,7 @@ namespace hs::local {
 namespace {
 
 constexpr uint64_t kTauntCooldownMs = 5000;
+constexpr uint64_t kDecoyCooldownMs = 750;
 constexpr uint64_t kAutoTauntEveryMs = 20000;
 constexpr uint32_t kAutoTauntLastMs = 60000;
 constexpr uint64_t kTauntRevealMs = 5000;
@@ -75,6 +76,7 @@ Phase s_lastPhase = Phase::Lobby;
 bool s_disguised = false;
 int s_prop = 0;
 uint64_t s_lastTaunt = 0;
+uint64_t s_lastDecoy = 0;
 uint64_t s_lastAutoTaunt = 0;
 bool s_idleTracking = false;
 cXyz s_idleAnchor{0.0f, 0.0f, 0.0f};
@@ -299,6 +301,7 @@ void on_phase_change(Phase from, Phase to) {
         // Choose during the gathering/warp phase so the replacement model is already loaded when
         // the hider becomes disguised at the start of Hide.
         s_prop = random_prop(match::get().map);
+        s_lastDecoy = 0;
     }
     if (to == Phase::Hide) {
         // Everyone starts the round with full hearts.
@@ -334,9 +337,10 @@ void hunter_controls(daAlink_c* l) {
     if (s_swinging && now - s_swingAt > kSwingWindowMs) {
         s_swinging = false;
         if (!s_swingHit && m.settings.missPenalty && playing_prop_hunt() && m.phase == Phase::Seek) {
-            // A swing at nothing costs a quarter heart, never the last one.
+            // Twilight Princess stores life in quarter hearts. Charge a full heart when possible,
+            // but always leave the hunter's final quarter so the round cannot kill them.
             const u16 life = dComIfGs_getLife();
-            if (life > 1) dComIfGs_setLife(static_cast<u16>(life - 1));
+            if (life > 1) dComIfGs_setLife(static_cast<u16>(life > 4 ? life - 4 : 1));
             play_at(Z2SE_SY_CURSOR_CANCEL, &l->current.pos);
         }
     }
@@ -393,7 +397,15 @@ void hider_controls(daAlink_c* l) {
     const match::Match& m = match::get();
     const uint64_t now = now_ms();
     if (s_disguised) {
-        if (mDoCPd_c::getTrigRight(PAD_1)) {
+        if (mDoCPd_c::getTrigUp(PAD_1)) {
+            if (match::can_place_decoy() && now - s_lastDecoy >= kDecoyCooldownMs) {
+                s_lastDecoy = now;
+                match::place_decoy();
+                play_at(Z2SE_SY_CURSOR_OK, &l->current.pos);
+            } else {
+                play_at(Z2SE_SY_CURSOR_CANCEL, &l->current.pos);
+            }
+        } else if (mDoCPd_c::getTrigRight(PAD_1)) {
             const int near = nearby_prop(l->current.pos);
             s_prop = near >= 0 && near != s_prop ? near : step_prop(s_prop, m.map, 1);
             play_at(Z2SE_SY_CURSOR_OK, &l->current.pos);

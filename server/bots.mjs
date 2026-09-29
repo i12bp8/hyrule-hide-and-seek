@@ -18,18 +18,26 @@ const args = Object.fromEntries(
 const server = String(args.server || "ws://127.0.0.1:8787").replace(/\/$/, "");
 const room = String(args.room || "").toUpperCase();
 const count = Number(args.count || 3);
-const PROTOCOL = 3;
+const PROTOCOL = 4;
 if (!room) {
   console.error("usage: node bots.mjs --room ABCDE [--count 3] [--server ws://127.0.0.1:8787]");
   process.exit(2);
 }
 
-const MSG = { STATE: 1, HELLO: 2, SETTINGS: 10, ROSTER: 11, ROUND: 12, PHASE: 13, FOUND: 14, RESULTS: 15, READY: 20, HIT: 21, TAUNT: 23 };
+const MSG = { STATE: 1, HELLO: 2, SETTINGS: 10, ROSTER: 11, ROUND: 12, PHASE: 13, FOUND: 14, RESULTS: 15, DECOYS: 16, READY: 20, HIT: 21, TAUNT: 23, PLACE_DECOY: 24, HIT_DECOY: 25 };
 const ROLE = { NONE: 0, HIDER: 1, HUNTER: 2, SPECTATOR: 3 };
 const PHASE = ["Lobby", "Gather", "Hide", "Seek", "Results"];
 const FLAG = { IN_WORLD: 1, WOLF: 2, DISGUISED: 4, SWORD: 8, SHIELD: 16 };
 const ANIM = { WAIT: 0x26a, RUN: 0xc5 };
 const PROP_COUNT = 59;
+const DISABLED_PROPS = new Set([36, 43, 47, 50, 57]);
+
+function randomProp() {
+  let prop;
+  do prop = Math.floor(Math.random() * PROP_COUNT);
+  while (DISABLED_PROPS.has(prop));
+  return prop;
+}
 
 class Writer {
   constructor(type) {
@@ -95,7 +103,7 @@ class Bot {
     this.pos = null;
     this.stage = "";
     this.yaw = 0;
-    this.prop = Math.floor(Math.random() * PROP_COUNT);
+    this.prop = randomProp();
     this.spot = null;
     this.readyFor = 0;
     this.lastTaunt = Date.now();
@@ -152,7 +160,7 @@ class Bot {
       case MSG.ROSTER: {
         const n = r.u8();
         for (let i = 0; i < n; ++i) {
-          const id = r.u8(); const role = r.u8(); r.u8(); r.u16(); r.u16(); r.u8(); r.u8();
+          const id = r.u8(); const role = r.u8(); r.u8(); r.u16(); r.u16(); r.u8(); r.u8(); r.u8();
           this.roles.set(id, role);
         }
         break;
@@ -161,7 +169,7 @@ class Bot {
         this.round = r.u32();
         this.mode = r.u8();
         this.spot = null;
-        this.prop = Math.floor(Math.random() * PROP_COUNT);
+        this.prop = randomProp();
         console.log(`${this.name}: round ${this.round}, I'm a ${this.myRole() === ROLE.HUNTER ? "hunter" : "prop"}`);
         break;
       case MSG.PHASE:

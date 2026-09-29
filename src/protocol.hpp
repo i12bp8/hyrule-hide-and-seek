@@ -11,9 +11,8 @@
 
 namespace hs {
 
-// v2 expands the networked prop ID catalogue from 21 to 59. Keep v1 clients in separate rooms:
-// they would otherwise turn every new prop ID into a pot and would not create the same cover.
-constexpr int kProtocolVersion = 3;
+// v4 adds host-authoritative, player-placed decoys and their configurable free allowance.
+constexpr int kProtocolVersion = 4;
 
 enum MsgType : uint8_t {
     MSG_STATE = 1,     // everyone -> everyone, 10 Hz
@@ -24,9 +23,12 @@ enum MsgType : uint8_t {
     MSG_PHASE = 13,    // host -> all
     MSG_FOUND = 14,    // host -> all: a hider was found
     MSG_RESULTS = 15,  // host -> all: round over
+    MSG_DECOYS = 16,   // host -> all: complete active-decoy snapshot
     MSG_READY = 20,    // -> host: loaded into the round's map
     MSG_HIT = 21,      // -> host: I hit / touched this hider
     MSG_TAUNT = 23,    // hider -> all
+    MSG_PLACE_DECOY = 24, // hider -> host
+    MSG_HIT_DECOY = 25,   // hunter -> host: remove the struck decoy
 };
 
 enum class Mode : uint8_t { PropHunt = 0, HideAndSeek = 1, Count };

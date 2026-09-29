@@ -1,5 +1,7 @@
 #include "settings.hpp"
 
+#include "maps.hpp"
+
 #include <algorithm>
 #include <cstdio>
 #include <random>
@@ -129,17 +131,17 @@ bool name_tags() {
     return v;
 }
 
-// Stored as "mode,map,hide,seek,hunters,flags,idle-taunt-seconds". Six-field saves from older
-// versions keep the new default.
+// Stored as "mode,map,hide,seek,hunters,flags,idle-taunt-seconds,free-decoys". Older saves keep
+// defaults for fields that did not exist yet.
 match::Settings host_rules() {
     match::Settings s;
     const std::string text = get_str(s_rules);
-    int v[7] = {};
-    const int fields = std::sscanf(text.c_str(), "%d,%d,%d,%d,%d,%d,%d", &v[0], &v[1], &v[2],
-        &v[3], &v[4], &v[5], &v[6]);
+    int v[8] = {};
+    const int fields = std::sscanf(text.c_str(), "%d,%d,%d,%d,%d,%d,%d,%d", &v[0], &v[1], &v[2],
+        &v[3], &v[4], &v[5], &v[6], &v[7]);
     if (fields >= 6) {
         s.mode = v[0] == 1 ? Mode::HideAndSeek : Mode::PropHunt;
-        s.map = static_cast<uint8_t>(v[1]);
+        s.map = v[1] >= 0 && v[1] < map_count() ? static_cast<uint8_t>(v[1]) : kRandomMap;
         s.hideSecs = static_cast<uint16_t>(std::clamp(v[2], 10, 600));
         s.seekSecs = static_cast<uint16_t>(std::clamp(v[3], 30, 1800));
         s.hunters = static_cast<uint8_t>(std::clamp(v[4], 0, 8));
@@ -149,6 +151,7 @@ match::Settings host_rules() {
         s.autoNext = v[5] & 8;
         s.isPublic = v[5] & 16;
         if (fields >= 7) s.idleTauntSecs = static_cast<uint16_t>(std::clamp(v[6], 0, 600));
+        if (fields >= 8) s.freeDecoys = static_cast<uint8_t>(std::clamp(v[7], 0, 10));
     }
     return s;
 }
@@ -158,8 +161,9 @@ void save_host_rules(const match::Settings& s) {
     const int flags = (s.foundJoinHunters ? 1 : 0) | (s.missPenalty ? 2 : 0) | (s.autoTaunt ? 4 : 0) |
                       (s.autoNext ? 8 : 0) | (s.isPublic ? 16 : 0);
     char text[64];
-    std::snprintf(text, sizeof(text), "%d,%d,%d,%d,%d,%d,%u", static_cast<int>(s.mode), s.map,
-        s.hideSecs, s.seekSecs, s.hunters, flags, static_cast<unsigned>(s.idleTauntSecs));
+    std::snprintf(text, sizeof(text), "%d,%d,%d,%d,%d,%d,%u,%u", static_cast<int>(s.mode), s.map,
+        s.hideSecs, s.seekSecs, s.hunters, flags, static_cast<unsigned>(s.idleTauntSecs),
+        static_cast<unsigned>(s.freeDecoys));
     svc_config->set_string(mod_ctx, s_rules, text);
 }
 
