@@ -285,13 +285,13 @@ void on_phase_change(Phase from, Phase to) {
     if (to == Phase::Gather && playing_prop_hunt()) {
         // Choose during the gathering/warp phase so the replacement model is already loaded when
         // the hider becomes disguised at the start of Hide.
-        s_prop = random_prop();
+        s_prop = random_prop(match::get().map);
     }
     if (to == Phase::Hide) {
         // Everyone starts the round with full hearts.
         dComIfGs_setLife(static_cast<u16>(dComIfGs_getMaxLifeGauge()));
         // A late join can first learn about a round after Gather has already ended.
-        if (from != Phase::Gather && playing_prop_hunt()) s_prop = random_prop();
+        if (from != Phase::Gather && playing_prop_hunt()) s_prop = random_prop(match::get().map);
         s_lastAutoTaunt = now_ms();
     }
     (void)from;
@@ -346,10 +346,10 @@ void hider_controls(daAlink_c* l) {
     if (s_disguised) {
         if (mDoCPd_c::getTrigRight(PAD_1)) {
             const int near = nearby_prop(l->current.pos);
-            s_prop = near >= 0 && near != s_prop ? near : (s_prop + 1) % prop_count();
+            s_prop = near >= 0 && near != s_prop ? near : step_prop(s_prop, m.map, 1);
             play_at(Z2SE_SY_CURSOR_OK, &l->current.pos);
         } else if (mDoCPd_c::getTrigLeft(PAD_1)) {
-            s_prop = (s_prop + prop_count() - 1) % prop_count();
+            s_prop = step_prop(s_prop, m.map, -1);
             play_at(Z2SE_SY_CURSOR_OK, &l->current.pos);
         }
     }

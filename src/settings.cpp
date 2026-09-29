@@ -14,6 +14,7 @@ ConfigVarHandle s_server = 0;
 ConfigVarHandle s_room = 0;
 ConfigVarHandle s_tags = 0;
 ConfigVarHandle s_rules = 0;
+ConfigVarHandle s_rulesVersion = 0;
 
 ConfigVarHandle reg(const char* name, ConfigVarType type, int64_t i = 0, bool b = false,
     const char* s = nullptr) {
@@ -61,6 +62,23 @@ void init() {
     s_room = reg("room_code", CONFIG_VAR_STRING);
     s_tags = reg("name_tags", CONFIG_VAR_BOOL, 0, true);
     s_rules = reg("host_rules", CONFIG_VAR_STRING);
+    s_rulesVersion = reg("host_rules_version", CONFIG_VAR_INT);
+
+    // v0.1.4 stored auto-taunt as enabled by default. Migrate every existing rules string once so
+    // upgrading players also get the new quiet default; hosts can explicitly turn it back on.
+    if (s_rulesVersion != 0 && get_int(s_rulesVersion, 0) < 1) {
+        const std::string text = get_str(s_rules);
+        int v[6];
+        if (std::sscanf(text.c_str(), "%d,%d,%d,%d,%d,%d", &v[0], &v[1], &v[2], &v[3], &v[4],
+                &v[5]) == 6) {
+            v[5] &= ~4;
+            char migrated[64];
+            std::snprintf(migrated, sizeof(migrated), "%d,%d,%d,%d,%d,%d", v[0], v[1], v[2],
+                v[3], v[4], v[5]);
+            if (s_rules != 0) svc_config->set_string(mod_ctx, s_rules, migrated);
+        }
+        svc_config->set_int(mod_ctx, s_rulesVersion, 1);
+    }
 
     // v0.1.0/v0.1.1 shipped before the public relay was provisioned. Upgrade only that exact
     // placeholder, preserving custom and localhost server addresses.

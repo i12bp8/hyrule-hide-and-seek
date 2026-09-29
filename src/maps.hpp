@@ -12,6 +12,12 @@ struct MapInfo {
     const char* stage;
     int8_t room;
     int16_t point;
+    // Exact position of the safe spawn above. Prop Hunt uses it as a shared, deterministic
+    // centre for decorative decoys, so every client sees the same cover even on sparse maps.
+    float spawnX;
+    float spawnY;
+    float spawnZ;
+    float decoyRadius;
 };
 
 int map_count();

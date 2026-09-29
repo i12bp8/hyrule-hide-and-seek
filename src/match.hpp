@@ -19,7 +19,7 @@ struct Settings {
     uint8_t hunters = 0;  // 0 = one per four players
     bool foundJoinHunters = true;
     bool missPenalty = true;
-    bool autoTaunt = true;
+    bool autoTaunt = false;
     bool autoNext = true;
     bool isPublic = false;
 

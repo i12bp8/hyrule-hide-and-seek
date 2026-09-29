@@ -3,6 +3,7 @@
 #include "common.hpp"
 #include "linkkit.hpp"
 #include "local.hpp"
+#include "maps.hpp"
 #include "match.hpp"
 #include "net.hpp"
 #include "props.hpp"
@@ -23,6 +24,7 @@
 #include "m_Do/m_Do_ext.h"
 #include "m_Do/m_Do_mtx.h"
 
+#include <cmath>
 #include <cstring>
 #include <vector>
 
@@ -34,6 +36,10 @@ namespace hs::puppet {
 namespace {
 
 constexpr u32 kLocalFlag = 0x100;
+constexpr u32 kDecoyFlag = 0x200;
+constexpr int kPropShift = 16;
+constexpr int kDecoyCount = 18;
+constexpr int kDecoyVariety = 6;
 constexpr u32 kPuppetHeapSize = 640 * 1024;
 constexpr u32 kPropHeapSize = 128 * 1024;
 constexpr uint64_t kStaleMs = 4000;
@@ -67,7 +73,25 @@ struct Slot {
 };
 Slot s_slots[kSlots];
 Slot s_localProp;
+Slot s_decoys[kDecoyCount];
 uint64_t s_worldSince = 0;
+uint32_t s_decoyRound = 0;
+int s_decoyMap = -1;
+
+struct DecoyOffset {
+    float x;
+    float z;
+};
+
+// Irregular rings look placed by the world rather than by a level-editor grid. Rotating the list
+// by round changes the cover layout while remaining identical on every client.
+constexpr DecoyOffset kDecoyOffsets[kDecoyCount] = {
+    {0.18f, 0.08f}, {-0.21f, 0.13f}, {0.07f, -0.27f}, {0.31f, -0.15f},
+    {-0.34f, -0.22f}, {0.42f, 0.25f}, {-0.46f, 0.31f}, {0.12f, 0.49f},
+    {-0.09f, -0.54f}, {0.58f, -0.36f}, {-0.62f, -0.18f}, {0.53f, 0.51f},
+    {-0.55f, 0.59f}, {0.22f, -0.76f}, {-0.30f, -0.83f}, {0.82f, 0.12f},
+    {-0.86f, 0.08f}, {0.68f, -0.69f},
+};
 
 // Link's sword can hit these: both swords, plus the wolf in case a hunter transforms.
 const dCcD_SrcCyl kCylSrc = {
@@ -123,7 +147,7 @@ bool same_stage_as_me(const PlayerState& s) {
 
 class Puppet : public fopAc_ac_c {
 public:
-    Puppet() : mUnderCalc(3, mUnder), mUpperCalc(3, mUpper) {}
+    Puppet() : mLinkCalc(1, &mLinkAnim) {}
 
     int create();
     int execute();
@@ -133,7 +157,7 @@ public:
 private:
     bool buildLink(uint8_t color);
     void freeLink();
-    void poseLink(const PlayerState& s);
+    bool poseLink(const PlayerState& s, bool moving);
     bool updateProp(int kind, bool moving);
     void releaseProp();
     void updateGround();
@@ -143,6 +167,9 @@ private:
 
     int mSlot = 0;
     bool mLocal = false;
+    bool mDecoy = false;
+    bool mGrounded = false;
+    int mFixedProp = 0;
     bool mVisible = false;
     bool mDisguised = false;
     bool mHaveTarget = false;
@@ -157,11 +184,10 @@ private:
     J3DModel* mSword = nullptr;
     J3DModel* mSheath = nullptr;
     J3DModel* mShield = nullptr;
-    mDoExt_AnmRatioPack mUnder[3];
-    mDoExt_AnmRatioPack mUpper[3];
-    mDoExt_MtxCalcAnmBlendTbl mUnderCalc;
-    mDoExt_MtxCalcAnmBlendTbl mUpperCalc;
-    J3DMtxCalcNoAnm<J3DMtxCalcCalcTransformMaya, J3DMtxCalcJ3DSysInitMaya> mBindCalc;
+    mDoExt_AnmRatioPack mLinkAnim;
+    mDoExt_MtxCalcAnmBlendTbl mLinkCalc;
+    J3DAnmTransform* mPoseAnim = nullptr;
+    float mPoseFrame = 0.0f;
 
     // Prop
     int mPropKind = -1;
@@ -188,11 +214,21 @@ int Puppet::create() {
     const u32 prm = fopAcM_GetParam(this);
     mSlot = static_cast<int>(prm & 0xFF);
     mLocal = (prm & kLocalFlag) != 0;
-    if (mSlot < 1 || mSlot > kMaxPlayers || linkkit::heap() == nullptr) return cPhs_ERROR_e;
-    mHeap = JKRExpHeap::create(kPuppetHeapSize, linkkit::heap(), false);
-    if (mHeap == nullptr) {
-        mods::log::warn("puppet {}: out of memory", mSlot);
+    mDecoy = (prm & kDecoyFlag) != 0;
+    mFixedProp = static_cast<int>((prm >> kPropShift) & 0xFF);
+    const int maxSlot = mDecoy ? kDecoyCount : kMaxPlayers;
+    if (mSlot < 1 || mSlot > maxSlot || (mDecoy && mFixedProp >= prop_count()) ||
+        linkkit::heap() == nullptr) {
         return cPhs_ERROR_e;
+    }
+    // Only a remote human Link needs the large private model heap. Local props and decorative
+    // decoys allocate only their small prop-model heap.
+    if (!mLocal && !mDecoy) {
+        mHeap = JKRExpHeap::create(kPuppetHeapSize, linkkit::heap(), false);
+        if (mHeap == nullptr) {
+            mods::log::warn("puppet {}: out of memory", mSlot);
+            return cPhs_ERROR_e;
+        }
     }
     mStts.Init(0xFF, 0xFF, this);
     mCyl.Set(kCylSrc);
@@ -219,6 +255,8 @@ bool Puppet::buildLink(uint8_t color) {
         return false;
     }
     mColor = color;
+    mPoseAnim = nullptr;
+    mPoseFrame = 0.0f;
     return true;
 }
 
@@ -226,26 +264,32 @@ void Puppet::freeLink() {
     // Models were allocated in mHeap; freeing the heap's contents releases them all.
     if (mHeap != nullptr) mHeap->freeAll();
     mBody = mHead = mFace = mHands = mSword = mSheath = mShield = nullptr;
+    mLinkAnim.setAnmTransform(nullptr);
+    mLinkAnim.setRatio(0.0f);
+    mPoseAnim = nullptr;
+    mPoseFrame = 0.0f;
     mColor = 0xFF;
 }
 
-void Puppet::poseLink(const PlayerState& s) {
-    J3DAnmTransform* idle = linkkit::anim(linkkit::kIdleAnim);
-    const auto fill = [&](mDoExt_AnmRatioPack* packs, const AnimSlot* slots, J3DAnmTransform* base) {
-        for (int i = 0; i < 3; ++i) {
-            J3DAnmTransform* anm = linkkit::anim(slots[i].idx);
-            if (i == 0 && anm == nullptr) anm = base;
-            if (anm != nullptr) {
-                const f32 maxFrame = static_cast<f32>(anm->getFrameMax());
-                anm->setFrame(std::clamp(slots[i].frame, 0.0f, maxFrame > 0.0f ? maxFrame : 0.0f));
-            }
-            packs[i].setAnmTransform(anm);
-            packs[i].setRatio(i == 0 ? 1.0f : slots[i].ratio / 255.0f);
-        }
-    };
-    fill(mUnder, s.under, idle);
-    fill(mUpper, s.upper, mUnder[0].getAnmTransform());
-    const bool animated = mUnder[0].getAnmTransform() != nullptr;
+bool Puppet::poseLink(const PlayerState& s, bool moving) {
+    // Remote animation blends can briefly reference cutscene-only resources or half-loaded upper
+    // body poses. For multiplayer readability, use one known complete animation for the whole
+    // skeleton: idle while still, walk while moving. Never fall back to an unanimated bind pose.
+    J3DAnmTransform* wanted = linkkit::anim(moving ? linkkit::kWalkAnim : linkkit::kIdleAnim);
+    if (wanted == nullptr && mPoseAnim == nullptr) wanted = linkkit::anim(linkkit::kIdleAnim);
+    if (wanted != nullptr && wanted != mPoseAnim) {
+        mPoseAnim = wanted;
+        mPoseFrame = 0.0f;
+    }
+    if (mPoseAnim == nullptr) return false;
+
+    const float maxFrame = static_cast<float>(mPoseAnim->getFrameMax());
+    mPoseFrame += moving ? 1.1f : 0.45f;
+    if (maxFrame > 0.0f) mPoseFrame = std::fmod(mPoseFrame, maxFrame);
+    else mPoseFrame = 0.0f;
+    mPoseAnim->setFrame(mPoseFrame);
+    mLinkAnim.setAnmTransform(mPoseAnim);
+    mLinkAnim.setRatio(1.0f);
 
     mDoMtx_stack_c::transS(current.pos.x, current.pos.y, current.pos.z);
     mDoMtx_stack_c::YrotM(shape_angle.y);
@@ -254,22 +298,12 @@ void Puppet::poseLink(const PlayerState& s) {
     // replacement can be culled even while standing directly in front of the camera.
     fopAcM_SetMtx(this, mBody->getBaseTRMtx());
 
-    // Same split as daAlink_c::changeModelDataDirect: legs follow the lower body animation,
-    // the torso the upper one. This model data is ours, so nothing else touches these.
+    // One calculator at the root drives every joint. Clear the old split joints in case this model
+    // was rebuilt after a colour or stage change.
     J3DModelData* data = mBody->getModelData();
-    if (animated) {
-        data->getJointNodePointer(0)->setMtxCalc(&mUnderCalc);
-        data->getJointNodePointer(1)->setMtxCalc(&mUpperCalc);
-        if (data->getJointNum() > kJointLegs) {
-            data->getJointNodePointer(kJointLegs)->setMtxCalc(&mUnderCalc);
-        }
-    } else {
-        // AlAnm can be briefly unavailable just after a stage load. The old path made the whole
-        // remote player invisible in that case. A bind-pose Link is a much safer fallback.
-        data->getJointNodePointer(0)->setMtxCalc(&mBindCalc);
-        data->getJointNodePointer(1)->setMtxCalc(nullptr);
-        if (data->getJointNum() > kJointLegs) data->getJointNodePointer(kJointLegs)->setMtxCalc(nullptr);
-    }
+    data->getJointNodePointer(0)->setMtxCalc(&mLinkCalc);
+    if (data->getJointNum() > 1) data->getJointNodePointer(1)->setMtxCalc(nullptr);
+    if (data->getJointNum() > kJointLegs) data->getJointNodePointer(kJointLegs)->setMtxCalc(nullptr);
     mBody->calc();
 
     mFace->setBaseTRMtx(mBody->getAnmMtx(kJointHead));
@@ -308,6 +342,7 @@ void Puppet::poseLink(const PlayerState& s) {
         }
         mShield->calc();
     }
+    return true;
 }
 
 bool Puppet::updateProp(int kind, bool moving) {
@@ -411,6 +446,7 @@ void Puppet::armHitbox(const match::Player& p, bool disguised, int kind) {
 }
 
 void Puppet::publish(bool visible, float height, bool tracked) {
+    if (mDecoy) return;
     Slot& s = slot();
     s.visible = visible;
     s.tracked = tracked;
@@ -428,6 +464,20 @@ int Puppet::execute() {
         mCyl.ClrTgHit();
     }
     mCylArmed = false;
+
+    if (mDecoy) {
+        mDisguised = true;
+        if (!mGrounded) {
+            updateGround();
+            if (mGroundY != -G_CM3D_F_INF) {
+                current.pos.y = mGroundY;
+                old.pos = current.pos;
+                mGrounded = true;
+            }
+        }
+        mVisible = mGrounded && updateProp(mFixedProp, false);
+        return 1;
+    }
 
     if (mLocal) {
         fopAc_ac_c* player = dComIfGp_getPlayer(0);
@@ -471,15 +521,16 @@ int Puppet::execute() {
 
     mDisguised = (s.flags & STATE_DISGUISED) != 0;
     const int kind = s.prop < prop_count() ? s.prop : 0;
+    const bool moving = (current.pos - before).abs() > 1.0f;
     if (mDisguised) {
-        const bool moving = (current.pos - before).abs() > 1.0f;
         mVisible = updateProp(kind, moving);
     } else {
         if (mPropModel != nullptr || mPropRequested) releaseProp();
         const uint8_t color = p.color;
         if (mBody == nullptr || color != mColor) buildLink(color);
-        mVisible = mBody != nullptr && !(s.flags & STATE_WOLF);
-        if (mVisible) poseLink(s);
+        // Even if another mod lets the remote player enter wolf form, keep the clear human hunter
+        // silhouette rather than making that player disappear from this mode.
+        mVisible = mBody != nullptr && poseLink(s, moving);
     }
     armHitbox(p, mDisguised, kind);
     publish(mVisible, mDisguised ? prop_info(kind).height : kLinkHeight, true);
@@ -503,11 +554,20 @@ int Puppet::draw() {
         mDoExt_modelUpdateDL(mPropModel);
         shadow = prop_info(mPropKind).radius * 1.3f;
     } else {
-        J3DModel* models[] = {mBody, mFace, mHead, mHands, mSheath, mSword, mShield};
-        for (J3DModel* model : models) {
+        // modelEntryDL alone does not submit custom actors on Dusklight's interpolated PC frames.
+        // Updating the body and rigid attachments here keeps a complete Link visible every render
+        // frame. Hands retain Link's normal entry path because their two joint matrices are placed
+        // manually after calc().
+        if (mPoseAnim != nullptr) mPoseAnim->setFrame(mPoseFrame);
+        J3DModel* updated[] = {mBody, mFace, mHead, mSheath, mSword, mShield};
+        for (J3DModel* model : updated) {
             if (model == nullptr) continue;
             g_env_light.setLightTevColorType_MAJI(model, &tevStr);
-            mDoExt_modelEntryDL(model);
+            mDoExt_modelUpdateDL(model);
+        }
+        if (mHands != nullptr) {
+            g_env_light.setLightTevColorType_MAJI(mHands, &tevStr);
+            mDoExt_modelEntryDL(mHands);
         }
     }
     if (mGroundY != -G_CM3D_F_INF) {
@@ -523,7 +583,7 @@ int Puppet::destroy() {
         mHeap->destroy();
         mHeap = nullptr;
     }
-    publish(false, 0.0f, false);
+    if (!mDecoy) publish(false, 0.0f, false);
     this->~Puppet();
     return 1;
 }
@@ -586,6 +646,28 @@ void manage(Slot& slot, bool want, int id, bool local, const cXyz& at) {
     }
 }
 
+void manage_decoy(Slot& slot, bool want, int number, int kind, const cXyz& at, s16 yaw) {
+    if (slot.actor != fpcM_ERROR_PROCESS_ID_e && fopAcM_SearchByID(slot.actor) == nullptr) {
+        slot.actor = fpcM_ERROR_PROCESS_ID_e;
+    }
+    if (want && slot.actor == fpcM_ERROR_PROCESS_ID_e) {
+        ActorSpawnParams params{};
+        params.parameters = static_cast<uint32_t>(number + 1) | kDecoyFlag |
+                            (static_cast<uint32_t>(kind) << kPropShift);
+        params.room_num = -1;
+        params.position = {at.x, at.y, at.z};
+        params.angle = {0, yaw, 0};
+        params.scale = {1.0f, 1.0f, 1.0f};
+        ActorId created = 0;
+        if (svc_actor->create_actor(mod_ctx, s_procName, &params, &created) == MOD_OK) {
+            slot.actor = created;
+        }
+    } else if (!want && slot.actor != fpcM_ERROR_PROCESS_ID_e) {
+        svc_actor->delete_actor(mod_ctx, slot.actor);
+        slot.actor = fpcM_ERROR_PROCESS_ID_e;
+    }
+}
+
 }  // namespace
 
 bool register_actor() {
@@ -604,6 +686,9 @@ bool unregister_actor() {
     s_registered = false;
     for (Slot& s : s_slots) s = Slot{};
     s_localProp = Slot{};
+    for (Slot& s : s_decoys) s = Slot{};
+    s_decoyRound = 0;
+    s_decoyMap = -1;
     return true;
 }
 
@@ -628,6 +713,46 @@ void update() {
     const bool wantLocal = online && settled && player != nullptr && !net::room_code().empty();
     manage(s_localProp, wantLocal, me != 0 ? me : 1, true,
         player != nullptr ? player->current.pos : cXyz(0.0f, 0.0f, 0.0f));
+
+    const match::Match& m = match::get();
+    const int mapIndex = m.map;
+    const bool propRound = online && settled && match::in_round() &&
+                           m.settings.mode == Mode::PropHunt && mapIndex >= 0 &&
+                           mapIndex < map_count() &&
+                           std::strncmp(local::stage(), map_info(mapIndex).stage, 8) == 0;
+    if (!propRound) {
+        for (int i = 0; i < kDecoyCount; ++i) {
+            manage_decoy(s_decoys[i], false, i, 0, cXyz(0.0f, 0.0f, 0.0f), 0);
+        }
+        s_decoyRound = 0;
+        s_decoyMap = -1;
+        return;
+    }
+    if (s_decoyRound != m.round || s_decoyMap != mapIndex) {
+        // A repeated map still gets a newly rotated layout and prop mix. Remove the old actors
+        // first; the next update creates the new generation after deletion has been requested.
+        for (int i = 0; i < kDecoyCount; ++i) {
+            manage_decoy(s_decoys[i], false, i, 0, cXyz(0.0f, 0.0f, 0.0f), 0);
+        }
+        s_decoyRound = m.round;
+        s_decoyMap = mapIndex;
+        return;
+    }
+    const MapInfo& map = map_info(mapIndex);
+    const int rotation = static_cast<int>((m.round * 5u) % kDecoyCount);
+    for (int i = 0; i < kDecoyCount; ++i) {
+        const DecoyOffset& offset = kDecoyOffsets[(i + rotation) % kDecoyCount];
+        // Start the ray well above nearby terrain. The actor grounds itself before becoming
+        // visible, so offsets over a ledge or roof never leave a floating prop.
+        const cXyz at(map.spawnX + offset.x * map.decoyRadius, map.spawnY + 5000.0f,
+            map.spawnZ + offset.z * map.decoyRadius);
+        // Repeating a small set gives a convincing prop cluster without keeping eighteen large
+        // object archives mounted at once.
+        const int kind = prop_for_map(
+            mapIndex, (i % kDecoyVariety) * 7 + static_cast<int>(m.round) * 3);
+        const s16 yaw = static_cast<s16>(i * 0x25A1 + mapIndex * 0x071D + m.round * 0x0137);
+        manage_decoy(s_decoys[i], propRound, i, kind, at, yaw);
+    }
 }
 
 bool local_prop_visible() {

@@ -18,7 +18,7 @@ const args = Object.fromEntries(
 const server = String(args.server || "ws://127.0.0.1:8787").replace(/\/$/, "");
 const room = String(args.room || "").toUpperCase();
 const count = Number(args.count || 3);
-const PROTOCOL = 1;
+const PROTOCOL = 2;
 if (!room) {
   console.error("usage: node bots.mjs --room ABCDE [--count 3] [--server ws://127.0.0.1:8787]");
   process.exit(2);
@@ -29,7 +29,7 @@ const ROLE = { NONE: 0, HIDER: 1, HUNTER: 2, SPECTATOR: 3 };
 const PHASE = ["Lobby", "Gather", "Hide", "Seek", "Results"];
 const FLAG = { IN_WORLD: 1, WOLF: 2, DISGUISED: 4, SWORD: 8, SHIELD: 16 };
 const ANIM = { WAIT: 0x26a, RUN: 0xc5 };
-const PROP_COUNT = 10;
+const PROP_COUNT = 59;
 
 class Writer {
   constructor(type) {

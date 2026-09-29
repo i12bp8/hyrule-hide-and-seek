@@ -40,6 +40,7 @@ J3DAnmTransform* anim(uint16_t idx);
 
 // The standing animation, used when a player's current one isn't known.
 constexpr uint16_t kIdleAnim = 0x26A;  // dRes_ID_ALANM_BCK_WAITS_e
+constexpr uint16_t kWalkAnim = 0x277;  // dRes_ID_ALANM_BCK_WALKS_e
 
 // Recolours the local player's own tunic (TextureService, so it follows the mod's lifecycle).
 void recolor_local_link(uint8_t color);

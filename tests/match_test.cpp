@@ -84,6 +84,8 @@ static void reset_net(int players) {
 static void host_room(int players) {
     reset_net(players);
     match::on_welcome();
+    match::Settings defaults;
+    CHECK(!defaults.autoTaunt);
     match::Settings s;
     s.map = 0;
     s.hideSecs = 20;
@@ -165,6 +167,7 @@ static void test_protocol_roundtrip() {
     s.seekSecs = 60000;  // clamps to 1800
     s.hunters = 2;
     s.missPenalty = false;
+    s.autoTaunt = true;
     s.isPublic = true;
     Writer sw(MSG_SETTINGS);
     s.write(sw);
@@ -473,6 +476,10 @@ static void test_colors_unique() {
 static void test_maps() {
     std::printf("maps\n");
     CHECK(map_count() >= 10);
+    for (int m = 0; m < map_count(); ++m) {
+        const MapInfo& map = map_info(m);
+        CHECK(map.decoyRadius > 0.0f);
+    }
     for (int i = 0; i < 200; ++i) {
         const int m = random_map(3);
         CHECK(m >= 0 && m < map_count() && m != 3);
@@ -481,15 +488,17 @@ static void test_maps() {
 
 static void test_props() {
     std::printf("prop catalogue\n");
-    CHECK(prop_count() == 21);
+    CHECK(prop_count() == 59);
     for (int i = 0; i < prop_count(); ++i) {
         const PropInfo& prop = prop_info(i);
         CHECK(prop.name != nullptr && prop.arc != nullptr);
         CHECK(prop.bmd != nullptr || prop.bmdIndex >= 0);
         CHECK(prop.radius > 0.0f && prop.height > 0.0f && prop.scale > 0.0f);
+        CHECK(prop.mapMask != 0);
     }
     CHECK(std::strcmp(prop_info(15).name, "Sign") == 0);
     CHECK(std::strcmp(prop_info(20).name, "Gravestone") == 0);
+    CHECK(std::strcmp(prop_info(58).name, "Map Table") == 0);
     CHECK(prop_for_carry_type(3) == 10);   // cannonball
     CHECK(prop_for_carry_type(6) == 11);   // Deku nut
     CHECK(prop_for_carry_type(10) == 12);  // big blue pot
@@ -499,6 +508,19 @@ static void test_props() {
     for (int i = 0; i < 200; ++i) {
         const int prop = random_prop();
         CHECK(prop >= 0 && prop < prop_count());
+    }
+    for (int map = 0; map < map_count(); ++map) {
+        CHECK(prop_count_for_map(map) >= 15);
+        int current = prop_for_map(map, 0);
+        CHECK(prop_on_map(current, map));
+        const int next = step_prop(current, map, 1);
+        const int previous = step_prop(current, map, -1);
+        CHECK(next != current && previous != current);
+        CHECK(prop_on_map(next, map) && prop_on_map(previous, map));
+        for (int i = 0; i < 50; ++i) {
+            const int prop = random_prop(map);
+            CHECK(prop >= 0 && prop < prop_count() && prop_on_map(prop, map));
+        }
     }
 }
 

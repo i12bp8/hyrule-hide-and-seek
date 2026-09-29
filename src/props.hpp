@@ -16,11 +16,18 @@ struct PropInfo {
     float height;
     float scale;
     int bmdIndex = -1;    // archives whose model has no stable filename in the headers
+    uint16_t mapMask = 0x7FFF;  // one bit per entry in maps.cpp
 };
 
 int prop_count();
 const PropInfo& prop_info(int index);
-int random_prop();
+// Map-aware selection keeps Zora props near water, village furniture in settlements, and so on.
+// A negative map selects from the full catalogue.
+bool prop_on_map(int index, int map);
+int prop_count_for_map(int map);
+int prop_for_map(int map, int ordinal);
+int random_prop(int map = -1);
+int step_prop(int current, int map, int direction);
 // The prop that looks like a carryable object of this daObjCarry_c type, or -1.
 int prop_for_carry_type(int carryType);
 

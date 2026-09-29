@@ -41,14 +41,16 @@ Windows, macOS and fixed Linux builds use WebSockets.
 | **D-pad down** | Props: taunt (+1 point, every 5 s; reveals you to hunters for 5 s) |
 | **B** | Hunters: swing. Hitting nothing costs a quarter heart. |
 
-There are 21 props: pots, crates, a barrel, skull, pumpkin, rock, cannonball, Deku nut, sign, chair,
-sofa, table, boar bones, gravestone and a walking cucco.
+There are 59 props drawn from across Hyrule: pots, crates, furniture, village signs and targets,
+forest plants, desert and mountain rocks, Zora ice and water props, plus a walking cucco. Selection
+is themed to the current map. Prop Hunt also places 18 harmless scenery decoys around the arena so
+open maps are not a game of spotting the only object in a field.
 
 ### Rules the host can change
 
 Mode (Prop Hunt / Hide & Seek), map (or a random one every round), hiding and round time, number of
-hunters, whether found props join the hunters, the miss penalty, last-minute auto-taunts, starting
-rounds automatically, and whether the room is listed publicly.
+hunters, whether found props join the hunters, the miss penalty, optional last-minute auto-taunts
+(off by default), starting rounds automatically, and whether the room is listed publicly.
 
 **Hide & Seek mode**: everyone stays Link and hunters tag hiders by touching them, like SMO Online.
 

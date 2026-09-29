@@ -6,29 +6,123 @@ namespace hs {
 
 namespace {
 
+constexpr uint16_t bit(int map) {
+    return static_cast<uint16_t>(1u << map);
+}
+
+constexpr uint16_t kAll = 0x7FFF;
+constexpr uint16_t kOrdon = bit(0) | bit(1) | bit(2);
+constexpr uint16_t kForest = bit(2) | bit(3) | bit(11) | bit(14);
+constexpr uint16_t kKakariko = bit(4) | bit(5) | bit(12);
+constexpr uint16_t kMountain = bit(4) | bit(5) | bit(6) | bit(13) | bit(14);
+constexpr uint16_t kWater = bit(2) | bit(7) | bit(8) | bit(9);
+constexpr uint16_t kSettled = bit(0) | bit(4) | bit(10) | bit(12);
+constexpr uint16_t kRural = kOrdon | bit(3) | bit(4) | bit(12) | bit(14);
+constexpr uint16_t kOpen = bit(1) | bit(3) | bit(6) | bit(13) | bit(14);
+constexpr uint16_t kCastle = bit(10);
+constexpr uint16_t kDesert = bit(13);
+
 // Archive and file names checked against the disc. The carry types are daObjCarry_c::mType.
+// Keep the original first 21 entries in place: their numeric IDs already exist in recordings and
+// old clients. New entries are grouped by the part of Hyrule where they naturally belong.
 constexpr PropInfo kProps[] = {
-    {"Pot", "J_tubo_00", "j_tubo_00.bmd", nullptr, nullptr, 40.0f, 75.0f, 1.0f},
-    {"Big Pot", "J_tubo_01", "j_tubo_01.bmd", nullptr, nullptr, 50.0f, 110.0f, 1.0f},
-    {"Crate", "Kkiba_00", "j_hako_00.bmd", nullptr, nullptr, 60.0f, 110.0f, 1.0f},
-    {"Barrel", "J_taru00", "j_taru_00.bmd", nullptr, nullptr, 55.0f, 120.0f, 1.0f},
-    {"Skull", "J_doku00", "j_doku_00.bmd", nullptr, nullptr, 35.0f, 55.0f, 1.0f},
-    {"Pumpkin", "pumpkin", "pumpkin.bmd", nullptr, nullptr, 45.0f, 70.0f, 1.0f},
-    {"Kakariko Pot", "K_tubo02", "k_tubo02.bmd", nullptr, nullptr, 40.0f, 75.0f, 1.0f},
-    {"Small Crate", "Obj_kbox", "k_skiba_00.bmd", nullptr, nullptr, 50.0f, 80.0f, 1.0f},
-    {"Rock", "Obj_rock", "a_trock.bmd", nullptr, nullptr, 60.0f, 80.0f, 1.0f},
-    {"Cucco", "Ni", "ni.bmd", "ni_wait1.bck", "ni_walk_a.bck", 35.0f, 60.0f, 1.0f},
-    {"Cannonball", "Y_ironbal", "Yironball.bmd", nullptr, nullptr, 40.0f, 80.0f, 1.0f},
-    {"Deku Nut", "Obj_bkl", "K_hb00.bmd", nullptr, nullptr, 45.0f, 60.0f, 1.0f},
-    {"Big Blue Pot", "D_aotubo0", "D_aotubo00.bmd", nullptr, nullptr, 50.0f, 110.0f, 1.0f},
-    {"Twilight Pot", "O_tuboS", "O_tuboS_LV8.bmd", nullptr, nullptr, 40.0f, 75.0f, 1.0f},
-    {"Big Twilight Pot", "O_tuboB", "O_tuboB_LV8.bmd", nullptr, nullptr, 50.0f, 110.0f, 1.0f},
-    {"Sign", "Obj_kn2", "J_kanban00.bmd", nullptr, nullptr, 55.0f, 150.0f, 1.0f},
-    {"Chair", "HChair", nullptr, nullptr, nullptr, 60.0f, 170.0f, 1.0f, 4},
-    {"Sofa", "HSofa", nullptr, nullptr, nullptr, 120.0f, 160.0f, 1.0f, 4},
-    {"Table", "HTable", nullptr, nullptr, nullptr, 90.0f, 110.0f, 1.0f, 4},
-    {"Boar Bones", "Obj_Ibone", "A_InoBone.bmd", nullptr, nullptr, 140.0f, 70.0f, 1.0f},
-    {"Gravestone", "H_Haka", "H_Haka.bmd", nullptr, nullptr, 80.0f, 180.0f, 1.0f},
+    {"Pot", "J_tubo_00", "j_tubo_00.bmd", nullptr, nullptr, 40.0f, 75.0f, 1.0f, -1, kAll},
+    {"Big Pot", "J_tubo_01", "j_tubo_01.bmd", nullptr, nullptr, 50.0f, 110.0f, 1.0f, -1, kAll},
+    {"Crate", "Kkiba_00", "j_hako_00.bmd", nullptr, nullptr, 60.0f, 110.0f, 1.0f, -1, kAll},
+    {"Barrel", "J_taru00", "j_taru_00.bmd", nullptr, nullptr, 55.0f, 120.0f, 1.0f, -1, kAll},
+    {"Skull", "J_doku00", "j_doku_00.bmd", nullptr, nullptr, 35.0f, 55.0f, 1.0f, -1, kAll},
+    {"Pumpkin", "pumpkin", "pumpkin.bmd", nullptr, nullptr, 45.0f, 70.0f, 1.0f, -1, kAll},
+    {"Kakariko Pot", "K_tubo02", "k_tubo02.bmd", nullptr, nullptr, 40.0f, 75.0f, 1.0f, -1, kAll},
+    {"Small Crate", "Obj_kbox", "k_skiba_00.bmd", nullptr, nullptr, 50.0f, 80.0f, 1.0f, -1, kAll},
+    {"Rock", "Obj_rock", "a_trock.bmd", nullptr, nullptr, 60.0f, 80.0f, 1.0f, -1, kAll},
+    {"Cucco", "Ni", "ni.bmd", "ni_wait1.bck", "ni_walk_a.bck", 35.0f, 60.0f, 1.0f, -1, kRural},
+    {"Cannonball", "Y_ironbal", "Yironball.bmd", nullptr, nullptr, 40.0f, 80.0f, 1.0f, -1,
+        static_cast<uint16_t>(kKakariko | kCastle | kDesert)},
+    {"Deku Nut", "Obj_bkl", "K_hb00.bmd", nullptr, nullptr, 45.0f, 60.0f, 1.0f, -1, kForest},
+    {"Big Blue Pot", "D_aotubo0", "D_aotubo00.bmd", nullptr, nullptr, 50.0f, 110.0f, 1.0f, -1, kAll},
+    {"Twilight Pot", "O_tuboS", "O_tuboS_LV8.bmd", nullptr, nullptr, 40.0f, 75.0f, 1.0f, -1, kAll},
+    {"Big Twilight Pot", "O_tuboB", "O_tuboB_LV8.bmd", nullptr, nullptr, 50.0f, 110.0f, 1.0f, -1,
+        kAll},
+    {"Sign", "Obj_kn2", "J_kanban00.bmd", nullptr, nullptr, 55.0f, 150.0f, 1.0f, -1,
+        static_cast<uint16_t>(kSettled | kRural | kForest)},
+    {"Chair", "HChair", nullptr, nullptr, nullptr, 60.0f, 170.0f, 1.0f, 4,
+        static_cast<uint16_t>(kSettled | kCastle)},
+    {"Sofa", "HSofa", nullptr, nullptr, nullptr, 120.0f, 160.0f, 1.0f, 4,
+        static_cast<uint16_t>(kSettled | kCastle)},
+    {"Table", "HTable", nullptr, nullptr, nullptr, 90.0f, 110.0f, 1.0f, 4,
+        static_cast<uint16_t>(kSettled | kCastle)},
+    {"Boar Bones", "Obj_Ibone", "A_InoBone.bmd", nullptr, nullptr, 140.0f, 70.0f, 1.0f, -1,
+        static_cast<uint16_t>(kOpen | kDesert)},
+    {"Gravestone", "H_Haka", "H_Haka.bmd", nullptr, nullptr, 80.0f, 180.0f, 1.0f, -1,
+        static_cast<uint16_t>(bit(4) | bit(5) | bit(12) | bit(13))},
+
+    {"Bomb Flower", "Bombf", nullptr, nullptr, nullptr, 45.0f, 35.0f, 1.0f, 4,
+        static_cast<uint16_t>(kForest | kMountain)},
+    {"Bomb", "Bombf", nullptr, nullptr, nullptr, 35.0f, 55.0f, 1.0f, 3, kAll},
+    {"Beehive", "E_nest", nullptr, nullptr, nullptr, 45.0f, 75.0f, 0.8f, 3,
+        static_cast<uint16_t>(kRural | kForest)},
+    {"Boss Chest", "M_BBox", nullptr, nullptr, nullptr, 85.0f, 100.0f, 0.7f, 4,
+        static_cast<uint16_t>(kMountain | kCastle | bit(11))},
+    {"Dresser", "H_Tansu", nullptr, nullptr, nullptr, 90.0f, 140.0f, 0.7f, 4,
+        static_cast<uint16_t>(kSettled | kCastle)},
+    {"Crystal", "H_Suisho", nullptr, nullptr, nullptr, 75.0f, 170.0f, 0.4f, 4,
+        static_cast<uint16_t>(kWater | kMountain | bit(11))},
+    {"Lily Pad", "M_Hasu", nullptr, nullptr, nullptr, 90.0f, 20.0f, 0.7f, 4, kWater},
+    {"Large Ice", "V_Ice_l", "Ice_l.bmd", nullptr, nullptr, 105.0f, 150.0f, 0.35f, -1, kWater},
+    {"Small Ice", "V_Ice_s", "Ice_s.bmd", nullptr, nullptr, 75.0f, 95.0f, 0.55f, -1, kWater},
+    {"Raft", "M_Ikada", "M_Ikada.bmd", nullptr, nullptr, 140.0f, 45.0f, 0.3f, -1, kWater},
+    {"Seaweed", "M_kaisou", "M_kaisou.bmd", nullptr, nullptr, 55.0f, 165.0f, 0.45f, -1, kWater},
+    {"Laundry", "J_Sentaku", "J_Sentaku.bmd", nullptr, nullptr, 120.0f, 160.0f, 0.4f, -1,
+        static_cast<uint16_t>(kSettled | kRural)},
+    {"Metal Crate", "L_mbox_00", nullptr, nullptr, nullptr, 75.0f, 100.0f, 0.7f, 4,
+        static_cast<uint16_t>(kMountain | kCastle | kDesert)},
+    {"House Nameplate", "J_Hyosatu", "J_Hyousatu.bmd", nullptr, nullptr, 35.0f, 90.0f, 1.0f, -1,
+        kSettled},
+    {"Oil Jar", "Obj_otubo", "x_oiltubo_00.bmd", nullptr, nullptr, 55.0f, 105.0f, 0.9f, -1,
+        static_cast<uint16_t>(kKakariko | kCastle | kDesert)},
+    {"River Rock", "RiverRock", "M_RiverRock.bmd", nullptr, nullptr, 90.0f, 70.0f, 0.7f, -1,
+        static_cast<uint16_t>(kWater | kForest)},
+    {"Well Cover", "H_Idohuta", nullptr, nullptr, nullptr, 105.0f, 40.0f, 0.65f, 4,
+        static_cast<uint16_t>(kSettled | kRural)},
+    {"Howling Stone", "WindStone", nullptr, nullptr, nullptr, 80.0f, 180.0f, 0.45f, 4,
+        static_cast<uint16_t>(kForest | kMountain | kWater)},
+    {"Wooden Statue", "O_wood", nullptr, nullptr, nullptr, 30.0f, 60.0f, 1.0f, 4,
+        static_cast<uint16_t>(kOrdon | kForest | kKakariko)},
+    {"Hawk Grass", "J_Tobi", "J_Tobi.bmd", nullptr, nullptr, 45.0f, 85.0f, 0.8f, -1,
+        static_cast<uint16_t>(kRural | kForest)},
+    {"Horse Grass", "J_Umak", "J_Umakusa.bmd", nullptr, nullptr, 45.0f, 85.0f, 0.8f, -1,
+        static_cast<uint16_t>(kRural | kOpen)},
+    {"Pole Target", "H_BouMato", nullptr, nullptr, nullptr, 65.0f, 190.0f, 0.65f, 4,
+        static_cast<uint16_t>(kOrdon | kKakariko | kOpen)},
+    {"Board Target", "H_ItaMato", nullptr, nullptr, nullptr, 75.0f, 170.0f, 0.65f, 5,
+        static_cast<uint16_t>(kOrdon | kKakariko | kOpen)},
+    {"Village Fence", "H_Saku", "H_Saku.bmd", nullptr, nullptr, 145.0f, 105.0f, 0.4f, -1,
+        static_cast<uint16_t>(kSettled | kRural)},
+    {"Large Box", "Obj_lbox", nullptr, nullptr, nullptr, 85.0f, 110.0f, 0.6f, 4, kAll},
+    {"Pumpkin Leaves", "J_Hatake", nullptr, nullptr, nullptr, 135.0f, 35.0f, 0.45f, 3,
+        static_cast<uint16_t>(kRural | kOpen)},
+    {"Palace Candle", "P_PCNDL", nullptr, nullptr, nullptr, 45.0f, 145.0f, 0.8f, 4,
+        static_cast<uint16_t>(kCastle | bit(11))},
+    {"Sacred Stone", "WStoneF", nullptr, nullptr, nullptr, 85.0f, 180.0f, 0.45f, 4,
+        static_cast<uint16_t>(kForest | bit(11))},
+    {"Kakariko Boulder", "syourock", nullptr, nullptr, nullptr, 95.0f, 100.0f, 0.65f, 4,
+        static_cast<uint16_t>(kKakariko | kMountain)},
+    {"Desert Fence", "P_Mfence", nullptr, nullptr, nullptr, 145.0f, 110.0f, 0.4f, 4,
+        static_cast<uint16_t>(kDesert | bit(14))},
+    {"Lava Rock", "M_Volcbal", nullptr, nullptr, nullptr, 75.0f, 90.0f, 0.6f, 3,
+        static_cast<uint16_t>(bit(6) | kDesert)},
+    {"Mountain Rock", "D_Srock", nullptr, nullptr, nullptr, 70.0f, 80.0f, 0.7f, 3, kMountain},
+    {"Large Mountain Rock", "D_Brock", nullptr, nullptr, nullptr, 110.0f, 130.0f, 0.55f, 3,
+        kMountain},
+    {"Icicle Rock", "M_DRockHn", nullptr, nullptr, nullptr, 75.0f, 105.0f, 0.7f, 3,
+        static_cast<uint16_t>(kWater | bit(6))},
+    {"Castle Barrel", "HBarrel", nullptr, nullptr, nullptr, 55.0f, 120.0f, 1.0f, 3,
+        static_cast<uint16_t>(kCastle | kKakariko)},
+    {"Pushable Grave", "H_OsiHaka", nullptr, nullptr, nullptr, 85.0f, 180.0f, 0.8f, 4,
+        static_cast<uint16_t>(bit(4) | bit(5) | bit(12))},
+    {"Lake Buoy", "buoy", nullptr, nullptr, nullptr, 60.0f, 145.0f, 0.7f, 3, kWater},
+    {"Map Table", "Table", nullptr, nullptr, nullptr, 110.0f, 105.0f, 0.55f, 5,
+        static_cast<uint16_t>(kCastle | kSettled | bit(12))},
 };
 
 struct CarryMap {
@@ -61,9 +155,44 @@ const PropInfo& prop_info(int index) {
     return kProps[(index >= 0 && index < prop_count()) ? index : 0];
 }
 
-int random_prop() {
+bool prop_on_map(int index, int map) {
+    if (index < 0 || index >= prop_count()) return false;
+    if (map < 0 || map >= 15) return true;
+    return (kProps[index].mapMask & bit(map)) != 0;
+}
+
+int prop_count_for_map(int map) {
+    int count = 0;
+    for (int i = 0; i < prop_count(); ++i) count += prop_on_map(i, map) ? 1 : 0;
+    return count;
+}
+
+int prop_for_map(int map, int ordinal) {
+    const int count = prop_count_for_map(map);
+    if (count <= 0) return 0;
+    ordinal %= count;
+    if (ordinal < 0) ordinal += count;
+    for (int i = 0; i < prop_count(); ++i) {
+        if (prop_on_map(i, map) && ordinal-- == 0) return i;
+    }
+    return 0;
+}
+
+int random_prop(int map) {
     static std::mt19937 engine{std::random_device{}()};
-    return std::uniform_int_distribution<int>(0, prop_count() - 1)(engine);
+    const int count = prop_count_for_map(map);
+    return prop_for_map(map, std::uniform_int_distribution<int>(0, count - 1)(engine));
+}
+
+int step_prop(int current, int map, int direction) {
+    if (direction == 0 || prop_count() <= 0) return current;
+    const int step = direction > 0 ? 1 : -1;
+    int candidate = current;
+    for (int i = 0; i < prop_count(); ++i) {
+        candidate = (candidate + step + prop_count()) % prop_count();
+        if (prop_on_map(candidate, map)) return candidate;
+    }
+    return prop_on_map(current, map) ? current : 0;
 }
 
 int prop_for_carry_type(int carryType) {

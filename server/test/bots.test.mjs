@@ -41,7 +41,7 @@ function stateBytes({ stage, x, y, z, flags = 1 }) {
 }
 
 test("bots follow the host, get ready and turn into props", async () => {
-  const host = new WebSocket(`${base}/host?name=Human&v=1`);
+  const host = new WebSocket(`${base}/host?name=Human&v=2`);
   host.binaryType = "arraybuffer";
   const states = new Map(); // bot id -> latest decoded state
   const readies = new Set();
@@ -89,7 +89,7 @@ test("bots follow the host, get ready and turn into props", async () => {
     await new Promise((r) => setTimeout(r, 400));
     for (const s of states.values()) {
       assert.ok(s.flags & 4, "disguised during the hide phase");
-      assert.ok(s.prop < 10);
+      assert.ok(s.prop < 59);
     }
     clearInterval(tick);
   } finally {

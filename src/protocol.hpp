@@ -11,7 +11,9 @@
 
 namespace hs {
 
-constexpr int kProtocolVersion = 1;
+// v2 expands the networked prop ID catalogue from 21 to 59. Keep v1 clients in separate rooms:
+// they would otherwise turn every new prop ID into a pot and would not create the same cover.
+constexpr int kProtocolVersion = 2;
 
 enum MsgType : uint8_t {
     MSG_STATE = 1,     // everyone -> everyone, 10 Hz

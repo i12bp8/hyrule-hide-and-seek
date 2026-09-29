@@ -25,7 +25,7 @@ on this computer**.
 
 ## 1. Loads and connects
 
-- [ ] Log shows `Hyrule Hide & Seek 0.1.4 ready`. No "hook ... did not resolve" warnings for
+- [ ] Log shows `Hyrule Hide & Seek 0.1.5 ready`. No "hook ... did not resolve" warnings for
       `daAlink_c::execute`, `daAlink_c::draw`, `daAlink_c::setCutType`,
       `daAlink_c::setDamagePoint`, `daAlink_c::checkNotBattleStage`, `fopAc_Execute`, or
       `dComIfGp_event_order`.
@@ -38,8 +38,9 @@ on this computer**.
 
 `node bots.mjs --room ABCDE --count 3`
 
-- [ ] Three Links appear around you, each a different tunic colour, standing (idle animation).
-- [ ] Walk away: they run after you with the running animation, feet on the ground, shadows under them.
+- [ ] Three complete Links appear around you, each a different tunic colour, standing (idle animation).
+- [ ] Walk away: they walk after you, feet on the ground, shadows under them. Their body never
+      flickers, disappears, T-poses, or leaves only a face/sword visible.
 - [ ] Name tags above them in their colours.
 - [ ] Your own Link keeps animating normally (the puppets must not disturb it).
 - [ ] Log: `linkkit: Link's files ready`, `linkkit: <colour> tunic loaded`, heap size message.
@@ -66,10 +67,14 @@ Start round. With 4 players (you + 3 bots) there is one hunter; restart until yo
 - [ ] D-pad left/right/down performs only the Hide & Seek action. The vanilla Items and Map menus
       do not open underneath it.
 - [ ] The cucco prop animates when you walk.
+- [ ] Cycling props stays within a varied, map-appropriate pool; test at least one village, water,
+      forest, mountain and desert map.
 - [ ] The hunter bot waits at the spawn during Hide, then chases you during the hunt and tags you:
       "You were found!", you become Link again (and a hunter).
 - [ ] D-pad down taunts: a Link shout plays, the taunt bar fills, and the hunter gets a five-second
       direction/distance clue plus a marker at your position.
+- [ ] Automatic last-minute taunts start disabled. Enabling the host rule makes them occur; turning
+      it off leaves only manual D-pad down taunts.
 
 ## 5. A round as the hunter
 
@@ -77,6 +82,8 @@ Restart until you're the hunter (1 in 4).
 
 - [ ] Hide phase: black screen with a countdown, you can't walk away from the spawn.
 - [ ] The bots are props standing near you (pots, crates...). No name tags over them.
+- [ ] Eighteen extra scenery props are spread around the arena. They look like cover, have no name
+      tags or collision, and disappear again outside a Prop Hunt round.
 - [ ] Sword swing (B) hitting a bot prop: spark, "Found Bot N!", the counter at the top drops.
 - [ ] Castle Town still allows drawing and swinging the sword during the hunt.
 - [ ] Swinging at nothing costs a quarter heart (never the last one). Hitting a real pot also costs one.

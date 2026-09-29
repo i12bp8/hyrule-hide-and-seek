@@ -145,9 +145,10 @@ ModResult build_rules(ModContext*, UiWindowHandle, UiElementHandle left, UiEleme
         "On: a found prop becomes a hunter. Off: they watch until the next round.", F_JOIN);
     add_rule(left, UI_CONTROL_TOGGLE, "Missed swings cost a quarter heart",
         "Stops hunters from swinging at everything. Never takes the last quarter heart.", F_PENALTY);
-    add_rule(left, UI_CONTROL_TOGGLE, "Props taunt in the last minute",
-        "Every hidden prop reveals a five-second direction and location clue every 20 seconds near "
-        "the end, so rounds don't stall.", F_TAUNT);
+    add_rule(left, UI_CONTROL_TOGGLE, "Automatic last-minute taunts",
+        "Optional and off by default. When enabled, every hidden prop reveals a five-second "
+        "direction and location clue every 20 seconds in the last minute. Manual D-pad down "
+        "taunts still work.", F_TAUNT);
     add_rule(left, UI_CONTROL_TOGGLE, "Start the next round automatically",
         "After the scoreboard, a new round starts with new hunters.", F_NEXT);
     add_rule(left, UI_CONTROL_TOGGLE, "List this room publicly",
