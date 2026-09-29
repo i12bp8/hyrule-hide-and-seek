@@ -309,8 +309,11 @@ void recolor_local_link(uint8_t color) {
             if (!seen) wanted.push_back({data, timg});
         }
     }
-    bool same = s_localColor == color && (color == 0 || s_local.size() == wanted.size());
-    for (size_t i = 0; i < wanted.size() && same; ++i) same = s_local[i].pointer == wanted[i].data;
+    bool same = s_localColor == color;
+    if (same && color != 0) {
+        same = s_local.size() == wanted.size();
+        for (size_t i = 0; i < wanted.size() && same; ++i) same = s_local[i].pointer == wanted[i].data;
+    }
     if (same) return;
 
     for (LocalTex& t : s_local) {
