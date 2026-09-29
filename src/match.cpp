@@ -21,7 +21,6 @@ constexpr float kMaxHitDistance = 450.0f;  // sword reach plus network lag
 constexpr uint64_t kDecoyCooldownMs = 750;
 constexpr uint64_t kFreshStateMs = 2000;
 constexpr float kMinDecoySpacing = 100.0f;
-constexpr int kMaxOwnerDecoys = 5;
 constexpr int kFindPoints = 5;
 constexpr int kSurvivePoints = 5;
 constexpr int kSecondsPerPoint = 10;
@@ -269,7 +268,10 @@ void host_place_decoy(int owner) {
             ++owned;
         }
     }
-    if (owned >= kMaxOwnerDecoys) erase_decoy(oldestOwned);
+    // Paid Hunt placements may extend a player's initial allowance, but keep the live actor and
+    // wire state bounded. Replacing only that player's oldest decoy means a busy room can never
+    // erase somebody else's setup.
+    if (owned >= kMaxDecoysPerPlayer) erase_decoy(oldestOwned);
     if (s_match.decoyCount >= kMaxActiveDecoys) erase_decoy(0);
 
     const uint8_t id = take_decoy_id();

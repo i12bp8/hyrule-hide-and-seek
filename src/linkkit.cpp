@@ -25,8 +25,10 @@ namespace hs::linkkit {
 
 namespace {
 
-constexpr u32 kHeapWanted = 24u << 20;
-constexpr u32 kHeapMinimum = 6u << 20;
+// In a full room every player can keep ten independently transformed prop models. Resource data is
+// shared by the game, but each J3DModel and its animation state lives in this heap.
+constexpr u32 kHeapWanted = 64u << 20;
+constexpr u32 kHeapMinimum = 16u << 20;
 constexpr u32 kRootReserve = 16u << 20;
 constexpr int kAnimCacheSize = 256;
 

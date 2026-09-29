@@ -49,10 +49,10 @@ themed to the current map. Disguises are sword targets but stay walk-through, av
 network collision pushing the hunter away from what they see.
 
 Each hider starts with five free decoy placements (host-adjustable from 0–10). After those are used,
-an extra decoy costs 3 points earned in that round and is available only during Hunt. A hider can
-keep five active; the room keeps at most eight for rendering safety, replacing the oldest when full.
-Decoys have no physical collision, disappear when hit, give no hunter points, and deliberately count
-as a missed swing.
+an extra decoy costs 3 points earned in that round and is available only during Hunt. Every player
+can keep ten active, so a full 16-player room can retain 160 decoys without evicting another player's
+setup. An eleventh placement replaces only that player's oldest decoy. Decoys have no physical
+collision, disappear when hit, give no hunter points, and deliberately count as a missed swing.
 
 ### Rules the host can change
 

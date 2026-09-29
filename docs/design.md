@@ -67,10 +67,10 @@ Prop Hunt is the main mode; classic Hide & Seek comes along for free.
   Garry's Mod; with nothing nearby it cycles. D-pad left goes back.
 - D-pad up places a copy of the current disguise. The default allowance is five free placements per
   hider and the host can choose 0–10. Once used, extra placements are available during Hunt for 3
-  points earned in that round. A hider keeps at most five active decoys and the room keeps at most
-  eight, replacing the oldest; this bounds draw load even in a 16-player room. Placements have a
-  short cooldown and minimum spacing, are target-only rather than solid, give no hunter points, and
-  count as a miss when struck.
+  points earned in that round. Every player can keep ten active; an eleventh replaces only that
+  player's oldest, never somebody else's setup. The room and wire format retain up to 160 decoys,
+  enough for every slot's full allowance. Placements have a short cooldown and minimum spacing, are
+  target-only rather than solid, give no hunter points, and count as a miss when struck.
 - Hunters hit props with a real sword swing. Each hider has a target-only cylinder for Link's sword
   (and wolf attacks), but no object-correction collision: every disguise stays walk-through rather
   than pushing the hunter at an interpolated network position. While swimming, where the game
@@ -185,7 +185,8 @@ A custom actor (`HSPupt`, registered through ActorService) per remote player in 
   fixed at host-approved snapshot positions. Carryables and a few movable actors use cheap
   native-sized simple shadows; static or flat/translucent scenery casts no extra dynamic blob.
   Disguises never use model-projected shadows, which would submit complex geometry again and can
-  overflow Dusklight's fixed per-frame index buffer.
+  overflow older Dusklight builds' fixed per-frame index buffer. Large rooms require Aurora's
+  expanded geometry staging buffers.
 - The local player's own tunic is recoloured with TextureService pointer-keyed replacements.
 
 The local player in prop mode: Link's draw is skipped by a pre-hook on `daAlink_c::draw` and the

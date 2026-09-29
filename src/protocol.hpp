@@ -11,8 +11,8 @@
 
 namespace hs {
 
-// v4 adds host-authoritative, player-placed decoys and their configurable free allowance.
-constexpr int kProtocolVersion = 4;
+// v5 keeps every player's full decoy allowance active instead of applying an eight-decoy room cap.
+constexpr int kProtocolVersion = 5;
 
 enum MsgType : uint8_t {
     MSG_STATE = 1,     // everyone -> everyone, 10 Hz

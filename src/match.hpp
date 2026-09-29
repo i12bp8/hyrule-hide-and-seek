@@ -11,7 +11,11 @@
 
 namespace hs::match {
 
-constexpr int kMaxActiveDecoys = 8;
+// Keep every player's full host-configurable allowance alive at once. The protocol uses byte-sized
+// counts and ids, so 16 * 10 remains compact (a full snapshot is under 3 KiB) and leaves ids to
+// spare for replacement after a decoy is struck.
+constexpr int kMaxDecoysPerPlayer = 10;
+constexpr int kMaxActiveDecoys = kMaxPlayers * kMaxDecoysPerPlayer;
 constexpr int kExtraDecoyCost = 3;
 
 struct Settings {

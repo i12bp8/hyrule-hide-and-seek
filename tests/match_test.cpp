@@ -241,8 +241,8 @@ static void test_decoy_economy_and_validation() {
         else deliver(static_cast<uint8_t>(id), place_decoy_msg(match::get().round));
     };
 
-    // Each hider uses all five free placements. The shared render-safety cap keeps only eight
-    // alive, while usage remains per player and cannot be reset by global eviction.
+    // Each hider uses all five free placements. Every placement remains alive; one player's
+    // allowance must never evict another player's setup.
     for (int n = 0; n < 5; ++n) {
         for (int h = 0; h < 2; ++h) {
             state(hiders[h], 200.0f + n * 220.0f, h == 0 ? 0.0f : 500.0f, true);
@@ -250,7 +250,7 @@ static void test_decoy_economy_and_validation() {
         }
         advance(800);
     }
-    CHECK(match::decoy_count() == match::kMaxActiveDecoys);
+    CHECK(match::decoy_count() == 10);
     CHECK(match::player(hiders[0]).decoysUsed == 5);
     CHECK(match::player(hiders[1]).decoysUsed == 5);
     CHECK(match::player(hiders[0]).roundPoints == 0);
@@ -259,29 +259,84 @@ static void test_decoy_economy_and_validation() {
     state(hiders[0], 1500.0f, 0.0f, true);
     place(hiders[0]);
     CHECK(match::player(hiders[0]).decoysUsed == 5);
-    CHECK(match::decoy_count() == match::kMaxActiveDecoys);
+    CHECK(match::decoy_count() == 10);
 
     while (match::get().phase == Phase::Hide) advance(1000);
     CHECK(match::get().phase == Phase::Seek);
     advance(30'000);
     CHECK(match::player(hiders[0]).roundPoints == 3);  // awarded live, so it is spendable
 
-    // The sixth placement costs the three points and replaces an old owned decoy.
+    // The sixth placement costs three points and remains alongside the free placements.
     state(hiders[0], 1700.0f, 0.0f, true);
     place(hiders[0]);
     CHECK(match::player(hiders[0]).decoysUsed == 6);
     CHECK(match::player(hiders[0]).roundPoints == 0);
-    CHECK(match::decoy_count() == match::kMaxActiveDecoys);
+    CHECK(match::decoy_count() == 11);
 
     const match::Decoy target = match::decoy(0);
     state(hunter, target.x + 1000.0f, target.z, false);
     deliver(static_cast<uint8_t>(hunter), hit_decoy_msg(match::get().round, target.id));
-    CHECK(match::decoy_count() == match::kMaxActiveDecoys);  // too far
+    CHECK(match::decoy_count() == 11);  // too far
     deliver(static_cast<uint8_t>(hiders[1]), hit_decoy_msg(match::get().round, target.id));
-    CHECK(match::decoy_count() == match::kMaxActiveDecoys);  // hiders cannot clear traps
+    CHECK(match::decoy_count() == 11);  // hiders cannot clear traps
     state(hunter, target.x, target.z, false);
     deliver(static_cast<uint8_t>(hunter), hit_decoy_msg(match::get().round, target.id));
-    CHECK(match::decoy_count() == match::kMaxActiveDecoys - 1);
+    CHECK(match::decoy_count() == 10);
+}
+
+static void test_full_room_decoy_capacity() {
+    std::printf("full room retains every player's decoys\n");
+    host_room(kMaxPlayers);
+    match::Settings settings = match::get().settings;
+    settings.hunters = 1;
+    settings.hideSecs = 600;
+    settings.freeDecoys = match::kMaxDecoysPerPlayer;
+    match::set_settings(settings);
+    match::start_round();
+    const char* stage = map_info(match::get().map).stage;
+    everyone_ready(kMaxPlayers, stage);
+    // FakeNet introduces all peers before the host callback is installed, so peers not represented
+    // in the synthetic ready roster reach Hide through the normal gather timeout.
+    if (match::get().phase == Phase::Gather) advance(26'000);
+    CHECK(match::get().phase == Phase::Hide);
+
+    int hiders = 0;
+    for (int id = 1; id <= kMaxPlayers; ++id) {
+        if (match::player(id).role != Role::Hider) continue;
+        ++hiders;
+        for (int n = 0; n < match::kMaxDecoysPerPlayer; ++n) {
+            const float x = static_cast<float>(id * 3000 + n * 200);
+            const float z = static_cast<float>(id * 3000);
+            const auto state = state_msg(stage, x, 0.0f, z, STATE_IN_WORLD | STATE_DISGUISED);
+            if (id == g_fake.self) {
+                PlayerState local;
+                local.flags = STATE_IN_WORLD | STATE_DISGUISED;
+                copy_str(local.stage, stage);
+                local.x = x;
+                local.z = z;
+                match::set_local_state(local);
+                match::place_decoy();
+            } else {
+                deliver(static_cast<uint8_t>(id), state);
+                deliver(static_cast<uint8_t>(id), place_decoy_msg(match::get().round));
+            }
+            advance(800);
+        }
+    }
+
+    CHECK(hiders == kMaxPlayers - 1);
+    CHECK(match::decoy_count() == hiders * match::kMaxDecoysPerPlayer);
+    CHECK(match::decoy_count() <= match::kMaxActiveDecoys);
+    for (int id = 1; id <= kMaxPlayers; ++id) {
+        if (match::player(id).role == Role::Hider) {
+            CHECK(match::player(id).decoysUsed == match::kMaxDecoysPerPlayer);
+        }
+    }
+    size_t snapshotSize = 0;
+    for (const auto& sent : g_fake.sent) {
+        if (!sent.bytes.empty() && sent.bytes[0] == MSG_DECOYS) snapshotSize = sent.bytes.size();
+    }
+    CHECK(snapshotSize < 4096);
 }
 
 static void test_full_round_two_players() {
@@ -649,6 +704,7 @@ static void test_props() {
 int main() {
     test_protocol_roundtrip();
     test_decoy_economy_and_validation();
+    test_full_room_decoy_capacity();
     test_full_round_two_players();
     test_props_win_on_time_and_rotation();
     test_gather_timeout();
