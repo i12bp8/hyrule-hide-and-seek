@@ -326,6 +326,7 @@ void Settings::write(Writer& w) const {
     w.u8(hunters);
     w.u8(static_cast<uint8_t>((foundJoinHunters ? 1 : 0) | (missPenalty ? 2 : 0) |
                               (autoTaunt ? 4 : 0) | (autoNext ? 8 : 0) | (isPublic ? 16 : 0)));
+    w.u16(idleTauntSecs);
 }
 
 void Settings::read(Reader& r) {
@@ -341,6 +342,7 @@ void Settings::read(Reader& r) {
     autoTaunt = f & 4;
     autoNext = f & 8;
     isPublic = f & 16;
+    idleTauntSecs = std::clamp<uint16_t>(r.u16(), 0, 600);
 }
 
 // ---- queries ---------------------------------------------------------------------------------

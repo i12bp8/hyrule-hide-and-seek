@@ -44,6 +44,10 @@ constexpr uint64_t kSwingWindowMs = 650;
 constexpr uint64_t kSettleMs = 1500;
 constexpr uint64_t kWarpRetryMs = 12000;
 constexpr float kTouchDistance = 90.0f;
+constexpr float kIdleMoveDistance = 24.0f;
+constexpr float kIdleVerticalDistance = 40.0f;
+constexpr float kSwimTagBodyRadius = 45.0f;
+constexpr float kSwimTagVerticalMargin = 80.0f;
 constexpr float kCopyDistance = 300.0f;
 constexpr u32 kRoundDpadMask =
     PAD_BUTTON_UP | PAD_BUTTON_DOWN | PAD_BUTTON_LEFT | PAD_BUTTON_RIGHT;
@@ -72,6 +76,9 @@ bool s_disguised = false;
 int s_prop = 0;
 uint64_t s_lastTaunt = 0;
 uint64_t s_lastAutoTaunt = 0;
+bool s_idleTracking = false;
+cXyz s_idleAnchor{0.0f, 0.0f, 0.0f};
+uint64_t s_idleSince = 0;
 
 struct TauntPing {
     cXyz position{0.0f, 0.0f, 0.0f};
@@ -234,7 +241,11 @@ int nearby_prop(const cXyz& pos) {
 }
 
 void taunt(uint8_t sound) {
-    s_lastTaunt = now_ms();
+    const uint64_t now = now_ms();
+    s_lastTaunt = now;
+    // Any kind of taunt satisfies both automatic systems; never stack two clues in one frame.
+    s_lastAutoTaunt = now;
+    if (s_idleTracking) s_idleSince = now;
     if (daAlink_c* l = link()) play_at(kTaunts[sound % kTauntCount], &l->current.pos);
     match::send_taunt(sound);
 }
@@ -281,6 +292,8 @@ void follow_round(daAlink_c* l) {
 void on_phase_change(Phase from, Phase to) {
     if (to != Phase::Seek) {
         for (TauntPing& ping : s_tauntPings) ping = TauntPing{};
+        s_idleTracking = false;
+        s_idleSince = 0;
     }
     if (to == Phase::Gather && playing_prop_hunt()) {
         // Choose during the gathering/warp phase so the replacement model is already loaded when
@@ -327,7 +340,43 @@ void hunter_controls(daAlink_c* l) {
             play_at(Z2SE_SY_CURSOR_CANCEL, &l->current.pos);
         }
     }
-    if (m.phase != Phase::Seek || playing_prop_hunt()) return;
+    if (m.phase != Phase::Seek) return;
+    if (playing_prop_hunt()) {
+        // Link cannot draw a sword while swimming. In that one state B becomes a short-range tag,
+        // using the same authoritative distance check as sword hits. It is deliberately not
+        // consumed, so normal swimming controls continue to work.
+        if (l->checkModeFlg(daAlink_c::MODE_SWIMMING) && mDoCPd_c::getTrigB(PAD_1)) {
+            int nearest = 0;
+            float nearestDistanceSq = 0.0f;
+            for (int id = 1; id <= kMaxPlayers; ++id) {
+                const match::Player& p = match::player(id);
+                if (id == net::self_id() || !p.present || p.role != Role::Hider || p.found) continue;
+                cXyz feet;
+                float height;
+                if (!puppet::anchor(id, feet, height)) continue;
+                const int kind = p.state.prop < prop_count() ? p.state.prop : 0;
+                const float reach = std::clamp(
+                    prop_info(kind).radius + kSwimTagBodyRadius, 75.0f, 185.0f);
+                const float dx = feet.x - l->current.pos.x;
+                const float dz = feet.z - l->current.pos.z;
+                const float distanceSq = dx * dx + dz * dz;
+                const bool overlapsVertically =
+                    l->current.pos.y >= feet.y - kSwimTagVerticalMargin &&
+                    l->current.pos.y <= feet.y + height + kSwimTagVerticalMargin;
+                if (overlapsVertically && distanceSq <= reach * reach &&
+                    (nearest == 0 || distanceSq < nearestDistanceSq)) {
+                    nearest = id;
+                    nearestDistanceSq = distanceSq;
+                }
+            }
+            if (nearest != 0) {
+                note_hit();
+                match::report_hit(static_cast<uint8_t>(nearest));
+                play_at(Z2SE_SY_CURSOR_OK, &l->current.pos);
+            }
+        }
+        return;
+    }
     // Hide & Seek: touching a hider finds them.
     for (int id = 1; id <= kMaxPlayers; ++id) {
         const match::Player& p = match::player(id);
@@ -358,7 +407,28 @@ void hider_controls(daAlink_c* l) {
         taunt(static_cast<uint8_t>(std::uniform_int_distribution<int>(0, kTauntCount - 1)(s_rng)));
     }
     if (m.settings.autoTaunt && match::ms_left() < kAutoTauntLastMs && now - s_lastAutoTaunt > kAutoTauntEveryMs) {
-        s_lastAutoTaunt = now;
+        taunt(static_cast<uint8_t>(std::uniform_int_distribution<int>(0, kTauntCount - 1)(s_rng)));
+    }
+    if (!s_disguised || m.settings.idleTauntSecs == 0) {
+        s_idleTracking = false;
+        return;
+    }
+    if (!s_idleTracking) {
+        s_idleTracking = true;
+        s_idleAnchor = l->current.pos;
+        s_idleSince = now;
+        return;
+    }
+    const float dx = l->current.pos.x - s_idleAnchor.x;
+    const float dz = l->current.pos.z - s_idleAnchor.z;
+    if (dx * dx + dz * dz > kIdleMoveDistance * kIdleMoveDistance ||
+        std::fabs(l->current.pos.y - s_idleAnchor.y) > kIdleVerticalDistance) {
+        s_idleAnchor = l->current.pos;
+        s_idleSince = now;
+        return;
+    }
+    if (now - s_idleSince >= static_cast<uint64_t>(m.settings.idleTauntSecs) * 1000u &&
+        now - s_lastTaunt >= kTauntCooldownMs) {
         taunt(static_cast<uint8_t>(std::uniform_int_distribution<int>(0, kTauntCount - 1)(s_rng)));
     }
 }

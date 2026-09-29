@@ -12,8 +12,9 @@ hunters get a sword and a timer.
    interruptions, enemies or bosses; no twilight; fixed daylight; Hero's Clothes, sword and shield;
    six hearts; and unlimited air underwater.
    (You can also play from any save; the world just might look different for each player.)
-3. The Hide & Seek window opens. **Host a game**: you get a five-letter room code, already copied to
-   your clipboard. Friends type it in and press **Join**, or pick your room from **Public games**.
+3. The Hide & Seek window opens. In **Play**, choose **Host a game** to get a five-letter room code,
+   already copied to your clipboard. Friends choose **Join a game** to enter it or pick it from
+   **Public games**.
 4. Pick the rules in the **Rules** tab, then **Start round**.
 
 Nothing to set up: no port forwarding, no IP addresses. It works on home wifi, mobile data and
@@ -39,17 +40,18 @@ Windows, macOS and fixed Linux builds use WebSockets.
 | **D-pad right** | Props: copy the pot, crate or barrel next to you (or the next prop) |
 | **D-pad left** | Props: previous prop |
 | **D-pad down** | Props: taunt (+1 point, every 5 s; reveals you to hunters for 5 s) |
-| **B** | Hunters: swing. Hitting nothing costs a quarter heart. |
+| **B** | Hunters: swing; while swimming, tag a nearby prop. A missed sword swing costs a quarter heart. |
 
 There are 59 props drawn from across Hyrule: pots, crates, furniture, village signs and targets,
 forest plants, desert and mountain rocks, Zora ice and water props, plus a walking cucco. Selection
-is themed to the current map. Prop Hunt also places 18 harmless scenery decoys around the arena so
-open maps are not a game of spotting the only object in a field.
+is themed to the current map. Prop Hunt also places 18 harmless scenery decoys across map-wide
+cover areas, with no dense pile around the player spawn.
 
 ### Rules the host can change
 
 Mode (Prop Hunt / Hide & Seek), map (or a random one every round), hiding and round time, number of
-hunters, whether found props join the hunters, the miss penalty, optional last-minute auto-taunts
+hunters, whether found props join the hunters, the miss penalty, how long a prop may stay still
+before automatically taunting (60 seconds by default, or Off), optional extra last-minute taunts
 (off by default), starting rounds automatically, and whether the room is listed publicly.
 
 **Hide & Seek mode**: everyone stays Link and hunters tag hiders by touching them, like SMO Online.

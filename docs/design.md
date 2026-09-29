@@ -60,15 +60,18 @@ Prop Hunt is the main mode; classic Hide & Seek comes along for free.
 ### Prop Hunt
 
 - Props: 59 objects drawn from every region, with map-themed selection, plus 18 deterministic visual
-  decoys around the arena to give sparse maps believable cover. Models are read from the player's
-  own game files.
+  decoys spread between six map-wide areas to give sparse maps believable cover. Models are
+  read from the player's own game files.
 - D-pad right copies the pot/crate/barrel you stand next to, like "become the prop you look at" in
   Garry's Mod; with nothing nearby it cycles. D-pad left goes back.
-- Hunters hit props with a real sword swing: each prop carries a hit cylinder that only Link's sword
-  (and wolf attacks) can hit. A swing that hits no prop costs a quarter heart (never the last one).
+- Hunters hit props with a real sword swing: each prop carries a solid cylinder that Link cannot
+  walk through and that only Link's sword (and wolf attacks) can hit. While swimming, where the game
+  prevents sword use, B performs a close-range prop tag. A sword swing that hits no prop costs a
+  quarter heart (never the last one).
 - D-pad down taunts for a point. Hunters hear a Link shout and get a direction, distance and
-  through-scenery world marker for five seconds. Hosts can optionally enable an automatic taunt
-  every 20 s in the last minute; it is off by default.
+  through-scenery world marker for five seconds. By default a prop that has not moved for 60 seconds
+  automatically taunts; hosts can choose Off/30/45/60/90/120 seconds. Extra automatic taunts every
+  20 s in the last minute remain optional and off by default.
 - Hunters don't see props' name tags.
 
 ### Hide & Seek

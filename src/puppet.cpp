@@ -24,6 +24,7 @@
 #include "m_Do/m_Do_ext.h"
 #include "m_Do/m_Do_mtx.h"
 
+#include <algorithm>
 #include <cmath>
 #include <cstring>
 #include <vector>
@@ -38,7 +39,7 @@ namespace {
 constexpr u32 kLocalFlag = 0x100;
 constexpr u32 kDecoyFlag = 0x200;
 constexpr int kPropShift = 16;
-constexpr int kDecoyCount = 18;
+constexpr int kDecoyCount = kCoverPointCount;
 constexpr int kDecoyVariety = 6;
 constexpr u32 kPuppetHeapSize = 640 * 1024;
 constexpr u32 kPropHeapSize = 128 * 1024;
@@ -77,21 +78,6 @@ Slot s_decoys[kDecoyCount];
 uint64_t s_worldSince = 0;
 uint32_t s_decoyRound = 0;
 int s_decoyMap = -1;
-
-struct DecoyOffset {
-    float x;
-    float z;
-};
-
-// Irregular rings look placed by the world rather than by a level-editor grid. Rotating the list
-// by round changes the cover layout while remaining identical on every client.
-constexpr DecoyOffset kDecoyOffsets[kDecoyCount] = {
-    {0.18f, 0.08f}, {-0.21f, 0.13f}, {0.07f, -0.27f}, {0.31f, -0.15f},
-    {-0.34f, -0.22f}, {0.42f, 0.25f}, {-0.46f, 0.31f}, {0.12f, 0.49f},
-    {-0.09f, -0.54f}, {0.58f, -0.36f}, {-0.62f, -0.18f}, {0.53f, 0.51f},
-    {-0.55f, 0.59f}, {0.22f, -0.76f}, {-0.30f, -0.83f}, {0.82f, 0.12f},
-    {-0.86f, 0.08f}, {0.68f, -0.69f},
-};
 
 // Link's sword can hit these: both swords, plus the wolf in case a hunter transforms.
 const dCcD_SrcCyl kCylSrc = {
@@ -439,6 +425,10 @@ void Puppet::armHitbox(const match::Player& p, bool disguised, int kind) {
     if (!mCylArmed) return;
     const float r = disguised ? prop_info(kind).radius : kLinkRadius;
     const float h = disguised ? prop_info(kind).height : kLinkHeight;
+    // Prop hiders participate in the game's normal object-correction collision on the hunter's
+    // client. Link is pushed around the cylinder just like an NPC, while the network-owned prop
+    // remains authoritative and cannot be shoved out of place. Human hiders stay non-solid.
+    mCyl.SetCoSPrm(disguised ? 0x79 : 0);
     mCyl.SetC(current.pos);
     mCyl.SetR(r);
     mCyl.SetH(h);
@@ -463,6 +453,9 @@ int Puppet::execute() {
         }
         mCyl.ClrTgHit();
     }
+    // Apply/clear last frame's object-correction result before registering the cylinder again.
+    mStts.Move();
+    mCyl.ClrCoHit();
     mCylArmed = false;
 
     if (mDecoy) {
@@ -552,7 +545,10 @@ int Puppet::draw() {
         mDoExt_bckAnm* anm = mPropMoving && mPropMove != nullptr ? mPropMove : mPropIdle;
         if (anm != nullptr) anm->entry(data);
         mDoExt_modelUpdateDL(mPropModel);
-        shadow = prop_info(mPropKind).radius * 1.3f;
+        const PropInfo& info = prop_info(mPropKind);
+        shadow = info.shadowScale <= 0.0f
+                     ? 0.0f
+                     : std::clamp(info.radius * info.shadowScale, 18.0f, 85.0f);
     } else {
         // modelEntryDL alone does not submit custom actors on Dusklight's interpolated PC frames.
         // Updating the body and rigid attachments here keeps a complete Link visible every render
@@ -570,7 +566,7 @@ int Puppet::draw() {
             mDoExt_modelEntryDL(mHands);
         }
     }
-    if (mGroundY != -G_CM3D_F_INF) {
+    if (mGroundY != -G_CM3D_F_INF && shadow > 0.0f) {
         dComIfGd_setSimpleShadow(&current.pos, mGroundY, shadow, mGndChk, 0, 1.0f,
             dDlst_shadowControl_c::getSimpleTex());
     }
@@ -738,16 +734,14 @@ void update() {
         s_decoyMap = mapIndex;
         return;
     }
-    const MapInfo& map = map_info(mapIndex);
     const int rotation = static_cast<int>((m.round * 5u) % kDecoyCount);
     for (int i = 0; i < kDecoyCount; ++i) {
-        const DecoyOffset& offset = kDecoyOffsets[(i + rotation) % kDecoyCount];
-        // Start the ray well above nearby terrain. The actor grounds itself before becoming
-        // visible, so offsets over a ledge or roof never leave a floating prop.
-        const cXyz at(map.spawnX + offset.x * map.decoyRadius, map.spawnY + 5000.0f,
-            map.spawnZ + offset.z * map.decoyRadius);
-        // Repeating a small set gives a convincing prop cluster without keeping eighteen large
-        // object archives mounted at once.
+        const CoverPoint point = cover_point(mapIndex, (i + rotation) % kDecoyCount);
+        // Start above a verified area. The actor grounds itself before becoming visible, so a
+        // nearby offset over a ledge or missing floor never leaves a floating prop.
+        const cXyz at(point.x, point.y + 1200.0f, point.z);
+        // Repeating a small set gives varied cover without keeping many large object archives
+        // mounted at once.
         const int kind = prop_for_map(
             mapIndex, (i % kDecoyVariety) * 7 + static_cast<int>(m.round) * 3);
         const s16 yaw = static_cast<s16>(i * 0x25A1 + mapIndex * 0x071D + m.round * 0x0137);

@@ -17,6 +17,9 @@ struct PropInfo {
     float scale;
     int bmdIndex = -1;    // archives whose model has no stable filename in the headers
     uint16_t mapMask = 0x7FFF;  // one bit per entry in maps.cpp
+    // Multiplier for the generic round blob shadow. Zero lets flat, translucent or water props use
+    // only the map's lighting instead of advertising themselves with an impossible black circle.
+    float shadowScale = 1.0f;
 };
 
 int prop_count();

@@ -12,16 +12,26 @@ struct MapInfo {
     const char* stage;
     int8_t room;
     int16_t point;
-    // Exact position of the safe spawn above. Prop Hunt uses it as a shared, deterministic
-    // centre for decorative decoys, so every client sees the same cover even on sparse maps.
+    // Exact position of the safe spawn above, retained as a fallback/reference point.
     float spawnX;
     float spawnY;
     float spawnZ;
-    float decoyRadius;
 };
+
+struct CoverPoint {
+    float x;
+    float y;
+    float z;
+};
+
+constexpr int kCoverPointCount = 18;
 
 int map_count();
 const MapInfo& map_info(int index);
+// Deterministic areas used for harmless scenery props. Points are spread across the selected room
+// rather than radiating from the player spawn; the actor's ground ray validates each final point.
+int cover_point_count(int map);
+CoverPoint cover_point(int map, int ordinal);
 // A random map index, different from `avoid` when there is a choice.
 int random_map(int avoid);
 

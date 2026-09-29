@@ -20,6 +20,7 @@ struct Settings {
     bool foundJoinHunters = true;
     bool missPenalty = true;
     bool autoTaunt = false;
+    uint16_t idleTauntSecs = 60;  // 0 disables stationary-prop auto-taunts
     bool autoNext = true;
     bool isPublic = false;
 

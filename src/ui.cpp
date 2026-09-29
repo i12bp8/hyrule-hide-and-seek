@@ -8,6 +8,8 @@
 
 #include <mods/svc/ui.h>
 
+#include <algorithm>
+#include <iterator>
 #include <string>
 #include <vector>
 
@@ -21,11 +23,20 @@ UiWindowHandle s_window = 0;
 // Play tab elements, re-acquired on every build.
 struct PlayTab {
     UiElementHandle status = 0;
+    UiElementHandle hostGroup = 0;
+    UiElementHandle joinGroup = 0;
+    UiElementHandle roomGroup = 0;
     UiElementHandle code = 0;
+    UiElementHandle roomRole = 0;
+    UiElementHandle hostControls = 0;
+    UiElementHandle startRound = 0;
+    UiElementHandle endRound = 0;
+    UiElementHandle joinWaiting = 0;
     UiListHandle players = 0;
     UiListHandle rooms = 0;
     UiElementHandle roomsStatus = 0;
     std::string lastPlayers;
+    int onlineView = -1;
 } s_play;
 
 std::vector<net::PublicRoom> s_rooms;
@@ -34,6 +45,9 @@ std::string s_error;
 
 const char* const kModes[] = {"Prop Hunt", "Hide & Seek"};
 const char* const kHunters[] = {"Auto (1 per 4 players)", "1", "2", "3", "4"};
+const char* const kIdleTaunts[] = {
+    "Off", "30 seconds", "45 seconds", "60 seconds", "90 seconds", "120 seconds"};
+constexpr uint16_t kIdleTauntValues[] = {0, 30, 45, 60, 90, 120};
 
 std::vector<const char*>& map_options() {
     static std::vector<const char*> options;
@@ -62,7 +76,26 @@ void toast(const std::string& title, const std::string& body, const char* type =
 
 // ---- rules -----------------------------------------------------------------------------------
 
-enum Field : intptr_t { F_MODE, F_MAP, F_HIDE, F_SEEK, F_HUNTERS, F_JOIN, F_PENALTY, F_TAUNT, F_NEXT, F_PUBLIC };
+enum Field : intptr_t {
+    F_MODE,
+    F_MAP,
+    F_HIDE,
+    F_SEEK,
+    F_HUNTERS,
+    F_JOIN,
+    F_PENALTY,
+    F_TAUNT,
+    F_IDLE_TAUNT,
+    F_NEXT,
+    F_PUBLIC
+};
+
+int idle_taunt_option(uint16_t seconds) {
+    for (size_t i = 0; i < std::size(kIdleTauntValues); ++i) {
+        if (kIdleTauntValues[i] == seconds) return static_cast<int>(i);
+    }
+    return 0;
+}
 
 match::Settings current_rules() {
     return net::status() == net::Status::Online ? match::get().settings : settings::host_rules();
@@ -79,6 +112,7 @@ void get_rule(ModContext*, void* user, UiControlValue* out) {
     case F_JOIN: out->bool_value = s.foundJoinHunters; break;
     case F_PENALTY: out->bool_value = s.missPenalty; break;
     case F_TAUNT: out->bool_value = s.autoTaunt; break;
+    case F_IDLE_TAUNT: out->int_value = idle_taunt_option(s.idleTauntSecs); break;
     case F_NEXT: out->bool_value = s.autoNext; break;
     case F_PUBLIC: out->bool_value = s.isPublic; break;
     }
@@ -95,6 +129,12 @@ void set_rule(ModContext*, void* user, const UiControlValue* v) {
     case F_JOIN: s.foundJoinHunters = v->bool_value; break;
     case F_PENALTY: s.missPenalty = v->bool_value; break;
     case F_TAUNT: s.autoTaunt = v->bool_value; break;
+    case F_IDLE_TAUNT: {
+        const int option = std::clamp<int>(static_cast<int>(v->int_value), 0,
+            static_cast<int>(std::size(kIdleTauntValues)) - 1);
+        s.idleTauntSecs = kIdleTauntValues[option];
+        break;
+    }
     case F_NEXT: s.autoNext = v->bool_value; break;
     case F_PUBLIC: s.isPublic = v->bool_value; break;
     }
@@ -145,7 +185,11 @@ ModResult build_rules(ModContext*, UiWindowHandle, UiElementHandle left, UiEleme
         "On: a found prop becomes a hunter. Off: they watch until the next round.", F_JOIN);
     add_rule(left, UI_CONTROL_TOGGLE, "Missed swings cost a quarter heart",
         "Stops hunters from swinging at everything. Never takes the last quarter heart.", F_PENALTY);
-    add_rule(left, UI_CONTROL_TOGGLE, "Automatic last-minute taunts",
+    add_rule(left, UI_CONTROL_DROPDOWN, "Taunt when a prop stays still",
+        "A prop that has not moved this long automatically taunts. Moving resets the timer. "
+        "This replaces repetitive timed clues with a consequence for camping; Off disables it.",
+        F_IDLE_TAUNT, kIdleTaunts, std::size(kIdleTaunts));
+    add_rule(left, UI_CONTROL_TOGGLE, "Extra last-minute taunts",
         "Optional and off by default. When enabled, every hidden prop reveals a five-second "
         "direction and location clue every 20 seconds in the last minute. Manual D-pad down "
         "taunts still work.", F_TAUNT);
@@ -254,18 +298,28 @@ void update_players() {
     svc_ui->list_set_items(mod_ctx, s_play.players, items.data(), items.size());
 }
 
-ModResult build_play(ModContext*, UiWindowHandle, UiElementHandle left, UiElementHandle, void*, ModError*) {
-    s_play = PlayTab{};
-    svc_ui->pane_add_text(mod_ctx, left, "", &s_play.status);
+void reset_play_detail() {
+    s_play.code = 0;
+    s_play.roomRole = 0;
+    s_play.hostControls = 0;
+    s_play.startRound = 0;
+    s_play.endRound = 0;
+    s_play.joinWaiting = 0;
+    s_play.players = 0;
+    s_play.rooms = 0;
+    s_play.roomsStatus = 0;
+    s_play.lastPlayers.clear();
+}
 
-    // Offline: name, colour, host, join, public games. Buttons that don't apply are disabled.
+void add_identity(UiElementHandle pane) {
+    svc_ui->pane_add_section(mod_ctx, pane, "Your player");
     UiControlDesc name = UI_CONTROL_DESC_INIT;
     name.kind = UI_CONTROL_STRING;
     name.label = "Your name";
     name.binding = UI_BINDING_CONFIG_VAR;
     name.config_var = settings::name_var();
     name.max_length = 20;
-    svc_ui->pane_add_control(mod_ctx, left, &name, nullptr);
+    svc_ui->pane_add_control(mod_ctx, pane, &name, nullptr);
 
     UiControlDesc color = UI_CONTROL_DESC_INIT;
     color.kind = UI_CONTROL_DROPDOWN;
@@ -278,45 +332,75 @@ ModResult build_play(ModContext*, UiWindowHandle, UiElementHandle left, UiElemen
         settings::set_color(static_cast<uint8_t>(v->int_value));
         match::set_wanted_color(static_cast<uint8_t>(v->int_value));
     };
-    svc_ui->pane_add_control(mod_ctx, left, &color, nullptr);
+    svc_ui->pane_add_control(mod_ctx, pane, &color, nullptr);
+}
+
+ModResult build_host_page(ModContext*, UiElementHandle pane, void*, ModError*) {
+    reset_play_detail();
+    svc_ui->pane_add_section(mod_ctx, pane, "Host a game");
+    svc_ui->pane_add_rml(mod_ctx, pane,
+        "<p>Create a room, then send its five-letter code to your friends. The code is copied "
+        "automatically. Choose the map and round rules in the <b>Rules</b> tab.</p>", nullptr);
+    add_identity(pane);
 
     const auto offline = [](ModContext*, void*) { return net::status() != net::Status::Offline; };
-    button(left, "Host a game", [](ModContext*, void*) {
+    button(pane, "Create room and copy code", [](ModContext*, void*) {
         s_error.clear();
         net::host_room(settings::server(), settings::name());
     }, offline, "Creates a room and copies its code to your clipboard. Send it to your friends.");
+    return MOD_OK;
+}
 
+ModResult build_join_page(ModContext*, UiElementHandle pane, void*, ModError*) {
+    reset_play_detail();
+    svc_ui->pane_add_section(mod_ctx, pane, "Join a game");
+    svc_ui->pane_add_rml(mod_ctx, pane,
+        "<p>Enter a friend's room code, paste it from the clipboard, or choose a public game.</p>",
+        nullptr);
+    add_identity(pane);
+    const auto offline = [](ModContext*, void*) { return net::status() != net::Status::Offline; };
     UiControlDesc code = UI_CONTROL_DESC_INIT;
     code.kind = UI_CONTROL_STRING;
     code.label = "Room code";
     code.binding = UI_BINDING_CONFIG_VAR;
     code.config_var = settings::room_code_var();
     code.max_length = 8;
-    svc_ui->pane_add_control(mod_ctx, left, &code, nullptr);
-    button(left, "Join room", [](ModContext*, void*) { join_code(settings::room_code()); }, offline);
-    button(left, "Paste code and join", [](ModContext*, void*) {
+    svc_ui->pane_add_control(mod_ctx, pane, &code, nullptr);
+    button(pane, "Join with this code",
+        [](ModContext*, void*) { join_code(settings::room_code()); }, offline);
+    button(pane, "Paste code and join", [](ModContext*, void*) {
         char buf[64] = {};
         if (svc_ui->get_clipboard_text(mod_ctx, buf, sizeof(buf), nullptr) == MOD_OK) join_code(buf);
     }, offline);
 
-    svc_ui->pane_add_section(mod_ctx, left, "Public games");
-    svc_ui->pane_add_text(mod_ctx, left, "Loading...", &s_play.roomsStatus);
-    button(left, "Refresh", [](ModContext*, void*) { refresh_rooms(); }, offline);
+    svc_ui->pane_add_section(mod_ctx, pane, "Public games");
+    svc_ui->pane_add_text(mod_ctx, pane, "Loading...", &s_play.roomsStatus);
+    button(pane, "Refresh list", [](ModContext*, void*) { refresh_rooms(); }, offline);
     UiListDesc rooms = UI_LIST_DESC_INIT;
     rooms.on_pressed = [](ModContext*, UiListHandle, uint64_t key, void*) {
-        if (key < s_rooms.size() && net::status() == net::Status::Offline) join_code(s_rooms[key].code);
+        if (key < s_rooms.size() && net::status() == net::Status::Offline)
+            join_code(s_rooms[key].code);
     };
-    svc_ui->pane_add_list(mod_ctx, left, &rooms, &s_play.rooms);
+    svc_ui->pane_add_list(mod_ctx, pane, &rooms, &s_play.rooms);
+    refresh_rooms();
+    return MOD_OK;
+}
 
-    // Online: code, players, start.
-    svc_ui->pane_add_section(mod_ctx, left, "Your room");
-    svc_ui->pane_add_text(mod_ctx, left, "", &s_play.code);
+ModResult build_room_page(ModContext*, UiElementHandle pane, void*, ModError*) {
+    reset_play_detail();
+    svc_ui->pane_add_section(mod_ctx, pane, "Current room");
+    svc_ui->pane_add_text(mod_ctx, pane, "", &s_play.roomRole);
+    svc_ui->pane_add_text(mod_ctx, pane, "", &s_play.code);
     const auto notOnline = [](ModContext*, void*) { return net::status() != net::Status::Online; };
-    button(left, "Copy room code", [](ModContext*, void*) {
+    button(pane, "Copy room code", [](ModContext*, void*) {
         svc_ui->set_clipboard_text(mod_ctx, net::room_code().c_str());
         toast("Hide & Seek", "Room code copied.");
     }, notOnline);
-    button(left, "Start round", [](ModContext*, void*) {
+
+    svc_ui->pane_add_rml(mod_ctx, pane,
+        "<h3>Host controls</h3><p>Choose the game rules in the Rules tab, then start when everyone "
+        "is ready.</p>", &s_play.hostControls);
+    s_play.startRound = button(pane, "Start round", [](ModContext*, void*) {
         std::string why;
         if (!match::can_start(&why)) {
             toast("Hide & Seek", why, "warning");
@@ -326,21 +410,58 @@ ModResult build_play(ModContext*, UiWindowHandle, UiElementHandle left, UiElemen
         if (s_window != 0) svc_ui->window_close(mod_ctx, s_window);
     }, [](ModContext*, void*) { return !net::is_host() || match::in_round(); },
         "Everyone is warped to the map. Hunters wait while the props hide.");
-    button(left, "End round now", [](ModContext*, void*) { match::end_round(); },
+    s_play.endRound = button(pane, "End round now", [](ModContext*, void*) { match::end_round(); },
         [](ModContext*, void*) { return !net::is_host() || !match::in_round(); });
-    button(left, "Leave room", [](ModContext*, void*) {
+    svc_ui->pane_add_rml(mod_ctx, pane,
+        "<p><b>Waiting for the host.</b> You can see the chosen rules in the Rules tab.</p>",
+        &s_play.joinWaiting);
+
+    svc_ui->pane_add_section(mod_ctx, pane, "Players");
+    UiListDesc players = UI_LIST_DESC_INIT;
+    players.on_pressed = [](ModContext*, UiListHandle, uint64_t, void*) {};
+    svc_ui->pane_add_list(mod_ctx, pane, &players, &s_play.players);
+    button(pane, "Leave room", [](ModContext*, void*) {
         net::leave_room();
         match::on_disconnected();
     }, [](ModContext*, void*) { return net::status() == net::Status::Offline; });
-    UiListDesc players = UI_LIST_DESC_INIT;
-    players.on_pressed = [](ModContext*, UiListHandle, uint64_t, void*) {};
-    svc_ui->pane_add_list(mod_ctx, left, &players, &s_play.players);
+    return MOD_OK;
+}
 
-    refresh_rooms();
+ModResult build_play(
+    ModContext*, UiWindowHandle, UiElementHandle left, UiElementHandle right, void*, ModError*) {
+    s_play = PlayTab{};
+    svc_ui->pane_add_text(mod_ctx, left, "", &s_play.status);
+    svc_ui->pane_add_section(mod_ctx, left, "Play");
+
+    UiGroupDesc host = UI_GROUP_DESC_INIT;
+    host.label = "Host a game";
+    host.build = build_host_page;
+    svc_ui->pane_add_group(mod_ctx, left, right, &host, &s_play.hostGroup);
+
+    UiGroupDesc join = UI_GROUP_DESC_INIT;
+    join.label = "Join a game";
+    join.build = build_join_page;
+    svc_ui->pane_add_group(mod_ctx, left, right, &join, &s_play.joinGroup);
+
+    UiGroupDesc room = UI_GROUP_DESC_INIT;
+    room.label = "Current room";
+    room.build = build_room_page;
+    svc_ui->pane_add_group(mod_ctx, left, right, &room, &s_play.roomGroup);
     return MOD_OK;
 }
 
 ModResult update_play(ModContext*, void*, ModError*) {
+    const bool online = net::status() == net::Status::Online;
+    const int wantedView = online ? 1 : 0;
+    if (wantedView != s_play.onlineView) {
+        if (s_play.hostGroup != 0) svc_ui->elem_set_visible(mod_ctx, s_play.hostGroup, !online);
+        if (s_play.joinGroup != 0) svc_ui->elem_set_visible(mod_ctx, s_play.joinGroup, !online);
+        if (s_play.roomGroup != 0) svc_ui->elem_set_visible(mod_ctx, s_play.roomGroup, online);
+        s_play.onlineView = wantedView;
+        const UiElementHandle focus = online ? s_play.roomGroup : s_play.hostGroup;
+        if (focus != 0) svc_ui->elem_focus(mod_ctx, focus);
+    }
+
     std::string status;
     switch (net::status()) {
     case net::Status::Offline:
@@ -354,8 +475,25 @@ ModResult update_play(ModContext*, void*, ModError*) {
     }
     if (s_play.status != 0) svc_ui->elem_set_text(mod_ctx, s_play.status, status.c_str());
     if (s_play.code != 0) {
-        const std::string code = net::status() == net::Status::Online ? "Room code: " + net::room_code() : "Not in a room";
+        const std::string code = net::status() == net::Status::Online
+                                     ? "Room code: " + net::room_code()
+                                     : "Not in a room";
         svc_ui->elem_set_text(mod_ctx, s_play.code, code.c_str());
+    }
+    if (s_play.roomRole != 0) {
+        const char* role = net::is_host()
+                               ? "You are hosting. Set the rules, then start when everyone is ready."
+                               : "You joined this room. The host controls the rules and starts rounds.";
+        svc_ui->elem_set_text(mod_ctx, s_play.roomRole, role);
+    }
+    const bool roomHost = online && net::is_host();
+    if (s_play.hostControls != 0) {
+        svc_ui->elem_set_visible(mod_ctx, s_play.hostControls, roomHost);
+    }
+    if (s_play.startRound != 0) svc_ui->elem_set_visible(mod_ctx, s_play.startRound, roomHost);
+    if (s_play.endRound != 0) svc_ui->elem_set_visible(mod_ctx, s_play.endRound, roomHost);
+    if (s_play.joinWaiting != 0) {
+        svc_ui->elem_set_visible(mod_ctx, s_play.joinWaiting, online && !roomHost);
     }
     update_players();
     return MOD_OK;
@@ -370,9 +508,11 @@ ModResult build_help(ModContext*, UiWindowHandle, UiElementHandle left, UiElemen
         "screen, then have until the timer runs out to hit every prop with their sword.</p>"
         "<p>Props: <b>D-pad right</b> copies a carryable object you stand next to (or picks the next "
         "prop), <b>D-pad left</b> goes back, <b>D-pad down</b> taunts for a bonus point. A taunt reveals "
-        "your direction and position to every hunter for five seconds.</p>"
-        "<p>Hunters: swing with <b>B</b>. A swing that hits no prop costs a quarter heart. Follow the "
-        "direction, distance and world marker shown when a prop taunts.</p>",
+        "your direction and position to every hunter for five seconds. The host can also make props "
+        "taunt after staying still for a chosen time.</p>"
+        "<p>Hunters: swing with <b>B</b>. While swimming, B tags a nearby prop because Link cannot "
+        "draw his sword. A sword swing that hits no prop costs a quarter heart. Follow the direction, "
+        "distance and world marker shown when a prop taunts.</p>",
         nullptr);
     svc_ui->pane_add_section(mod_ctx, left, "Hide & Seek");
     svc_ui->pane_add_rml(mod_ctx, left,

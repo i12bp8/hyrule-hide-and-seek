@@ -25,14 +25,16 @@ on this computer**.
 
 ## 1. Loads and connects
 
-- [ ] Log shows `Hyrule Hide & Seek 0.1.5 ready`. No "hook ... did not resolve" warnings for
+- [ ] Log shows `Hyrule Hide & Seek 0.1.6 ready`. No "hook ... did not resolve" warnings for
       `daAlink_c::execute`, `daAlink_c::draw`, `daAlink_c::setCutType`,
       `daAlink_c::setDamagePoint`, `daAlink_c::checkNotBattleStage`, `fopAc_Execute`, or
       `dComIfGp_event_order`.
 - [ ] On the official Linux 2.0.2 build, log shows `using the HTTP relay fallback`; the mod is
       active rather than failing on a missing WebSocket service.
 - [ ] Hide & Seek tab opens the window with Play / Rules / How to play / Settings.
-- [ ] **Host a game** → toast with a code, code is on the clipboard, HUD shows `Room ABCDE` at the top.
+- [ ] Play cleanly separates **Host a game**, **Join a game**, and (once connected) **Current room**.
+- [ ] **Host a game** → **Create room and copy code** gives a toast, copies the code, and the HUD
+      shows `Room ABCDE` at the top.
 
 ## 2. Other players are drawn
 
@@ -74,7 +76,11 @@ Start round. With 4 players (you + 3 bots) there is one hunter; restart until yo
 - [ ] D-pad down taunts: a Link shout plays, the taunt bar fills, and the hunter gets a five-second
       direction/distance clue plus a marker at your position.
 - [ ] Automatic last-minute taunts start disabled. Enabling the host rule makes them occur; turning
-      it off leaves only manual D-pad down taunts.
+      it off leaves manual and stationary taunts only.
+- [ ] The stationary auto-taunt defaults to 60 seconds. Moving more than a small step resets its
+      timer; Off disables it, and a shorter setting fires at the selected delay.
+- [ ] Flat/translucent props (lily pad, seaweed, grasses and crop leaves) have no telltale round black
+      blob; large props' shadows stay proportionate rather than growing beyond the model.
 
 ## 5. A round as the hunter
 
@@ -82,9 +88,12 @@ Restart until you're the hunter (1 in 4).
 
 - [ ] Hide phase: black screen with a countdown, you can't walk away from the spawn.
 - [ ] The bots are props standing near you (pots, crates...). No name tags over them.
-- [ ] Eighteen extra scenery props are spread around the arena. They look like cover, have no name
-      tags or collision, and disappear again outside a Prop Hunt round.
+- [ ] Eighteen extra scenery props are distributed across the map instead of clustered around the
+      hunter spawn. They have no name tags or collision and disappear outside a Prop Hunt round.
 - [ ] Sword swing (B) hitting a bot prop: spark, "Found Bot N!", the counter at the top drops.
+- [ ] Walking into a real hider prop blocks Link instead of letting the hunter pass through it.
+- [ ] While swimming, get close to a prop and press B: the prop is found even though Link cannot use
+      his sword. B keeps its normal swimming behaviour, and distant props are not tagged.
 - [ ] Castle Town still allows drawing and swinging the sword during the hunt.
 - [ ] Swinging at nothing costs a quarter heart (never the last one). Hitting a real pot also costs one.
 - [ ] Hitting every prop ends the round: "HUNTERS WIN!", the scoreboard, then a new round.

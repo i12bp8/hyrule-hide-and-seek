@@ -86,6 +86,7 @@ static void host_room(int players) {
     match::on_welcome();
     match::Settings defaults;
     CHECK(!defaults.autoTaunt);
+    CHECK(defaults.idleTauntSecs == 60);
     match::Settings s;
     s.map = 0;
     s.hideSecs = 20;
@@ -168,6 +169,7 @@ static void test_protocol_roundtrip() {
     s.hunters = 2;
     s.missPenalty = false;
     s.autoTaunt = true;
+    s.idleTauntSecs = 90;
     s.isPublic = true;
     Writer sw(MSG_SETTINGS);
     s.write(sw);
@@ -178,6 +180,7 @@ static void test_protocol_roundtrip() {
     CHECK(t.mode == Mode::HideAndSeek && t.map == kRandomMap && t.hunters == 2);
     CHECK(t.hideSecs == 10 && t.seekSecs == 1800);
     CHECK(!t.missPenalty && t.isPublic && t.foundJoinHunters && t.autoTaunt && t.autoNext);
+    CHECK(t.idleTauntSecs == 90);
 }
 
 static void test_full_round_two_players() {
@@ -478,7 +481,17 @@ static void test_maps() {
     CHECK(map_count() >= 10);
     for (int m = 0; m < map_count(); ++m) {
         const MapInfo& map = map_info(m);
-        CHECK(map.decoyRadius > 0.0f);
+        CHECK(map.stage != nullptr && map.stage[0] != '\0');
+        CHECK(cover_point_count(m) == kCoverPointCount);
+        const CoverPoint first = cover_point(m, 0);
+        CHECK(std::isfinite(first.x) && std::isfinite(first.y) && std::isfinite(first.z));
+        bool spread = false;
+        for (int i = 1; i < cover_point_count(m); ++i) {
+            const CoverPoint p = cover_point(m, i);
+            CHECK(std::isfinite(p.x) && std::isfinite(p.y) && std::isfinite(p.z));
+            if (std::hypot(p.x - first.x, p.z - first.z) > 500.0f) spread = true;
+        }
+        CHECK(spread);
     }
     for (int i = 0; i < 200; ++i) {
         const int m = random_map(3);
@@ -495,10 +508,12 @@ static void test_props() {
         CHECK(prop.bmd != nullptr || prop.bmdIndex >= 0);
         CHECK(prop.radius > 0.0f && prop.height > 0.0f && prop.scale > 0.0f);
         CHECK(prop.mapMask != 0);
+        CHECK(prop.shadowScale >= 0.0f && prop.shadowScale <= 1.0f);
     }
     CHECK(std::strcmp(prop_info(15).name, "Sign") == 0);
     CHECK(std::strcmp(prop_info(20).name, "Gravestone") == 0);
     CHECK(std::strcmp(prop_info(58).name, "Map Table") == 0);
+    CHECK(prop_info(27).shadowScale == 0.0f);  // Lily Pad must not have a black ground blob
     CHECK(prop_for_carry_type(3) == 10);   // cannonball
     CHECK(prop_for_carry_type(6) == 11);   // Deku nut
     CHECK(prop_for_carry_type(10) == 12);  // big blue pot

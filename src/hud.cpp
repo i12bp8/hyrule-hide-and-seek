@@ -181,7 +181,7 @@ void draw_role(Painter& p, const Screen& s) {
     std::string hint;
     if (role == Role::Hunter) {
         line = "You are a HUNTER";
-        hint = m.settings.mode == Mode::PropHunt ? "Hit props with B - follow TAUNT clues"
+        hint = m.settings.mode == Mode::PropHunt ? "B: sword / nearby swim tag - follow TAUNT clues"
                                                  : "Touch hiders - follow TAUNT clues";
         if (!local::has_sword() && m.settings.mode == Mode::PropHunt) hint = "No sword! Play from the Hide & Seek save";
     } else if (role == Role::Hider && !match::player(me).found) {
