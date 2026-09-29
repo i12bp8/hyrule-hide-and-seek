@@ -8,6 +8,7 @@ namespace hs::game_mode {
 void init();
 void update();  // every frame
 bool active();
+bool sandboxed();  // playable arena, including the game-mode lobby
 void prepare_stage();  // refresh persistent world state immediately before a round warp
 
 }  // namespace hs::game_mode

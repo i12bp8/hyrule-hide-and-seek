@@ -1,6 +1,9 @@
 #include "game_mode.hpp"
 
 #include "common.hpp"
+#include "arena.hpp"
+#include "gameplay.hpp"
+#include "collision_cleanup.hpp"
 #include "local.hpp"
 #include "maps.hpp"
 #include "match.hpp"
@@ -9,10 +12,14 @@
 
 #include <mods/svc/game_mode.h>
 #include <mods/svc/hook.hpp>
+#include <atomic>
 
 #include "d/d_com_inf_game.h"
+#include "d/d_camera.h"
 #include "d/d_item_data.h"
 #include "d/d_save.h"
+#include "JSystem/JKernel/JKRAramStream.h"
+#include "JSystem/JKernel/JKRHeap.h"
 #include "f_op/f_op_actor_iter.h"
 #include "f_op/f_op_actor_mng.h"
 
@@ -21,7 +28,10 @@
 // Hook the actor wrapper rather than the global process executor. The latter also receives scenes,
 // cameras and menus, so treating every process as fopAc_ac_c corrupts memory on file-select exit.
 DEFINE_HOOK_SYMBOL("src/f_op/f_op_actor.cpp#fopAc_Execute", int(void*), HsActorExecute);
+DEFINE_HOOK_SYMBOL("src/f_op/f_op_actor.cpp#fopAc_Delete", int(void*), HsActorDelete);
 DEFINE_HOOK(&dComIfGp_event_order, HsEventOrder);
+DEFINE_HOOK(&dComIfGp_event_compulsory, HsCompulsoryEvent);
+DEFINE_HOOK(&JKRAramStream::writeToAram, HsStreamScratch);
 
 namespace hs::game_mode {
 
@@ -82,13 +92,27 @@ bool s_eventsLocked = false;
 bool s_warpPending = false;
 bool s_openWindow = false;
 uint64_t s_inWorldSince = 0;
+std::atomic<JKRHeap*> s_streamingRoot{nullptr};
+
+HookAction stream_scratch(ModContext*, void* args, void*, void*) {
+    auto* command = mods::arg<JKRAramStreamCommand*>(args, 0);
+    auto* root = s_streamingRoot.load();
+    // The system heap has only 64 KB left after ZeldaHeap is created. Large arenas can exhaust
+    // it with simultaneous DVD metadata, decompression and an 8 KB ARAM scratch buffer. Commands
+    // free their own scratch allocation, so use the persistent root heap. This hook runs on the
+    // ARAM worker; the atomic avoids reading live match state there. Preserve custom buffers/heaps.
+    if (root != nullptr && command->mTransferBuffer == nullptr && command->mHeap == JKRHeap::getSystemHeap()) {
+        command->mHeap = root;
+    }
+    return HOOK_CONTINUE;
+}
 
 bool sandbox_requested() {
     // A game mode is selected before file/name select and the title-screen attract scene. Do not
     // touch actors until its actual save is loaded, or mandatory title actors get mistaken for the
     // playable world.
     return (s_active && s_saveLoaded) ||
-           (net::status() == net::Status::Online && match::in_round());
+           (net::status() == net::Status::Online && match::get().phase != Phase::Lobby);
 }
 
 bool is_play_map(const char* stage) {
@@ -101,7 +125,7 @@ bool is_play_map(const char* stage) {
 
 bool should_sandbox_current_stage() {
     if (s_active && s_saveLoaded) return is_play_map(local::stage());
-    if (net::status() != net::Status::Online || !match::in_round()) return false;
+    if (net::status() != net::Status::Online || match::get().phase == Phase::Lobby) return false;
     return std::strncmp(local::stage(), map_info(match::get().map).stage, 8) == 0;
 }
 
@@ -158,8 +182,33 @@ HookAction on_actor_execute_pre(ModContext*, void* args, void* retval, void*) {
     return HOOK_SKIP_ORIGINAL;
 }
 
+HookAction on_actor_delete_pre(ModContext*, void* args, void*, void*) {
+    if (!sandbox_requested() && net::status() != net::Status::Online) return HOOK_CONTINUE;
+    auto* actor = mods::arg<fopAc_ac_c*>(args, 0);
+    if (actor == nullptr || actor->profile == nullptr) return HOOK_CONTINUE;
+    const auto bytes = actor->profile->process_size;
+    auto* collision = dComIfG_Ccsp();
+    clear_actor_collision(collision->mpObj, collision->mObjCount, actor, bytes);
+    clear_actor_collision(collision->mpObjAt, collision->mObjAtCount, actor, bytes);
+    clear_actor_collision(collision->mpObjTg, collision->mObjTgCount, actor, bytes);
+    clear_actor_collision(collision->mpObjCo, collision->mObjCoCount, actor, bytes);
+    const auto start = reinterpret_cast<uintptr_t>(actor);
+    const auto purgeMass = [&](auto& entries, s32& count) {
+        s32 kept = 0;
+        for (s32 i = 0; i < count; ++i) {
+            const auto pointer = reinterpret_cast<uintptr_t>(entries[i].GetObj());
+            if (pointer != 0 && !(pointer >= start && pointer - start < bytes)) entries[kept++] = entries[i];
+        }
+        for (s32 i = kept; i < count; ++i) entries[i].Clear();
+        count = kept;
+    };
+    purgeMass(collision->mMass_Mng.mMassObjs, collision->mMass_Mng.mMassObjCount);
+    purgeMass(collision->mMass_Mng.mMassAreas, collision->mMass_Mng.mMassAreaCount);
+    return HOOK_CONTINUE;
+}
+
 HookAction on_event_order_pre(ModContext*, void*, void* retval, void*) {
-    if (!s_eventsLocked) return HOOK_CONTINUE;
+    if (!sandboxed()) return HOOK_CONTINUE;
     // Hide & Seek never needs a story, conversation, item-get or encounter event. Rejecting the
     // order before it starts avoids a one-frame boss intro and also makes NPCs/chests inert.
     if (retval != nullptr) *static_cast<int*>(retval) = 0;
@@ -209,7 +258,7 @@ void prepare_world() {
     dComIfGs_setCollectClothes(KOKIRI_CLOTHES_FLAG);
     dComIfGs_setSelectEquipClothes(dItemNo_WEAR_KOKIRI_e);
     dComIfGs_onItemFirstBit(dItemNo_WEAR_KOKIRI_e);
-    if (dComIfGs_getMaxLife() < 30) dComIfGs_setMaxLife(30);  // six hearts (five pieces each)
+    dComIfGs_setMaxLife(kArenaHeartPieces);
     dComIfGs_setLife(static_cast<u16>(dComIfGs_getMaxLifeGauge()));
 }
 
@@ -251,11 +300,20 @@ ModResult on_save_loaded(void*, ModError*) {
 }  // namespace
 
 void init() {
+    if (mods::hook::add_pre<HsStreamScratch>(stream_scratch) != MOD_OK) {
+        mods::log::warn("arena streaming scratch hook unavailable");
+    }
+    if (mods::hook::add_pre<HsActorDelete>(on_actor_delete_pre) != MOD_OK) {
+        mods::log::warn("actor collision cleanup hook unavailable");
+    }
     if (mods::hook::add_pre<HsActorExecute>(on_actor_execute_pre) != MOD_OK) {
         mods::log::warn("enemy execution hook unavailable; using frame cleanup only");
     }
     if (mods::hook::add_pre<HsEventOrder>(on_event_order_pre) != MOD_OK) {
         mods::log::warn("event-order hook unavailable; completed save flags remain active");
+    }
+    if (mods::hook::add_pre<HsCompulsoryEvent>(on_event_order_pre) != MOD_OK) {
+        mods::log::warn("compulsory-event hook unavailable");
     }
     if (svc_game_mode == nullptr) {
         mods::log::info("no game mode service: Hide & Seek works from any save");
@@ -277,6 +335,7 @@ void init() {
 
 void update() {
     s_worldSandbox = false;
+    s_streamingRoot.store(sandbox_requested() ? JKRHeap::getRootHeap() : nullptr);
     if (!sandbox_requested()) {
         s_eventsLocked = false;
         s_inWorldSince = 0;
@@ -291,14 +350,20 @@ void update() {
     const uint64_t now = now_ms();
     if (s_inWorldSince == 0) s_inWorldSince = now;
     s_worldSandbox = should_sandbox_current_stage();
-    s_eventsLocked = s_worldSandbox && now - s_inWorldSince >= kSettleMs;
+    s_eventsLocked = s_worldSandbox;
 
     if (s_worldSandbox) {
         // Run before the game's actor pass. Existing hostiles are deleted by its deletion pass,
         // while the execute hook catches anything created later in this same frame.
         fopAcIt_Executor(remove_hostile, nullptr);
         dComIfGp_setOxygen(dComIfGp_getMaxOxygen());
-        if (s_eventsLocked && dComIfGp_event_runCheck()) dComIfGp_event_reset();
+        if (s_eventsLocked && dComIfGp_event_runCheck()) {
+            dComIfGp_event_reset();
+            if (auto* camera = dCam_getBody()) {
+                camera->Start();
+                camera->SetTrimSize(0);
+            }
+        }
     }
 
     if (!s_active) return;
@@ -315,7 +380,7 @@ void update() {
         s_warpPending = false;
         const MapInfo& lobby = map_info(kLobbyMap);
         if (!match::in_round() && std::strncmp(local::stage(), lobby.stage, 8) != 0) {
-            dComIfGp_setNextStage(lobby.stage, lobby.point, lobby.room, -1);
+            arena::warp(lobby);
             s_inWorldSince = 0;
             return;
         }
@@ -328,6 +393,10 @@ void update() {
 
 bool active() {
     return s_active;
+}
+
+bool sandboxed() {
+    return sandbox_requested() && should_sandbox_current_stage();
 }
 
 void prepare_stage() {

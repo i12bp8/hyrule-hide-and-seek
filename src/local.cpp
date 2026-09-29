@@ -1,7 +1,9 @@
 #include "local.hpp"
 
 #include "common.hpp"
+#include "arena.hpp"
 #include "game_mode.hpp"
+#include "gameplay.hpp"
 #include "hud.hpp"
 #include "linkkit.hpp"
 #include "maps.hpp"
@@ -36,11 +38,7 @@ namespace hs::local {
 
 namespace {
 
-constexpr uint64_t kTauntCooldownMs = 5000;
 constexpr uint64_t kDecoyCooldownMs = 750;
-constexpr uint64_t kAutoTauntEveryMs = 20000;
-constexpr uint32_t kAutoTauntLastMs = 60000;
-constexpr uint64_t kTauntRevealMs = 5000;
 constexpr uint64_t kSwingWindowMs = 650;
 constexpr uint64_t kSettleMs = 1500;
 constexpr uint64_t kWarpRetryMs = 12000;
@@ -97,6 +95,12 @@ uint64_t s_swingAt = 0;
 u8 s_lastCutType = 0;
 uint64_t s_lastSwordCheck = 0;
 uint64_t s_lastColorCheck = 0;
+uint64_t s_lastTracking = 0;
+bool s_haveTracking = false;
+cXyz s_trackingPosition{0.0f, 0.0f, 0.0f};
+bool s_roundHealth = false;
+u8 s_previousMaxLife = 0;
+u16 s_previousLife = 0;
 
 std::mt19937 s_rng{std::random_device{}()};
 
@@ -271,7 +275,7 @@ void follow_round(daAlink_c* l) {
     if (s_warpPending && l != nullptr && (!busy || now - s_warpedAt > kWarpRetryMs)) {
         mods::log::info("warping to {} ({} room {} point {})", map.name, map.stage, map.room, map.point);
         game_mode::prepare_stage();
-        dComIfGp_setNextStage(map.stage, map.point, map.room, -1);
+        arena::warp(map);
         s_warpPending = false;
         s_warpedAt = now;
         s_arrivedAt = 0;
@@ -292,6 +296,9 @@ void follow_round(daAlink_c* l) {
 }
 
 void on_phase_change(Phase from, Phase to) {
+    s_swinging = false;
+    s_swingHit = false;
+    s_lastCutType = 0;
     if (to != Phase::Seek) {
         for (TauntPing& ping : s_tauntPings) ping = TauntPing{};
         s_idleTracking = false;
@@ -304,11 +311,15 @@ void on_phase_change(Phase from, Phase to) {
         s_lastDecoy = 0;
     }
     if (to == Phase::Hide) {
-        // Everyone starts the round with full hearts.
-        dComIfGs_setLife(static_cast<u16>(dComIfGs_getMaxLifeGauge()));
+        if (s_roundHealth) dComIfGs_setLife(kArenaLife);
         // A late join can first learn about a round after Gather has already ended.
         if (from != Phase::Gather && playing_prop_hunt()) s_prop = random_prop(match::get().map);
         s_lastAutoTaunt = now_ms();
+    }
+    if (to == Phase::Seek) {
+        s_lastAutoTaunt = s_lastTaunt = now_ms();
+        s_lastTracking = 0;
+        s_haveTracking = false;
     }
     (void)from;
 }
@@ -337,14 +348,34 @@ void hunter_controls(daAlink_c* l) {
     if (s_swinging && now - s_swingAt > kSwingWindowMs) {
         s_swinging = false;
         if (!s_swingHit && m.settings.missPenalty && playing_prop_hunt() && m.phase == Phase::Seek) {
-            // Twilight Princess stores life in quarter hearts. Charge a full heart when possible,
-            // but always leave the hunter's final quarter so the round cannot kill them.
+            // Current life is measured in quarters. Keep the final quarter to avoid a game over.
             const u16 life = dComIfGs_getLife();
-            if (life > 1) dComIfGs_setLife(static_cast<u16>(life > 4 ? life - 4 : 1));
+            dComIfGs_setLife(life_after_miss(life));
             play_at(Z2SE_SY_CURSOR_CANCEL, &l->current.pos);
         }
     }
     if (m.phase != Phase::Seek) return;
+    if (m.settings.trackingPulse && mDoCPd_c::getTrigDown(PAD_1) &&
+        (s_lastTracking == 0 || now - s_lastTracking >= kTrackingCooldownMs)) {
+        float nearest = -1.0f;
+        for (int id = 1; id <= kMaxPlayers; ++id) {
+            const auto& p = match::player(id);
+            if (!p.present || p.role != Role::Hider || p.found || !p.hasState ||
+                !(p.state.flags & STATE_IN_WORLD) || now - p.stateAt > 2000 ||
+                std::strncmp(p.state.stage, stage(), 8) != 0) continue;
+            const cXyz at(p.state.x, p.state.y, p.state.z);
+            const float distance = (at - l->current.pos).abs();
+            if (nearest < 0.0f || distance < nearest) {
+                nearest = distance;
+                s_trackingPosition = at;
+            }
+        }
+        if (nearest >= 0.0f) {
+            s_lastTracking = now;
+            s_haveTracking = true;
+            play_at(Z2SE_SY_HINT_BUTTON_BLINK, nullptr);
+        } else play_at(Z2SE_SY_CURSOR_CANCEL, nullptr);
+    }
     if (playing_prop_hunt()) {
         // Link cannot draw a sword while swimming. In that one state B becomes a short-range tag,
         // using the same authoritative distance check as sword hits. It is deliberately not
@@ -418,10 +449,11 @@ void hider_controls(daAlink_c* l) {
     if (mDoCPd_c::getTrigDown(PAD_1) && now - s_lastTaunt > kTauntCooldownMs) {
         taunt(static_cast<uint8_t>(std::uniform_int_distribution<int>(0, kTauntCount - 1)(s_rng)));
     }
-    if (m.settings.autoTaunt && match::ms_left() < kAutoTauntLastMs && now - s_lastAutoTaunt > kAutoTauntEveryMs) {
+    if (m.settings.autoTaunt && now - s_lastAutoTaunt >= clue_interval_ms(m.map, match::ms_left()) &&
+        now - s_lastTaunt >= kTauntCooldownMs) {
         taunt(static_cast<uint8_t>(std::uniform_int_distribution<int>(0, kTauntCount - 1)(s_rng)));
     }
-    if (!s_disguised || m.settings.idleTauntSecs == 0) {
+    if (m.settings.idleTauntSecs == 0) {
         s_idleTracking = false;
         return;
     }
@@ -468,6 +500,11 @@ bool init() {
 void shutdown() {
     s_disguised = false;
     s_frozen = false;
+    if (s_roundHealth && !game_mode::active()) {
+        dComIfGs_setMaxLife(s_previousMaxLife);
+        dComIfGs_setLife(s_previousLife);
+    }
+    s_roundHealth = false;
 }
 
 void update() {
@@ -480,6 +517,22 @@ void update() {
     const match::Match& m = match::get();
     const Role role = match::my_role();
     const uint64_t now = now_ms();
+
+    // Normal story saves borrow the arena's five-heart capacity for the round, then get their
+    // original capacity/life back on leaving. The dedicated game mode always uses five hearts.
+    if (online && s_inWorld && match::in_round() && !s_roundHealth) {
+        s_previousMaxLife = static_cast<u8>(dComIfGs_getMaxLife());
+        s_previousLife = dComIfGs_getLife();
+        s_roundHealth = true;
+        dComIfGs_setMaxLife(kArenaHeartPieces);
+        dComIfGs_setLife(kArenaLife);
+    } else if (s_roundHealth && (!online || m.phase == Phase::Lobby)) {
+        if (!game_mode::active()) {
+            dComIfGs_setMaxLife(s_previousMaxLife);
+            dComIfGs_setLife(s_previousLife);
+        }
+        s_roundHealth = false;
+    }
 
     if (m.phase != s_lastPhase) {
         on_phase_change(s_lastPhase, m.phase);
@@ -562,6 +615,18 @@ float taunt_cooldown() {
 
 bool has_sword() {
     return dComIfGs_getSelectEquipSword() != dItemNo_NONE_e;
+}
+
+uint32_t tracking_cooldown_secs() {
+    if (s_lastTracking == 0 || now_ms() - s_lastTracking >= kTrackingCooldownMs) return 0;
+    return static_cast<uint32_t>((kTrackingCooldownMs - (now_ms() - s_lastTracking) + 999) / 1000);
+}
+
+bool tracking_clue(cXyz& position) {
+    if (!s_haveTracking || match::my_role() != Role::Hunter || match::get().phase != Phase::Seek ||
+        !match::get().settings.trackingPulse || now_ms() - s_lastTracking >= kTrackingRevealMs) return false;
+    position = s_trackingPosition;
+    return true;
 }
 
 float taunt_ping(int id, cXyz& position) {

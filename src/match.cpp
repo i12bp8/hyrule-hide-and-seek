@@ -473,7 +473,8 @@ void Settings::write(Writer& w) const {
     w.u16(seekSecs);
     w.u8(hunters);
     w.u8(static_cast<uint8_t>((foundJoinHunters ? 1 : 0) | (missPenalty ? 2 : 0) |
-                              (autoTaunt ? 4 : 0) | (autoNext ? 8 : 0) | (isPublic ? 16 : 0)));
+                              (autoTaunt ? 4 : 0) | (autoNext ? 8 : 0) | (isPublic ? 16 : 0) |
+                              (trackingPulse ? 32 : 0)));
     w.u16(idleTauntSecs);
     w.u8(freeDecoys);
 }
@@ -492,6 +493,7 @@ void Settings::read(Reader& r) {
     autoTaunt = f & 4;
     autoNext = f & 8;
     isPublic = f & 16;
+    trackingPulse = f & 32;
     idleTauntSecs = std::clamp<uint16_t>(r.u16(), 0, 600);
     freeDecoys = std::clamp<uint8_t>(r.u8(), 0, 10);
 }
@@ -607,8 +609,10 @@ void start_round() {
         if (P(id).present) ids.push_back(id);
     }
     const int n = static_cast<int>(ids.size());
+    s_match.map = s_match.settings.map == kRandomMap ? static_cast<uint8_t>(random_map(s_match.map, n))
+                                                     : s_match.settings.map;
     int hunters = s_match.settings.hunters != 0 ? s_match.settings.hunters
-                                                : static_cast<int>(std::lround(n / 4.0));
+                                                : recommended_hunters(n, s_match.map);
     hunters = std::clamp(hunters, 1, n - 1);
 
     // Fewest turns as hunter first, ties broken at random.
@@ -628,8 +632,6 @@ void start_round() {
     }
 
     s_match.round += 1;
-    s_match.map = s_match.settings.map == kRandomMap ? static_cast<uint8_t>(random_map(s_match.map))
-                                                     : s_match.settings.map;
     s_match.winner = -1;
     s_seekStartedAt = 0;
     s_nextDecoyId = 1;

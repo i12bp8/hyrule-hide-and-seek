@@ -11,8 +11,8 @@
 
 namespace hs {
 
-// v5 keeps every player's full decoy allowance active instead of applying an eight-decoy room cap.
-constexpr int kProtocolVersion = 5;
+// v6 adds the tracking-pulse rule and regular automatic clues, with quarter-heart miss penalties.
+constexpr int kProtocolVersion = 6;
 
 enum MsgType : uint8_t {
     MSG_STATE = 1,     // everyone -> everyone, 10 Hz

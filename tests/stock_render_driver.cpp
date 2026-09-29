@@ -1,6 +1,11 @@
 // Run only in an isolated --user-dir on stock Dusklight, with --stage F_SP103,0,13,-1.
 // This drives the real actors/render lists, not a mock GPU. Stock Linux needs an HTTPS relay.
 #include "common.hpp"
+#include "arena.hpp"
+#include "gameplay.hpp"
+#include "game_mode.hpp"
+#include "linkkit.hpp"
+#include "maps.hpp"
 #include "local.hpp"
 #include "match.hpp"
 #include "net.hpp"
@@ -11,6 +16,11 @@
 #include "JSystem/J3DGraphBase/J3DDrawBuffer.h"
 #include "JSystem/J3DGraphBase/J3DPacket.h"
 #include "d/d_com_inf_game.h"
+#include "d/d_camera.h"
+#include "d/actor/d_a_alink.h"
+#include "d/actor/d_a_scene_exit.h"
+#include "f_op/f_op_actor_iter.h"
+#include "JSystem/J3DGraphAnimator/J3DAnimation.h"
 #include "f_op/f_op_actor.h"
 #include "SSystem/SComponent/c_math.h"
 
@@ -32,6 +42,41 @@ int s_kind = -1;
 int s_checks = 0;
 bool s_left = false;
 const bool s_hunterOnly = std::getenv("HS_STOCK_HUNTER_TEST") != nullptr;
+const bool s_arenaTest = std::getenv("HS_ARENA_TEST") != nullptr;
+
+void require(bool condition, const char* message) {
+    if (condition) return;
+    mods::log::error("STOCK_RENDER_TEST FAIL: {}", message);
+    std::fflush(nullptr);
+    std::_Exit(2);
+}
+
+void check_animations() {
+    static bool checked = false;
+    if (checked) return;
+    checked = true;
+    require(linkkit::ready(), "Link resources unavailable");
+    for (const auto idx : {linkkit::kIdleAnim, linkkit::kWalkAnim, uint16_t(0x7F)}) {
+        auto* animation = linkkit::anim(idx);
+        require(animation != nullptr && animation->getKind() == 8, "valid BCK rejected (T-pose regression)");
+        require(animation->getFrameMax() > 1, "animation has no frames");
+        J3DAnmTransformKey first = *static_cast<J3DAnmTransformKey*>(animation);
+        J3DAnmTransformKey second = first;
+        first.setFrame(0);
+        second.setFrame(animation->getFrameMax() * 0.25f);
+        int changed = 0;
+        for (int joint = 0; joint < 24; ++joint) {
+            J3DTransformInfo a, b;
+            first.getTransform(joint, &a);
+            second.getTransform(joint, &b);
+            require(std::isfinite(a.mTranslate.x) && std::isfinite(b.mScale.x), "invalid animation transform");
+            changed += a.mRotation.x != b.mRotation.x || a.mRotation.y != b.mRotation.y ||
+                       a.mRotation.z != b.mRotation.z;
+        }
+        require(changed > 0, "animation is a static bind pose");
+    }
+    mods::log::info("STOCK_RENDER_TEST: idle/walk/sword BCKs animate; frame copies independent");
+}
 
 HookAction check_packets(ModContext*, void* args, void*, void*) {
     const auto* buffer = mods::arg<const J3DDrawBuffer*>(args, 0);
@@ -65,6 +110,114 @@ HookAction check_shapes(ModContext*, void* args, void*, void*) {
 
 void apply(uint8_t from, const Writer& w) {
     match::on_message(from, w.bytes().data(), w.bytes().size());
+}
+
+int s_arenaMap = -1;
+uint64_t s_arenaLoaded = 0;
+bool s_exitMoved = false;
+bool s_exitChecked = false;
+cXyz s_exitFrom{0.0f, 0.0f, 0.0f};
+cXyz s_exitTo{0.0f, 0.0f, 0.0f};
+
+int find_exit(void* raw, void*) {
+    auto* actor = static_cast<fopAc_ac_c*>(raw);
+    if (s_exitMoved || fopAcM_GetName(actor) != fpcNm_SCENE_EXIT_e) return 1;
+    auto* player = daAlink_getAlinkActorClass();
+    // Test the actual execute hook by making Link's previous position just outside an authored
+    // exit volume and moving him to its centre immediately before the simulation actor pass.
+    const float x = actor->scale.x + 80.0f;
+    s_exitFrom = actor->current.pos + cXyz(cM_scos(actor->shape_angle.y) * x, 0,
+                                         -cM_ssin(actor->shape_angle.y) * x);
+    s_exitTo = actor->current.pos;
+    player->current.pos = player->old.pos = player->field_0x3798 = s_exitFrom;
+    s_exitMoved = true;
+    return 1;
+}
+
+// Runs after arena's pre-hook captured the start position and before Link executes. The post-hook
+// must stop this forced movement at the authored exit instead of loading/respawning the stage.
+DEFINE_HOOK(&daAlink_c::execute, TestExitMotion);
+HookAction move_toward_exit(ModContext*, void* args, void*, void*) {
+    if (s_arenaTest && s_exitMoved && !s_exitChecked) {
+        auto* player = mods::arg<daAlink_c*>(args, 0);
+        player->current.pos = s_exitTo;
+    }
+    return HOOK_CONTINUE;
+}
+
+void arena_test_update(uint64_t now) {
+    if (net::status() == net::Status::Offline) {
+        net::host_room(settings::server(), "Arena regression");
+        return;
+    }
+    if (net::status() != net::Status::Online || !local::in_world()) return;
+    if (s_arenaMap == -1) {
+        match::on_joined(2);
+        require(mods::hook::add_pre<TestExitMotion>(move_toward_exit) == MOD_OK, "test motion hook unavailable");
+    }
+    if (s_arenaMap == -1 || s_arenaLoaded == UINT64_MAX) {
+        ++s_arenaMap;
+        if (s_arenaMap == map_count()) {
+            mods::log::info("STOCK_RENDER_TEST PASS: all 15 maps, camera, exits, five hearts, animation; {} draw checks", s_checks);
+            std::fflush(nullptr);
+            std::_Exit(0);
+        }
+        match::end_round();
+        match::Settings rules;
+        rules.map = s_arenaMap;
+        rules.hideSecs = 10;
+        rules.seekSecs = 120;
+        rules.autoNext = false;
+        match::set_settings(rules);
+        match::start_round();
+        s_arenaLoaded = 0;
+        s_exitMoved = s_exitChecked = false;
+        return;
+    }
+    if (dComIfGp_isEnableNextStage() || std::strncmp(local::stage(), map_info(s_arenaMap).stage, 8) != 0) {
+        s_arenaLoaded = 0;
+        return;
+    }
+    if (s_arenaLoaded == 0) s_arenaLoaded = now;
+    auto* player = daAlink_getAlinkActorClass();
+    PlayerState remote;
+    remote.flags = STATE_IN_WORLD | STATE_SWORD;
+    copy_str(remote.stage, local::stage());
+    remote.room = fopAcM_GetRoomNo(player);
+    remote.x = player->current.pos.x + cM_ssin(player->shape_angle.y) * 350.0f;
+    remote.y = player->current.pos.y;
+    remote.z = player->current.pos.z + cM_scos(player->shape_angle.y) * 350.0f;
+    remote.under[0] = {linkkit::kWalkAnim, static_cast<float>((now / 33) % 20), 255};
+    remote.upper[0] = {0x7F, static_cast<float>((now / 33) % 20), 255};
+    Writer state(MSG_STATE); remote.write(state); apply(2, state);
+    Writer ready(MSG_READY); ready.u32(match::get().round); apply(2, ready);
+    if (now - s_arenaLoaded < 4000) return;
+    if (match::get().phase != Phase::Seek) {
+        Writer phase(MSG_PHASE);
+        phase.u32(match::get().round); phase.u8(static_cast<uint8_t>(Phase::Seek)); phase.u32(120000);
+        apply(net::self_id(), phase);
+        return;
+    }
+    require(!dComIfGp_event_runCheck(), "scripted event started in arena");
+    auto* camera = dCam_getBody();
+    require(camera != nullptr && camera->mCurType == camera->GetCameraTypeFromCameraName("FieldS"), "arena camera is not free FieldS camera");
+    require(dComIfGs_getMaxLife() == kArenaHeartPieces && dComIfGs_getLife() <= kArenaLife, "arena exceeds five hearts");
+    const int originalType = camera->mCurType;
+    camera->SetTagData(player, 0, 0, 0);
+    require(camera->nextType(originalType) == originalType, "camera tag overrode free camera");
+    require(dStage_changeScene(0, 0.0f, 0, fopAcM_GetRoomNo(player), 0, -1) == 0, "stage exit was allowed");
+    dComIfGp_setNextStage("F_SP103", 13, 0, -1);
+    require(!dComIfGp_isEnableNextStage(), "unexpected map loading started");
+    require(!dComIfGp_event_compulsory(player, nullptr, -1), "compulsory cutscene was allowed");
+    if (!s_exitMoved) {
+        fopAcIt_Executor(find_exit, nullptr);
+        if (s_exitMoved) return;
+    } else if (!s_exitChecked) {
+        require((player->current.pos - s_exitTo).abs() > 35.0f, "exit collision allowed crossing into loading zone");
+        s_exitChecked = true;
+    }
+    mods::log::info("STOCK_RENDER_TEST: {} camera/events/exits/health PASS (volume collision {})", map_info(s_arenaMap).name, s_exitChecked ? "checked" : "no actor exit in loaded rooms");
+    s_arenaLoaded = UINT64_MAX;
 }
 
 void roster() {
@@ -107,11 +260,16 @@ void stock_render_update() {
         if (mods::hook::add_pre<DrawHead>(check_packets) != MOD_OK) std::exit(2);
         if (mods::hook::add_pre<MatDraw>(check_shapes) != MOD_OK) std::exit(2);
     }
-    if (now - s_start > 240000) {
+    if (now - s_start > (s_arenaTest ? 600000u : 240000u)) {
         mods::log::error("STOCK_RENDER_TEST FAIL: timed out");
         std::exit(2);
     }
     if (!local::in_world() || dComIfGp_isEnableNextStage()) return;
+    check_animations();
+    if (s_arenaTest) {
+        arena_test_update(now);
+        return;
+    }
     if (net::status() == net::Status::Offline && !s_left) {
         net::host_room(settings::server(), "Stock render test");
         return;

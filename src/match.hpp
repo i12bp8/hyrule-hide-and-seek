@@ -21,13 +21,14 @@ constexpr int kExtraDecoyCost = 3;
 struct Settings {
     Mode mode = Mode::PropHunt;
     uint8_t map = kRandomMap;
-    uint16_t hideSecs = 45;
-    uint16_t seekSecs = 240;
-    uint8_t hunters = 0;  // 0 = one per four players
+    uint16_t hideSecs = 30;
+    uint16_t seekSecs = 180;
+    uint8_t hunters = 0;  // 0 = map-aware, one per three/four players
     bool foundJoinHunters = true;
     bool missPenalty = true;
-    bool autoTaunt = false;
-    uint16_t idleTauntSecs = 60;  // 0 disables stationary-prop auto-taunts
+    bool autoTaunt = true;
+    bool trackingPulse = true;
+    uint16_t idleTauntSecs = 20;  // 0 disables stationary-hider auto-taunts
     bool autoNext = true;
     bool isPublic = false;
     uint8_t freeDecoys = 5;  // free placements per hider, available from the Hide phase

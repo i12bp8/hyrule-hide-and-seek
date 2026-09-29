@@ -123,7 +123,7 @@ void draw_blindfold(Painter& p, const Screen& s) {
     p.centered("You're a HUNTER. When the timer ends, find them and hit them with your sword.", cx,
         cy + 50.0f, 16.0f, rgba(200, 200, 200));
     if (match::get().settings.mode == Mode::PropHunt) {
-        p.centered("Props can be objects or furniture. Swinging at nothing costs one heart.",
+        p.centered("Props can be objects or furniture. A missed swing costs a quarter heart.",
             cx, cy + 74.0f, 14.0f, rgba(170, 170, 170));
     }
 }
@@ -184,6 +184,10 @@ void draw_role(Painter& p, const Screen& s) {
         hint = m.settings.mode == Mode::PropHunt ? "B: sword / nearby swim tag - follow TAUNT clues"
                                                  : "Touch hiders - follow TAUNT clues";
         if (!local::has_sword() && m.settings.mode == Mode::PropHunt) hint = "No sword! Play from the Hide & Seek save";
+        if (m.phase == Phase::Seek && m.settings.trackingPulse) {
+            const auto cooldown = local::tracking_cooldown_secs();
+            hint += cooldown == 0 ? "   v tracking READY" : "   v tracking " + std::to_string(cooldown) + "s";
+        }
     } else if (role == Role::Hider && !match::player(me).found) {
         if (local::disguised()) {
             const match::Player& mePlayer = match::player(me);
@@ -293,6 +297,21 @@ void draw_taunt_pings(Painter& p, const Screen& s) {
     if (match::my_role() != Role::Hunter || match::get().phase != Phase::Seek) return;
     const view_class* view = dComIfGd_getView();
     if (view == nullptr) return;
+    cXyz tracking;
+    if (local::tracking_clue(tracking)) {
+        Vec camera;
+        mDoLib_pos2camera(&tracking, &camera);
+        const float side = -camera.z * 0.35f;
+        const char* direction = camera.z > -1.0f ? "BEHIND" : camera.x > side ? "RIGHT" :
+                                camera.x < -side ? "LEFT" : "AHEAD";
+        const float distance = (tracking - view->lookat.eye).abs();
+        const char* range = distance < 1200.0f ? "NEAR" : distance < 3500.0f ? "WARM" : "DISTANT";
+        const std::string clue = std::string("TRACKING: ") + direction + " - " + range;
+        const f32 cx = s.x + s.w * 0.5f, y = s.y + 139.0f;
+        const f32 width = p.width(clue, 18.0f) + 24.0f;
+        p.box(cx - width * 0.5f, y - 3.0f, cx + width * 0.5f, y + 21.0f, rgba(0, 0, 0, 160));
+        p.centered(clue, cx, y, 18.0f, rgba(120, 230, 255));
+    }
 
     struct Ping {
         int id;
@@ -333,7 +352,7 @@ void draw_taunt_pings(Painter& p, const Screen& s) {
         p.centered(clue, cx, y, 18.0f, rgba(255, 205, 65, alpha));
     }
 
-    // Projected markers are intentionally visible through scenery for five seconds. A hider gets
+    // Projected markers are intentionally visible through scenery for three seconds. A hider gets
     // a point for taking this risk, and hunters get a clue that remains useful across large maps.
     for (const Ping& ping : pings) {
         if (ping.camera.z > -1.0f) continue;

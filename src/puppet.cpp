@@ -157,7 +157,7 @@ bool same_stage_as_me(const PlayerState& s) {
 
 class Puppet : public fopAc_ac_c {
 public:
-    Puppet() : mLinkCalc(1, &mLinkAnim) {}
+    Puppet() : mLowerCalc(3, mLowerPack), mUpperCalc(3, mUpperPack) {}
 
     int create();
     int execute();
@@ -199,8 +199,14 @@ private:
     J3DModel* mSword = nullptr;
     J3DModel* mSheath = nullptr;
     J3DModel* mShield = nullptr;
-    mDoExt_AnmRatioPack mLinkAnim;
-    mDoExt_MtxCalcAnmBlendTbl mLinkCalc;
+    mDoExt_AnmRatioPack mLowerPack[3];
+    mDoExt_AnmRatioPack mUpperPack[3];
+    mDoExt_MtxCalcAnmBlendTbl mLowerCalc;
+    mDoExt_MtxCalcAnmBlendTbl mUpperCalc;
+    // Shallow animation copies share immutable key data, but each slot owns its frame. Otherwise
+    // upper/lower blends and players using the same cached BCK overwrite one another's time.
+    J3DAnmTransformKey mLowerPose[3];
+    J3DAnmTransformKey mUpperPose[3];
     J3DMtxCalcNoAnm<J3DMtxCalcCalcTransformMaya, J3DMtxCalcJ3DSysInitMaya> mBindCalc;
     J3DAnmTransform* mPoseAnim = nullptr;
     float mPoseFrame = 0.0f;
@@ -295,17 +301,20 @@ void Puppet::freeLink() {
     // Models were allocated in mHeap; freeing the heap's contents releases them all.
     if (mHeap != nullptr) mHeap->freeAll();
     mBody = mHead = mFace = mHands = mSword = mSheath = mShield = nullptr;
-    mLinkAnim.setAnmTransform(nullptr);
-    mLinkAnim.setRatio(0.0f);
+    for (auto* packs : {mLowerPack, mUpperPack}) {
+        for (int i = 0; i < 3; ++i) {
+            packs[i].setAnmTransform(nullptr);
+            packs[i].setRatio(0.0f);
+        }
+    }
     mPoseAnim = nullptr;
     mPoseFrame = 0.0f;
     mColor = 0xFF;
 }
 
 bool Puppet::poseLink(const PlayerState& s, bool moving) {
-    // For multiplayer readability, use one known complete animation for the whole skeleton: idle
-    // while still, walk while moving. Animation loading is optional: the bind pose is much better
-    // than hiding an entire hunter while an archive is unavailable.
+    // A complete fallback also animates bots and peers whose current animation is from a demo
+    // archive. Real peers supply the native three-slot upper/lower blends, including sword swings.
     J3DAnmTransform* wanted = linkkit::anim(moving ? linkkit::kWalkAnim : linkkit::kIdleAnim);
     if (wanted == nullptr && mPoseAnim == nullptr) wanted = linkkit::anim(linkkit::kIdleAnim);
     if (wanted != nullptr && wanted != mPoseAnim) {
@@ -318,12 +327,32 @@ bool Puppet::poseLink(const PlayerState& s, bool moving) {
         if (maxFrame > 0.0f) mPoseFrame = std::fmod(mPoseFrame, maxFrame);
         else mPoseFrame = 0.0f;
         mPoseAnim->setFrame(mPoseFrame);
-        mLinkAnim.setAnmTransform(mPoseAnim);
-        mLinkAnim.setRatio(1.0f);
-    } else {
-        mLinkAnim.setAnmTransform(nullptr);
-        mLinkAnim.setRatio(0.0f);
     }
+
+    const float elapsedFrames = std::min<uint64_t>(now_ms() - match::player(mSlot).stateAt, 100) * 0.03f;
+    const auto prepare = [&](const AnimSlot* slots, mDoExt_AnmRatioPack* packs,
+                             J3DAnmTransformKey* poses) {
+        for (int i = 0; i < 3; ++i) {
+            J3DAnmTransform* source = slots[i].ratio != 0 && std::isfinite(slots[i].frame)
+                                         ? linkkit::anim(slots[i].idx) : nullptr;
+            const bool network = source != nullptr;
+            if (i == 0 && source == nullptr) source = mPoseAnim;
+            packs[i].setRatio(network ? slots[i].ratio / 255.0f : (i == 0 ? 1.0f : 0.0f));
+            packs[i].setAnmTransform(nullptr);
+            if (source == nullptr) continue;
+            poses[i] = *static_cast<J3DAnmTransformKey*>(source);
+            float frame = network ? std::max(0.0f, slots[i].frame) + elapsedFrames : mPoseFrame;
+            const float end = static_cast<float>(source->getFrameMax());
+            if (end > 0.0f) {
+                frame = source->getAttribute() == J3DFrameCtrl::EMode_LOOP
+                            ? std::fmod(frame, end) : std::min(frame, end - 0.001f);
+            } else frame = 0.0f;
+            poses[i].setFrame(frame);
+            packs[i].setAnmTransform(&poses[i]);
+        }
+    };
+    prepare(s.under, mLowerPack, mLowerPose);
+    prepare(s.upper, mUpperPack, mUpperPose);
 
     mDoMtx_stack_c::transS(current.pos.x, current.pos.y, current.pos.z);
     mDoMtx_stack_c::YrotM(shape_angle.y);
@@ -332,15 +361,20 @@ bool Puppet::poseLink(const PlayerState& s, bool moving) {
     // replacement can be culled even while standing directly in front of the camera.
     fopAcM_SetMtx(this, mBody->getBaseTRMtx());
 
-    // One calculator at the root drives every joint. Clear the old split joints in case this model
-    // was rebuilt after a colour or stage change.
+    // Native human Link: lower body at root and legs, upper body at joint 1. Model data is shared
+    // by a tunic colour, so restore calculators after this actor has calculated its own matrices.
     J3DModelData* data = mBody->getModelData();
-    data->getJointNodePointer(0)->setMtxCalc(
-        mPoseAnim != nullptr ? static_cast<J3DMtxCalc*>(&mLinkCalc)
-                             : static_cast<J3DMtxCalc*>(&mBindCalc));
-    if (data->getJointNum() > 1) data->getJointNodePointer(1)->setMtxCalc(nullptr);
-    if (data->getJointNum() > kJointLegs) data->getJointNodePointer(kJointLegs)->setMtxCalc(nullptr);
-    mBody->calc();
+    {
+        JointGuard guard(data);
+        J3DMtxCalc* lower = mLowerPack[0].getAnmTransform() != nullptr
+                               ? static_cast<J3DMtxCalc*>(&mLowerCalc) : &mBindCalc;
+        J3DMtxCalc* upper = mUpperPack[0].getAnmTransform() != nullptr
+                               ? static_cast<J3DMtxCalc*>(&mUpperCalc) : lower;
+        data->getJointNodePointer(0)->setMtxCalc(lower);
+        if (data->getJointNum() > 1) data->getJointNodePointer(1)->setMtxCalc(upper);
+        if (data->getJointNum() > kJointLegs) data->getJointNodePointer(kJointLegs)->setMtxCalc(lower);
+        mBody->calc();
+    }
 
     mFace->setBaseTRMtx(mBody->getAnmMtx(kJointHead));
     mFace->calc();
@@ -606,7 +640,7 @@ int Puppet::execute() {
         if (mCyl.GetTgHitAc() == dComIfGp_getPlayer(0)) {
             if (mDecoy) {
                 // A decoy is deliberately a miss: it disappears, but does not suppress the
-                // hunter's one-heart missed-swing penalty. Clear it from our path at once rather
+                // hunter's quarter-heart missed-swing penalty. Clear it from our path at once rather
                 // than after the host's round trip; the host's snapshot then deletes it for all.
                 match::report_decoy_hit(mDecoyId);
                 mHiddenUntil = now_ms() + kDecoyHitHideMs;

@@ -1,6 +1,7 @@
 #include "settings.hpp"
 
 #include "maps.hpp"
+#include "rules_config.hpp"
 
 #include <algorithm>
 #include <cstdio>
@@ -66,20 +67,11 @@ void init() {
     s_rules = reg("host_rules", CONFIG_VAR_STRING);
     s_rulesVersion = reg("host_rules_version", CONFIG_VAR_INT);
 
-    // v0.1.4 stored auto-taunt as enabled by default. Migrate every existing rules string once so
-    // upgrading players also get the new quiet default; hosts can explicitly turn it back on.
-    if (s_rulesVersion != 0 && get_int(s_rulesVersion, 0) < 1) {
+    if (s_rulesVersion != 0 && get_int(s_rulesVersion, 0) < 2) {
         const std::string text = get_str(s_rules);
-        int v[6];
-        if (std::sscanf(text.c_str(), "%d,%d,%d,%d,%d,%d", &v[0], &v[1], &v[2], &v[3], &v[4],
-                &v[5]) == 6) {
-            v[5] &= ~4;
-            char migrated[64];
-            std::snprintf(migrated, sizeof(migrated), "%d,%d,%d,%d,%d,%d", v[0], v[1], v[2],
-                v[3], v[4], v[5]);
-            if (s_rules != 0) svc_config->set_string(mod_ctx, s_rules, migrated);
-        }
-        svc_config->set_int(mod_ctx, s_rulesVersion, 1);
+        const std::string migrated = upgrade_rules(text);
+        if (s_rules != 0 && migrated != text) svc_config->set_string(mod_ctx, s_rules, migrated.c_str());
+        svc_config->set_int(mod_ctx, s_rulesVersion, 2);
     }
 
     // v0.1.0/v0.1.1 shipped before the public relay was provisioned. Upgrade only that exact
@@ -134,37 +126,13 @@ bool name_tags() {
 // Stored as "mode,map,hide,seek,hunters,flags,idle-taunt-seconds,free-decoys". Older saves keep
 // defaults for fields that did not exist yet.
 match::Settings host_rules() {
-    match::Settings s;
-    const std::string text = get_str(s_rules);
-    int v[8] = {};
-    const int fields = std::sscanf(text.c_str(), "%d,%d,%d,%d,%d,%d,%d,%d", &v[0], &v[1], &v[2],
-        &v[3], &v[4], &v[5], &v[6], &v[7]);
-    if (fields >= 6) {
-        s.mode = v[0] == 1 ? Mode::HideAndSeek : Mode::PropHunt;
-        s.map = v[1] >= 0 && v[1] < map_count() ? static_cast<uint8_t>(v[1]) : kRandomMap;
-        s.hideSecs = static_cast<uint16_t>(std::clamp(v[2], 10, 600));
-        s.seekSecs = static_cast<uint16_t>(std::clamp(v[3], 30, 1800));
-        s.hunters = static_cast<uint8_t>(std::clamp(v[4], 0, 8));
-        s.foundJoinHunters = v[5] & 1;
-        s.missPenalty = v[5] & 2;
-        s.autoTaunt = v[5] & 4;
-        s.autoNext = v[5] & 8;
-        s.isPublic = v[5] & 16;
-        if (fields >= 7) s.idleTauntSecs = static_cast<uint16_t>(std::clamp(v[6], 0, 600));
-        if (fields >= 8) s.freeDecoys = static_cast<uint8_t>(std::clamp(v[7], 0, 10));
-    }
-    return s;
+    return parse_rules(get_str(s_rules));
 }
 
 void save_host_rules(const match::Settings& s) {
     if (s_rules == 0) return;
-    const int flags = (s.foundJoinHunters ? 1 : 0) | (s.missPenalty ? 2 : 0) | (s.autoTaunt ? 4 : 0) |
-                      (s.autoNext ? 8 : 0) | (s.isPublic ? 16 : 0);
-    char text[64];
-    std::snprintf(text, sizeof(text), "%d,%d,%d,%d,%d,%d,%u,%u", static_cast<int>(s.mode), s.map,
-        s.hideSecs, s.seekSecs, s.hunters, flags, static_cast<unsigned>(s.idleTauntSecs),
-        static_cast<unsigned>(s.freeDecoys));
-    svc_config->set_string(mod_ctx, s_rules, text);
+    const std::string text = format_rules(s);
+    svc_config->set_string(mod_ctx, s_rules, text.c_str());
 }
 
 ConfigVarHandle name_var() {

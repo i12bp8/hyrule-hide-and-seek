@@ -44,10 +44,10 @@ bool s_roomsLoading = false;
 std::string s_error;
 
 const char* const kModes[] = {"Prop Hunt", "Hide & Seek"};
-const char* const kHunters[] = {"Auto (1 per 4 players)", "1", "2", "3", "4"};
+const char* const kHunters[] = {"Auto (map-aware)", "1", "2", "3", "4", "5", "6", "7", "8"};
 const char* const kIdleTaunts[] = {
-    "Off", "30 seconds", "45 seconds", "60 seconds", "90 seconds", "120 seconds"};
-constexpr uint16_t kIdleTauntValues[] = {0, 30, 45, 60, 90, 120};
+    "Off", "15 seconds", "20 seconds", "30 seconds", "45 seconds", "60 seconds", "90 seconds", "120 seconds"};
+constexpr uint16_t kIdleTauntValues[] = {0, 15, 20, 30, 45, 60, 90, 120};
 
 std::vector<const char*>& map_options() {
     static std::vector<const char*> options;
@@ -86,6 +86,7 @@ enum Field : intptr_t {
     F_JOIN,
     F_PENALTY,
     F_TAUNT,
+    F_TRACKING,
     F_IDLE_TAUNT,
     F_NEXT,
     F_PUBLIC
@@ -114,6 +115,7 @@ void get_rule(ModContext*, void* user, UiControlValue* out) {
     case F_JOIN: out->bool_value = s.foundJoinHunters; break;
     case F_PENALTY: out->bool_value = s.missPenalty; break;
     case F_TAUNT: out->bool_value = s.autoTaunt; break;
+    case F_TRACKING: out->bool_value = s.trackingPulse; break;
     case F_IDLE_TAUNT: out->int_value = idle_taunt_option(s.idleTauntSecs); break;
     case F_NEXT: out->bool_value = s.autoNext; break;
     case F_PUBLIC: out->bool_value = s.isPublic; break;
@@ -132,6 +134,7 @@ void set_rule(ModContext*, void* user, const UiControlValue* v) {
     case F_JOIN: s.foundJoinHunters = v->bool_value; break;
     case F_PENALTY: s.missPenalty = v->bool_value; break;
     case F_TAUNT: s.autoTaunt = v->bool_value; break;
+    case F_TRACKING: s.trackingPulse = v->bool_value; break;
     case F_IDLE_TAUNT: {
         const int option = std::clamp<int>(static_cast<int>(v->int_value), 0,
             static_cast<int>(std::size(kIdleTauntValues)) - 1);
@@ -176,13 +179,13 @@ ModResult build_rules(ModContext*, UiWindowHandle, UiElementHandle left, UiEleme
         "sword before time runs out.<br/><b>Hide &amp; Seek</b>: everyone stays Link; hunters tag "
         "hiders by touching them.",
         F_MODE, kModes, 2);
-    add_rule(left, UI_CONTROL_DROPDOWN, "Map", "Where the round is played. Random picks a new map every round.",
+    add_rule(left, UI_CONTROL_DROPDOWN, "Map", "Random picks a new map every round and uses compact maps with fewer than six players. Any map can be chosen explicitly.",
         F_MAP, map_options().data(), map_options().size());
     add_rule(left, UI_CONTROL_NUMBER, "Hiding time", "How long hunters wait with a black screen.", F_HIDE,
         nullptr, 0, 15, 180, 5, " s");
     add_rule(left, UI_CONTROL_NUMBER, "Round time", "How long hunters have to find everyone.", F_SEEK,
         nullptr, 0, 60, 900, 30, " s");
-    add_rule(left, UI_CONTROL_DROPDOWN, "Hunters", "How many players start as hunters.", F_HUNTERS, kHunters, 5);
+    add_rule(left, UI_CONTROL_DROPDOWN, "Hunters", "Auto: one hunter per four players on compact maps, per three on large maps, rounded up. At least one hider remains.", F_HUNTERS, kHunters, std::size(kHunters));
     svc_ui->pane_add_section(mod_ctx, left, "Rules");
     add_rule(left, UI_CONTROL_NUMBER, "Free decoys per hider",
         "A disguised hider can place these during hiding or hunting with D-pad up. After using them, "
@@ -190,16 +193,19 @@ ModResult build_rules(ModContext*, UiWindowHandle, UiElementHandle left, UiEleme
         F_DECOYS, nullptr, 0, 0, 10, 1);
     add_rule(left, UI_CONTROL_TOGGLE, "Found players join the hunters",
         "On: a found prop becomes a hunter. Off: they watch until the next round.", F_JOIN);
-    add_rule(left, UI_CONTROL_TOGGLE, "Missed swings cost one heart",
+    add_rule(left, UI_CONTROL_TOGGLE, "Missed swings cost a quarter heart",
         "Stops hunters from swinging at everything. Never takes the last quarter heart.", F_PENALTY);
-    add_rule(left, UI_CONTROL_DROPDOWN, "Taunt when a prop stays still",
-        "A prop that has not moved this long automatically taunts. Moving resets the timer. "
-        "This replaces repetitive timed clues with a consequence for camping; Off disables it.",
+    add_rule(left, UI_CONTROL_DROPDOWN, "Taunt when a hider stays still",
+        "A hider that has not moved this long automatically taunts. Moving resets the timer. "
+        "Works in both modes; Off disables stationary clues.",
         F_IDLE_TAUNT, kIdleTaunts, std::size(kIdleTaunts));
-    add_rule(left, UI_CONTROL_TOGGLE, "Extra last-minute taunts",
-        "Optional and off by default. When enabled, every hidden prop reveals a five-second "
-        "direction and location clue every 20 seconds in the last minute. Manual D-pad down "
-        "taunts still work.", F_TAUNT);
+    add_rule(left, UI_CONTROL_TOGGLE, "Regular taunt clues",
+        "On by default: hiders reveal a three-second clue every 30 seconds (20 on large maps), "
+        "then every 10 seconds in the last minute. A manual or stationary taunt also satisfies "
+        "the timer, so clues never stack.", F_TAUNT);
+    add_rule(left, UI_CONTROL_TOGGLE, "Hunter tracking pulse",
+        "D-pad down gives a three-second direction and rough range to the nearest hider. "
+        "25-second cooldown; no name or exact world marker.", F_TRACKING);
     add_rule(left, UI_CONTROL_TOGGLE, "Start the next round automatically",
         "After the scoreboard, a new round starts with new hunters.", F_NEXT);
     add_rule(left, UI_CONTROL_TOGGLE, "List this room publicly",
@@ -211,6 +217,20 @@ ModResult build_rules(ModContext*, UiWindowHandle, UiElementHandle left, UiEleme
     reset.on_pressed = [](ModContext*, void*) { match::reset_scores(); };
     reset.is_disabled = [](ModContext*, void*) { return !net::is_host(); };
     svc_ui->pane_add_control(mod_ctx, left, &reset, nullptr);
+    UiControlDesc recommended = UI_CONTROL_DESC_INIT;
+    recommended.kind = UI_CONTROL_BUTTON;
+    recommended.label = "Use recommended rules";
+    recommended.is_disabled = rules_locked;
+    recommended.on_pressed = [](ModContext*, void*) {
+        const auto current = current_rules();
+        match::Settings balanced;
+        balanced.mode = current.mode;
+        balanced.map = current.map;
+        balanced.isPublic = current.isPublic;
+        settings::save_host_rules(balanced);
+        if (net::is_host()) match::set_settings(balanced);
+    };
+    svc_ui->pane_add_control(mod_ctx, left, &recommended, nullptr);
     return MOD_OK;
 }
 
@@ -516,12 +536,13 @@ ModResult build_help(ModContext*, UiWindowHandle, UiElementHandle left, UiElemen
         "<p>Props: <b>D-pad right</b> copies a carryable object you stand next to (or picks the next "
         "prop), <b>D-pad left</b> goes back, <b>D-pad up</b> places a decoy, and <b>D-pad down</b> "
         "taunts for a bonus point. A taunt reveals "
-        "your direction and position to every hunter for five seconds. The host can also make props "
+        "your direction and position to every hunter for three seconds, with a four-second cooldown. The host can also make props "
         "taunt after staying still for a chosen time.</p>"
         "<p>Hunters: swing with <b>B</b>. While swimming, B tags a nearby prop because Link cannot "
-        "draw his sword. A sword swing that hits no real prop costs one heart; decoys count as misses. "
+        "draw his sword. A sword swing that hits no real prop costs a quarter heart; decoys count as misses. "
         "Follow the direction, "
-        "distance and world marker shown when a prop taunts.</p>",
+        "distance and world marker shown when a prop taunts. <b>D-pad down</b> gives a brief "
+        "tracking direction and rough range, with a 25-second cooldown.</p>",
         nullptr);
     svc_ui->pane_add_section(mod_ctx, left, "Hide & Seek");
     svc_ui->pane_add_rml(mod_ctx, left,
@@ -534,8 +555,8 @@ ModResult build_help(ModContext*, UiWindowHandle, UiElementHandle left, UiElemen
         nullptr);
     svc_ui->pane_add_section(mod_ctx, left, "Tips");
     svc_ui->pane_add_rml(mod_ctx, left,
-        "<p>Stand still next to real pots. Moving props give themselves away. If you leave the round "
-        "stage through a loading zone, you return to its spawn.</p>"
+        "<p>Stand still next to real pots. Moving props give themselves away. Loading zones block "
+        "movement at the arena's edges, keeping the map loaded. Everyone starts with five hearts.</p>"
         "<p>For the same completed world for everyone (no cutscenes, missions, enemies or bosses; "
         "fixed daylight and the same items), start from the <b>Hide &amp; Seek</b> game mode on the "
         "title screen.</p>",

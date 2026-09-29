@@ -274,15 +274,19 @@ J3DAnmTransform* anim(uint16_t idx) {
         HeapScope scope(s_heap);
         loaded = J3DAnmLoaderDataBase::load(buffer);
     }
-    if (loaded == nullptr || loaded->getKind() != 0) {  // 0 = transform (bck)
+    // The concrete BCK class overrides the abstract transform kind (0) with 8. Rejecting 8
+    // discarded every successfully loaded Link animation and left puppets in their bind pose.
+    if (loaded == nullptr || loaded->getKind() != 8) {
         static int s_warned = 0;
         if (s_warned++ < 4) mods::log::warn("linkkit: animation #{:#x} did not load", idx);
+        delete loaded;
         s_heap->free(buffer);
         slot->failedAt = now;
         return nullptr;
     }
     slot->anm = static_cast<J3DAnmTransform*>(loaded);
     slot->buffer = buffer;
+    mods::log::debug("linkkit: animation #{:#x} ready ({} frames)", idx, slot->anm->getFrameMax());
     return slot->anm;
 }
 

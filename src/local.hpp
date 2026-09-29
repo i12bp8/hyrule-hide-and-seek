@@ -21,6 +21,8 @@ int prop();                // current prop kind
 bool blindfolded();        // hunter waiting during the hide phase
 float taunt_cooldown();    // 0..1, for the HUD
 bool has_sword();
+uint32_t tracking_cooldown_secs();
+bool tracking_clue(cXyz& position);
 
 // A recent hider taunt as seen by a hunter. Returns its remaining 0..1 reveal strength.
 float taunt_ping(int id, cXyz& position);

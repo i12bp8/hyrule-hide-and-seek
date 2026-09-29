@@ -6,6 +6,10 @@
 #include "match.hpp"
 #include "protocol.hpp"
 #include "props.hpp"
+#include "arena_geometry.hpp"
+#include "gameplay.hpp"
+#include "rules_config.hpp"
+#include "collision_cleanup.hpp"
 
 #include <cmath>
 #include <cstdio>
@@ -102,8 +106,9 @@ static void host_room(int players) {
     reset_net(players);
     match::on_welcome();
     match::Settings defaults;
-    CHECK(!defaults.autoTaunt);
-    CHECK(defaults.idleTauntSecs == 60);
+    CHECK(defaults.autoTaunt && defaults.trackingPulse);
+    CHECK(defaults.hideSecs == 30 && defaults.seekSecs == 180);
+    CHECK(defaults.idleTauntSecs == 20);
     CHECK(defaults.freeDecoys == 5);
     match::Settings s;
     s.map = 0;
@@ -190,12 +195,14 @@ static void test_protocol_roundtrip() {
     s.idleTauntSecs = 90;
     s.freeDecoys = 99;  // clamps to the host-visible 0..10 range
     s.isPublic = true;
+    s.trackingPulse = false;
     Writer sw(MSG_SETTINGS);
     s.write(sw);
     Reader sr(sw.bytes().data() + 1, sw.bytes().size() - 1);
     match::Settings t;
     t.read(sr);
     CHECK(sr.ok());
+    CHECK(!t.trackingPulse);
     CHECK(t.mode == Mode::HideAndSeek && t.map == kRandomMap && t.hunters == 2);
     CHECK(t.hideSecs == 10 && t.seekSecs == 1800);
     CHECK(!t.missPenalty && t.isPublic && t.foundJoinHunters && t.autoTaunt && t.autoNext);
@@ -726,6 +733,92 @@ static void test_props() {
     }
 }
 
+static void test_balanced_rules() {
+    std::printf("balanced rules and saved-rule migration\n");
+    const auto fresh = settings::parse_rules("");
+    CHECK(fresh.hideSecs == 30 && fresh.seekSecs == 180 && fresh.autoTaunt);
+    CHECK(fresh.trackingPulse && fresh.idleTauntSecs == 20);
+    const auto upgraded = settings::parse_rules(settings::upgrade_rules("0,14,45,240,0,27,60,10"));
+    CHECK(upgraded.hideSecs == 30 && upgraded.seekSecs == 180);
+    CHECK(upgraded.autoTaunt && upgraded.trackingPulse && upgraded.idleTauntSecs == 20);
+    CHECK(upgraded.map == 14 && upgraded.isPublic && upgraded.freeDecoys == 10);
+    const auto legacy = settings::parse_rules(settings::upgrade_rules("0,255,45,240,0,11"));
+    CHECK(legacy.hideSecs == 30 && legacy.autoTaunt && legacy.idleTauntSecs == 20);
+    const auto custom = settings::parse_rules(settings::upgrade_rules("1,9,75,360,3,16,0,7"));
+    CHECK(custom.hideSecs == 75 && custom.seekSecs == 360 && custom.hunters == 3);
+    CHECK(!custom.autoTaunt && !custom.missPenalty && custom.idleTauntSecs == 0);
+    CHECK(custom.mode == Mode::HideAndSeek && custom.map == 9 && custom.freeDecoys == 7);
+    auto changed = fresh;
+    changed.trackingPulse = false;
+    CHECK(!settings::parse_rules(settings::format_rules(changed)).trackingPulse);
+    CHECK(settings::format_rules(settings::parse_rules(settings::format_rules(custom))) == settings::format_rules(custom));
+    CHECK(life_after_miss(20) == 19 && life_after_miss(2) == 1 && life_after_miss(1) == 1);
+    CHECK(life_after_miss(0) == 0 && kArenaHeartPieces / 5 * 4 == kArenaLife);
+    CHECK(kTauntRevealMs == 3000 && kTauntCooldownMs == 4000);
+    for (int n = 2; n <= kMaxPlayers; ++n) {
+        for (int map = 0; map < map_count(); ++map) {
+            const int hunters = recommended_hunters(n, map);
+            CHECK(hunters >= 1 && hunters < n);
+            CHECK(clue_interval_ms(map, 60000) == 10000);
+            CHECK(clue_interval_ms(map, 180000) == (map_info(map).large ? 20000 : 30000));
+        }
+    }
+    CHECK(recommended_hunters(4, 0) == 1 && recommended_hunters(4, 9) == 2);
+    CHECK(recommended_hunters(16, 14) == 6);
+    for (int i = 0; i < 100; ++i) {
+        const int selected = random_map(0, 2);
+        CHECK(selected != 0 && !map_info(selected).large);
+    }
+    host_room(4);
+    match::Settings rules;
+    rules.map = 9;
+    rules.autoNext = false;
+    match::set_settings(rules);
+    match::start_round();
+    CHECK(match::get().map == 9 && match::count_role(Role::Hunter) == 2);
+    match::end_round();
+    rules.hunters = 1;
+    match::set_settings(rules);
+    match::start_round();
+    CHECK(match::count_role(Role::Hunter) == 1);
+}
+
+static void test_exit_collision() {
+    std::printf("arena collision: rotated exits, height, corners and swept rolls\n");
+    using namespace hs::arena;
+    const ExitVolume box{{100, 0, 0}, 10, 300, 500, 0, 1};
+    CHECK(overlaps_exit(box, {70, 0, 0}));
+    CHECK(!overlaps_exit(box, {40, 0, 0}));
+    CHECK(!overlaps_exit(box, {100, 301, 0}));
+    CHECK(!overlaps_exit(box, {100, -151, 0}));
+    const ExitVolume rotated{{0, 0, 0}, 10, 300, 500, 1, 0};
+    CHECK(overlaps_exit(rotated, {400, 0, 0}));
+    CHECK(!overlaps_exit(rotated, {0, 0, 400}));
+    const ExitVolume grotto{{0, 0, 0}, 100, 0, 0, 0, 1, true};
+    CHECK(overlaps_exit(grotto, {130, 2000, 0}));
+    CHECK(!overlaps_exit(grotto, {140, 0, 0}));
+    const auto collide = [&](Point p) { return overlaps_exit(box, p); };
+    const auto rolled = sweep({0, 0, 0}, {300, 0, 0}, collide);
+    CHECK(rolled.x > 0 && rolled.x < 55);
+    const auto jumped = sweep({0, 0, 0}, {300, 100, 0}, collide);
+    CHECK(jumped.x < 55 && jumped.y < 100);
+    const auto away = sweep({0, 0, 0}, {-300, 0, 0}, collide);
+    CHECK(away.x == -300);
+    const auto side = sweep({0, 0, 600}, {300, 0, 600}, collide);
+    CHECK(side.x == 300);
+    const ExitVolume corner{{0, 0, 0}, 10, 300, 10, 0, 1};
+    CHECK(!overlaps_exit(corner, {40, 0, 40}));
+    CHECK(overlaps_exit(corner, {30, 0, 30}));
+    // Reproduce an actor with embedded shapes being deleted before the retained collision pass.
+    unsigned char actorStorage[256]{};
+    unsigned char otherStorage[64]{};
+    unsigned char* retained[] = {actorStorage, actorStorage + 64, otherStorage, nullptr, actorStorage + 255};
+    uint16_t count = 5;
+    CHECK(clear_actor_collision(retained, count, actorStorage, sizeof(actorStorage)) == 3);
+    CHECK(count == 1 && retained[0] == otherStorage);
+    CHECK(retained[1] == nullptr && retained[2] == nullptr && retained[4] == nullptr);
+}
+
 int main() {
     test_protocol_roundtrip();
     test_decoy_economy_and_validation();
@@ -739,6 +832,8 @@ int main() {
     test_colors_unique();
     test_maps();
     test_props();
+    test_balanced_rules();
+    test_exit_collision();
     std::printf("%d checks, %d failed\n", s_checks, s_failed);
     return s_failed == 0 ? 0 : 1;
 }

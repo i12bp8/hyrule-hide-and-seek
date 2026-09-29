@@ -50,9 +50,9 @@ Prop Hunt is the main mode; classic Hide & Seek comes along for free.
    as Link in their own tunic colour. The host picks mode, map (or Random) and times.
 2. **Get ready.** Host presses Start. Everyone is warped to the map's spawn point and held there until
    everyone has loaded (max 25 s).
-3. **Hide** (default 45 s). Props scatter and pick a disguise. Hunters stand at spawn with a black
+3. **Hide** (default 30 s). Props scatter and pick a disguise. Hunters stand at spawn with a black
    screen and a countdown.
-4. **Hunt** (default 4 min). Hunters have to hit every prop with their sword before the timer runs
+4. **Hunt** (default 180 s). Hunters have to hit every prop with their sword before the timer runs
    out. A found prop becomes a hunter (default) or watches.
 5. **Results** (12 s). Scoreboard, then the next round starts by itself with new hunters (the
    players who have hunted least go first).
@@ -80,11 +80,12 @@ Prop Hunt is the main mode; classic Hide & Seek comes along for free.
   walk-through. A mesh only becomes solid once the local Link is clear of it, so a decoy never traps
   the hider who placed it. Your own disguise never blocks you. While swimming, where the game
   prevents sword use, B performs a close-range prop tag. A sword swing that hits no real hider costs
-  one heart (never the last quarter-heart).
+  a quarter heart (never the last quarter-heart). Every round starts with five hearts.
 - D-pad down taunts for a point. Hunters hear a Link shout and get a direction, distance and
-  through-scenery world marker for five seconds. By default a prop that has not moved for 60 seconds
-  automatically taunts; hosts can choose Off/30/45/60/90/120 seconds. Extra automatic taunts every
-  20 s in the last minute remain optional and off by default.
+  through-scenery world marker for three seconds, with a four-second cooldown. Stationary hiders
+  taunt after 20 seconds by default. Regular clues run every 30 seconds (20 on large maps), then
+  every 10 seconds in the last minute. Both systems work in either game mode and share a timer
+  with manual taunts. Hunters get a three-second direction/rough-range pulse every 25 seconds.
 - Hunters don't see props' name tags.
 
 ### Hide & Seek
@@ -106,15 +107,16 @@ Death Mountain Trail, Zora's Domain, Upper Zora's River, Lake Hylia, Castle Town
 Hidden Village, Gerudo Desert, Hyrule Field, or Random every round. A missing spawn point crashes the
 game (`dStage_playerInit` logs a fatal error), so each map uses a point that `tools/find_spawns.py`
 lists as standing with no event. A player is only visible to others in the same stage, so the round
-keeps everyone inside it: scripted doors/events are inert, and a loading zone that leaves the
-selected stage returns that player to the round spawn.
+keeps everyone inside it: scripted doors/events are inert, loading-zone floors and exit volumes
+block movement, and native scene transitions cannot reload or leave the selected stage. The
+normal free third-person field camera overrides authored fixed-camera tools on every arena.
 
 **World state.** Areas look different depending on story progress (twilight, NPCs). The
 **Hide & Seek game mode** on the title screen uses its own completed-story save profile. Persistent
 story, dungeon, side-quest, tutorial and forced-conversation flags select the calm late-game layers;
 twilight and transformations are disabled; valid Postman letters are already delivered; first-time
 rupee messages are cleared; and the clock stays at noon. Players get the Hero's Clothes, sword,
-shield and six hearts, so every player's world matches and every hunter has a sword. Scripted event
+shield and five hearts, so every player's world matches and every hunter has a sword. Scripted event
 orders are rejected, active events are reset, and enemy/boss actors plus encounter controllers are
 removed before they can execute. Damage and drowning cannot end play (the optional hunter miss
 penalty still can remove hearts). The live sandbox protections also apply during an online round
@@ -179,10 +181,11 @@ A custom actor (`HSPupt`, registered through ActorService) per remote player in 
   sheath and Hylian Shield) into the mod's own heap. The body and cap are loaded once per tunic
   colour with the green shifted in the CMPR texture data (`src/recolor.cpp`), so every player looks
   different and none of it is shared with the local Link.
-- Animation: a known-complete idle or walk pose copied through a private short-lived mount of
-  `AlAnm.arc`, rather than borrowing the game's archive while it may be remounted during a warp. A
-  single full-skeleton calculator is used, with an always-visible bind-pose fallback if loading still
-  fails; a missing animation can therefore never hide the complete remote Link body.
+- Animation: the native three-slot lower/upper blends from each player's network state. BCKs
+  come from a permanent private `AlAnm.arc` mount and are accepted as concrete key transforms
+  (kind 8). Each puppet slot copies the immutable key-data pointers and owns its frame; lower
+  body calculators drive joints 0/16 and upper body joint 1. Unknown/demo animations use an
+  animated idle/walk fallback. Shared model calculators are restored after simulation calc.
 - Props: the prop's archive model through the resource manager, drawn at the player's position;
   joint callbacks and animations the real objects put on the shared model data are swapped out
   around our `calc()`.

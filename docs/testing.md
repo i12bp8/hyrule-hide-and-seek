@@ -25,7 +25,7 @@ on this computer**.
 
 ## 1. Loads and connects
 
-- [ ] Log shows `Hyrule Hide & Seek 0.1.12 ready`. No "hook ... did not resolve" warnings for
+- [ ] Log shows `Hyrule Hide & Seek 0.2.0 ready`. No "hook ... did not resolve" warnings for
       `daAlink_c::execute`, `daAlink_c::draw`, `daAlink_c::setCutType`,
       `daAlink_c::setDamagePoint`, `daAlink_c::checkNotBattleStage`, `fopAc_Execute`, or
       `dComIfGp_event_order`.
@@ -83,11 +83,11 @@ Start round. With 4 players (you + 3 bots) there is one hunter; restart until yo
       Crystal appears near the player at a readable size instead of at its authored world origin.
 - [ ] The hunter bot waits at the spawn during Hide, then chases you during the hunt and tags you:
       "You were found!", you become Link again (and a hunter).
-- [ ] D-pad down taunts: a Link shout plays, the taunt bar fills, and the hunter gets a five-second
+- [ ] D-pad down taunts: a Link shout plays, the taunt bar fills for four seconds, and the hunter gets a three-second
       direction/distance clue plus a marker at your position.
-- [ ] Automatic last-minute taunts start disabled. Enabling the host rule makes them occur; turning
-      it off leaves manual and stationary taunts only.
-- [ ] The stationary auto-taunt defaults to 60 seconds. Moving more than a small step resets its
+- [ ] Regular taunts start enabled: every 30 seconds (20 on large maps), then every 10 seconds
+      in the last minute. Turning the rule off leaves manual and stationary taunts only.
+- [ ] The stationary auto-taunt defaults to 20 seconds. Moving more than a small step resets its
       timer; Off disables it, and a shorter setting fires at the selected delay.
 - [ ] Cucco, pumpkin and oil jar have one clean circular shadow with a sensible footprint. Static
       rocks/furniture, targets and flat/translucent plants have no added black blob or duplicate mesh.
@@ -114,8 +114,10 @@ Restart until you're the hunter (1 in 4).
 - [ ] Castle Town still allows drawing and swinging the sword during the hunt.
 - [ ] From a hider's client, the hunter's complete Link body remains visible while idle, running and
       swinging throughout Hide, Hunt and Results—never only a face/sword, a T-pose or a name tag.
-- [ ] Swinging at nothing costs one full heart when possible (never the last quarter). Hitting a real
-      map pot or a player decoy also costs one; hitting the actual hider does not.
+- [ ] Swinging at nothing costs a quarter heart (never the last quarter). Hitting a real
+      map pot or a player decoy also costs a quarter; hitting the actual hider does not.
+- [ ] D-pad down gives a three-second tracking direction/rough range, then shows a 25-second
+      cooldown. It never shows the hider's name or an exact marker. The host can disable it.
 - [ ] After surviving 30 seconds, the hider HUD shows 3 live round points. With all free placements
       used, D-pad up buys one extra decoy, replaces the oldest owned one, and reduces both round and
       total score by 3. Paid decoys cannot be placed during Hide.
@@ -140,7 +142,7 @@ With a friend (or two copies of Dusklight with different `--mods` folders and pr
 
 - [ ] Title screen shows a **Hide & Seek** game mode with its own save files.
 - [ ] A new file skips the story: you land in Ordon Village in the Hero's Clothes with a sword,
-      shield and six hearts, and the Hide & Seek window opens.
+      shield and five hearts, and the Hide & Seek window opens.
 - [ ] Faron, Kakariko and Lake Hylia have no twilight.
 - [ ] Ordon Village, Kakariko, Lake Hylia, Sacred Grove and Hidden Village load directly into
       normal play: no story camera, forced dialogue, tutorial, minigame, Postman or item popup.
@@ -149,9 +151,12 @@ With a friend (or two copies of Dusklight with different `--mods` folders and pr
 - [ ] No enemies or bosses remain, including ones spawned by another mod; no encounter-complete
       cutscene or timer starts when they disappear.
 - [ ] Damage does not remove hearts and underwater air stays full. A hunter's missed sword swing
-      still removes one heart (without taking the last quarter) when that rule is enabled.
-- [ ] Leave through a loading zone after the round begins: the client returns to the selected map's
-      spawn and rejoins the round.
+      still removes a quarter heart (without taking the last quarter) when that rule is enabled.
+- [ ] Walk/roll/jump toward loading zones in Hide and Hunt, as hider and hunter: movement stops
+      before loading. No fade, respawn, lost disguise or change to the countdown occurs.
+- [ ] Cross camera-tag areas and room boundaries: the third-person camera remains freely movable.
+- [ ] Joining from a normal story save temporarily gives five hearts. Leaving the room restores
+      that save's original heart capacity and life.
 
 ## 9. Every map
 
@@ -211,3 +216,9 @@ Injected states exercise the real actors and rendering, not 16 independent netwo
 - [ ] Run on stock Linux and Windows, both with interpolation on and off.
 - [ ] Separately join real cross-platform clients and place decoys with D-pad up.
 - [ ] Repeat rounds, leave/rejoin, change stage, and verify complete animated Link bodies.
+
+Run the same integration bundle with `HS_ARENA_TEST=1` for a fifteen-map sweep. It checks real
+idle/walk/sword animation data, camera-tag suppression, blocked native scene changes and compulsory
+events, five-heart capacity, and movement collision at authored exit volumes when those actors
+exist in the loaded rooms. Follow it with the manual walking/rolling/swimming checks above: an
+automated sweep does not explore every pathway or every camera input.

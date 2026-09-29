@@ -10,7 +10,7 @@ hunters get a sword and a timer.
 2. On the title screen pick the **Hide & Seek** game mode and start a new file. It's a separate save,
    set up as a completed-story sandbox so everyone's world matches: no story cutscenes or quest
    interruptions, enemies or bosses; no twilight; fixed daylight; Hero's Clothes, sword and shield;
-   six hearts; and unlimited air underwater.
+   five hearts; and unlimited air underwater.
    (You can also play from any save; the world just might look different for each player.)
 3. The Hide & Seek window opens. In **Play**, choose **Host a game** to get a five-letter room code,
    already copied to your clipboard. Friends choose **Join a game** to enter it or pick it from
@@ -31,8 +31,8 @@ the HTTP fallback, custom relays must use HTTPS (plain localhost HTTP is not sup
 | Phase | Props | Hunters |
 | --- | --- | --- |
 | Get ready | Everyone is warped to the map. | |
-| Hide (45 s) | Run, pick a disguise, place decoys, find a spot. | Black screen and a countdown. |
-| Hunt (4 min) | Stay hidden; taunt or buy extra decoys with round points. | Hit every real prop before time runs out. |
+| Hide (30 s) | Run, pick a disguise, place decoys, find a spot. | Black screen and a countdown. |
+| Hunt (180 s) | Stay hidden; taunt or buy extra decoys with round points. | Hit every real prop before time runs out. |
 | Results | Scoreboard. The next round starts with new hunters. | |
 
 ### Controls
@@ -42,8 +42,8 @@ the HTTP fallback, custom relays must use HTTPS (plain localhost HTTP is not sup
 | **D-pad right** | Props: copy the pot, crate or barrel next to you (or the next prop) |
 | **D-pad left** | Props: previous prop |
 | **D-pad up** | Props: place a decoy during Hide or Hunt |
-| **D-pad down** | Props: taunt (+1 point every 10 s at most; reveals you to hunters for 5 s) |
-| **B** | Hunters: swing; while swimming, tag a nearby prop. A miss costs one heart. |
+| **D-pad down** | Hiders: taunt (3 s reveal, 4 s cooldown; +1 point every 10 s at most). Hunters: tracking pulse. |
+| **B** | Hunters: swing; while swimming, tag a nearby prop. A miss costs a quarter heart. |
 
 There are 50 selectable props drawn from across Hyrule: pots, crates, furniture, village signs and
 targets, forest plants, mountain rocks, Zora water props, plus a walking cucco. Selection is themed
@@ -61,9 +61,22 @@ no hunter points and deliberately count as a missed swing.
 
 Mode (Prop Hunt / Hide & Seek), map (or a random one every round), hiding and round time, number of
 hunters, whether found props join the hunters, the miss penalty, how long a prop may stay still
-before automatically taunting (60 seconds by default, or Off), free decoys per hider, optional extra
-last-minute taunts (off by default), starting rounds automatically, and whether the room is listed
+before automatically taunting (20 seconds by default, or Off), free decoys per hider, regular
+taunt clues, hunter tracking pulses, starting rounds automatically, and whether the room is listed
 publicly.
+
+The default rules keep the hunt moving: automatic clues every 30 seconds (20 on large maps),
+then every 10 seconds in the last minute. Each clue lasts three seconds. Manual and stationary
+taunts satisfy the same timer, so clues don't stack. These work in both game modes.
+
+Hunters can press D-pad down for a three-second direction and rough range to the nearest hider,
+with a 25-second cooldown. It gives no name or exact marker. Auto hunter counts round up to one
+per four players on compact maps and one per three on large maps, leaving at least one hider.
+Random uses compact maps with fewer than six players; any large map can still be selected.
+Everyone starts each round with five hearts, and a miss never takes the final quarter.
+The Rules tab's **Use recommended rules** button restores this balance while keeping your mode,
+chosen map and public-room preference. Existing stock rules upgrade automatically; custom rules
+are retained. Everyone in a room needs v0.2.0 or newer (protocol 6).
 
 **Hide & Seek mode**: everyone stays Link and hunters tag hiders by touching them, like SMO Online.
 
@@ -72,7 +85,9 @@ publicly.
 Ordon Village, Ordon Ranch, Ordon Spring, South Faron Woods, Kakariko Village, Kakariko Graveyard,
 Death Mountain Trail, Zora's Domain, Upper Zora's River, Lake Hylia, Castle Town, Sacred Grove,
 Hidden Village, Gerudo Desert, Hyrule Field. The selected stage is the play area: scripted doors are
-inert, and a loading zone that leaves it returns you to its spawn so nobody can escape the round.
+inert, and loading-zone floors and exit volumes block movement before a transition can start.
+The arena stays loaded rather than returning you to its spawn. Every arena uses the normal free
+third-person field camera, without authored fixed camera zones or story cutscenes.
 
 ### Scoring
 
@@ -117,7 +132,7 @@ The default relay runs on a Raspberry Pi at
 ### Tests
 
 ```sh
-tests/run.sh                    # the rules: rounds, hits, decoys, scoring, maps and props (1,600+ checks)
+tests/run.sh                    # rules, balance, saved settings and exit collision (2,500+ checks)
 cd server && npm install && npm test   # the relay and the bots
 ```
 

@@ -17,6 +17,7 @@
 #include "mods/svc/websocket.h"
 
 #include "game_mode.hpp"
+#include "arena.hpp"
 #include "linkkit.hpp"
 #include "local.hpp"
 #include "match.hpp"
@@ -78,6 +79,7 @@ MOD_EXPORT ModResult mod_initialize(ModError* error) {
     }
     hs::ui::init();
     hs::game_mode::init();
+    hs::arena::init();
     mods::log::info("Hyrule Hide & Seek {} ready (protocol {}, server {})", HS_MOD_VERSION,
         hs::kProtocolVersion, hs::settings::server());
     return MOD_OK;
