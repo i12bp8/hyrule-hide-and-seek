@@ -129,7 +129,7 @@ void add_rule(UiElementHandle pane, UiControlKind kind, const char* label, const
 ModResult build_rules(ModContext*, UiWindowHandle, UiElementHandle left, UiElementHandle, void*, ModError*) {
     svc_ui->pane_add_section(mod_ctx, left, "Game");
     add_rule(left, UI_CONTROL_DROPDOWN, "Mode",
-        "<b>Prop Hunt</b>: hiders turn into pots, crates and barrels. Hunters must hit them with a "
+        "<b>Prop Hunt</b>: hiders turn into objects and furniture. Hunters must hit them with a "
         "sword before time runs out.<br/><b>Hide &amp; Seek</b>: everyone stays Link; hunters tag "
         "hiders by touching them.",
         F_MODE, kModes, 2);
@@ -146,7 +146,8 @@ ModResult build_rules(ModContext*, UiWindowHandle, UiElementHandle left, UiEleme
     add_rule(left, UI_CONTROL_TOGGLE, "Missed swings cost a quarter heart",
         "Stops hunters from swinging at everything. Never takes the last quarter heart.", F_PENALTY);
     add_rule(left, UI_CONTROL_TOGGLE, "Props taunt in the last minute",
-        "Every hidden prop makes a noise every 20 seconds near the end, so rounds don't stall.", F_TAUNT);
+        "Every hidden prop reveals a five-second direction and location clue every 20 seconds near "
+        "the end, so rounds don't stall.", F_TAUNT);
     add_rule(left, UI_CONTROL_TOGGLE, "Start the next round automatically",
         "After the scoreboard, a new round starts with new hunters.", F_NEXT);
     add_rule(left, UI_CONTROL_TOGGLE, "List this room publicly",
@@ -366,16 +367,18 @@ ModResult build_help(ModContext*, UiWindowHandle, UiElementHandle left, UiElemen
     svc_ui->pane_add_rml(mod_ctx, left,
         "<p><b>Props</b> turn into an object and hide in plain sight. <b>Hunters</b> wait with a black "
         "screen, then have until the timer runs out to hit every prop with their sword.</p>"
-        "<p>Props: <b>D-pad right</b> copies the pot, crate or barrel you stand next to (or picks the "
-        "next prop), <b>D-pad left</b> goes back, <b>D-pad down</b> taunts for a bonus point.</p>"
-        "<p>Hunters: swing with <b>B</b>. A swing that hits no prop costs a quarter heart.</p>",
+        "<p>Props: <b>D-pad right</b> copies a carryable object you stand next to (or picks the next "
+        "prop), <b>D-pad left</b> goes back, <b>D-pad down</b> taunts for a bonus point. A taunt reveals "
+        "your direction and position to every hunter for five seconds.</p>"
+        "<p>Hunters: swing with <b>B</b>. A swing that hits no prop costs a quarter heart. Follow the "
+        "direction, distance and world marker shown when a prop taunts.</p>",
         nullptr);
     svc_ui->pane_add_section(mod_ctx, left, "Hide & Seek");
     svc_ui->pane_add_rml(mod_ctx, left,
         "<p>Everyone stays Link. Hunters catch hiders by touching them or hitting them.</p>", nullptr);
     svc_ui->pane_add_section(mod_ctx, left, "Points");
     svc_ui->pane_add_rml(mod_ctx, left,
-        "<p>Props: 1 point per 10 seconds hidden, 5 for surviving the round, 1 per taunt (once every 10 "
+        "<p>Props: 1 point per 10 seconds hidden, 5 for surviving the round, 1 per taunt (once every 5 "
         "seconds). Hunters: 5 per find.</p>",
         nullptr);
     svc_ui->pane_add_section(mod_ctx, left, "Tips");

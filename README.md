@@ -1,7 +1,7 @@
 # Hyrule Hide & Seek
 
 Online **Prop Hunt** and **Hide & Seek** for Twilight Princess on [Dusklight](https://github.com/TwilitRealm/dusklight).
-2 to 16 players. Everyone is Link in their own tunic colour. Props hide as pots, crates and barrels;
+2 to 16 players. Everyone is Link in their own tunic colour. Props hide as objects and furniture;
 hunters get a sword and a timer.
 
 ## Play
@@ -38,10 +38,11 @@ Windows, macOS and fixed Linux builds use WebSockets.
 | --- | --- |
 | **D-pad right** | Props: copy the pot, crate or barrel next to you (or the next prop) |
 | **D-pad left** | Props: previous prop |
-| **D-pad down** | Props: taunt (+1 point, every 5 s) |
+| **D-pad down** | Props: taunt (+1 point, every 5 s; reveals you to hunters for 5 s) |
 | **B** | Hunters: swing. Hitting nothing costs a quarter heart. |
 
-Props: pot, big pot, crate, small crate, barrel, skull, pumpkin, Kakariko pot, rock and a walking cucco.
+There are 21 props: pots, crates, a barrel, skull, pumpkin, rock, cannonball, Deku nut, sign, chair,
+sofa, table, boar bones, gravestone and a walking cucco.
 
 ### Rules the host can change
 

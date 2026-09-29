@@ -18,6 +18,17 @@ constexpr PropInfo kProps[] = {
     {"Small Crate", "Obj_kbox", "k_skiba_00.bmd", nullptr, nullptr, 50.0f, 80.0f, 1.0f},
     {"Rock", "Obj_rock", "a_trock.bmd", nullptr, nullptr, 60.0f, 80.0f, 1.0f},
     {"Cucco", "Ni", "ni.bmd", "ni_wait1.bck", "ni_walk_a.bck", 35.0f, 60.0f, 1.0f},
+    {"Cannonball", "Y_ironbal", "Yironball.bmd", nullptr, nullptr, 40.0f, 80.0f, 1.0f},
+    {"Deku Nut", "Obj_bkl", "K_hb00.bmd", nullptr, nullptr, 45.0f, 60.0f, 1.0f},
+    {"Big Blue Pot", "D_aotubo0", "D_aotubo00.bmd", nullptr, nullptr, 50.0f, 110.0f, 1.0f},
+    {"Twilight Pot", "O_tuboS", "O_tuboS_LV8.bmd", nullptr, nullptr, 40.0f, 75.0f, 1.0f},
+    {"Big Twilight Pot", "O_tuboB", "O_tuboB_LV8.bmd", nullptr, nullptr, 50.0f, 110.0f, 1.0f},
+    {"Sign", "Obj_kn2", "J_kanban00.bmd", nullptr, nullptr, 55.0f, 150.0f, 1.0f},
+    {"Chair", "HChair", nullptr, nullptr, nullptr, 60.0f, 170.0f, 1.0f, 4},
+    {"Sofa", "HSofa", nullptr, nullptr, nullptr, 120.0f, 160.0f, 1.0f, 4},
+    {"Table", "HTable", nullptr, nullptr, nullptr, 90.0f, 110.0f, 1.0f, 4},
+    {"Boar Bones", "Obj_Ibone", "A_InoBone.bmd", nullptr, nullptr, 140.0f, 70.0f, 1.0f},
+    {"Gravestone", "H_Haka", "H_Haka.bmd", nullptr, nullptr, 80.0f, 180.0f, 1.0f},
 };
 
 struct CarryMap {
@@ -26,7 +37,19 @@ struct CarryMap {
 };
 
 // daObjCarry_c types (d_a_obj_carry.cpp l_arcName order) that match a prop.
-constexpr CarryMap kCarry[] = {{0, 0}, {1, 1}, {2, 2}, {4, 3}, {5, 4}, {7, 6}};
+constexpr CarryMap kCarry[] = {
+    {0, 0},   // small blue pot
+    {1, 1},   // big red pot
+    {2, 2},   // crate
+    {4, 3},   // barrel
+    {5, 4},   // skull
+    {7, 6},   // small red pot
+    {3, 10},  // cannonball
+    {6, 11},  // Deku nut
+    {10, 12}, // big blue pot
+    {12, 13}, // small Twilight pot
+    {13, 14}, // big Twilight pot
+};
 
 }  // namespace
 
@@ -40,8 +63,7 @@ const PropInfo& prop_info(int index) {
 
 int random_prop() {
     static std::mt19937 engine{std::random_device{}()};
-    // The first four are the most common objects in the world, so they're the best disguises.
-    return std::uniform_int_distribution<int>(0, 3)(engine);
+    return std::uniform_int_distribution<int>(0, prop_count() - 1)(engine);
 }
 
 int prop_for_carry_type(int carryType) {

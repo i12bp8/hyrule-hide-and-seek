@@ -59,6 +59,9 @@ struct Slot {
     uint8_t color = 0xFF;
     // Written by the actor every frame, read by the HUD.
     bool visible = false;
+    // A model can fail to draw while its fresh network position is still useful for hunter
+    // markers, taunt clues and Hide & Seek touch tags.
+    bool tracked = false;
     cXyz feet{0.0f, 0.0f, 0.0f};
     float height = 0.0f;
 };
@@ -135,7 +138,7 @@ private:
     void releaseProp();
     void updateGround();
     void armHitbox(const match::Player& p, bool disguised, int kind);
-    void publish(bool visible, float height);
+    void publish(bool visible, float height, bool tracked = false);
     Slot& slot() { return mLocal ? s_localProp : s_slots[mSlot]; }
 
     int mSlot = 0;
@@ -158,6 +161,7 @@ private:
     mDoExt_AnmRatioPack mUpper[3];
     mDoExt_MtxCalcAnmBlendTbl mUnderCalc;
     mDoExt_MtxCalcAnmBlendTbl mUpperCalc;
+    J3DMtxCalcNoAnm<J3DMtxCalcCalcTransformMaya, J3DMtxCalcJ3DSysInitMaya> mBindCalc;
 
     // Prop
     int mPropKind = -1;
@@ -241,7 +245,7 @@ void Puppet::poseLink(const PlayerState& s) {
     };
     fill(mUnder, s.under, idle);
     fill(mUpper, s.upper, mUnder[0].getAnmTransform());
-    if (mUnder[0].getAnmTransform() == nullptr) return;
+    const bool animated = mUnder[0].getAnmTransform() != nullptr;
 
     mDoMtx_stack_c::transS(current.pos.x, current.pos.y, current.pos.z);
     mDoMtx_stack_c::YrotM(shape_angle.y);
@@ -253,9 +257,19 @@ void Puppet::poseLink(const PlayerState& s) {
     // Same split as daAlink_c::changeModelDataDirect: legs follow the lower body animation,
     // the torso the upper one. This model data is ours, so nothing else touches these.
     J3DModelData* data = mBody->getModelData();
-    data->getJointNodePointer(0)->setMtxCalc(&mUnderCalc);
-    data->getJointNodePointer(1)->setMtxCalc(&mUpperCalc);
-    if (data->getJointNum() > kJointLegs) data->getJointNodePointer(kJointLegs)->setMtxCalc(&mUnderCalc);
+    if (animated) {
+        data->getJointNodePointer(0)->setMtxCalc(&mUnderCalc);
+        data->getJointNodePointer(1)->setMtxCalc(&mUpperCalc);
+        if (data->getJointNum() > kJointLegs) {
+            data->getJointNodePointer(kJointLegs)->setMtxCalc(&mUnderCalc);
+        }
+    } else {
+        // AlAnm can be briefly unavailable just after a stage load. The old path made the whole
+        // remote player invisible in that case. A bind-pose Link is a much safer fallback.
+        data->getJointNodePointer(0)->setMtxCalc(&mBindCalc);
+        data->getJointNodePointer(1)->setMtxCalc(nullptr);
+        if (data->getJointNum() > kJointLegs) data->getJointNodePointer(kJointLegs)->setMtxCalc(nullptr);
+    }
     mBody->calc();
 
     mFace->setBaseTRMtx(mBody->getAnmMtx(kJointHead));
@@ -313,9 +327,12 @@ bool Puppet::updateProp(int kind, bool moving) {
         }
         if (step != cPhs_COMPLEATE_e) return false;
         const PropInfo& info = prop_info(kind);
-        auto* data = static_cast<J3DModelData*>(dComIfG_getObjectRes(mPropArc, info.bmd));
+        auto* data = static_cast<J3DModelData*>(info.bmd != nullptr
+                ? dComIfG_getObjectRes(mPropArc, info.bmd)
+                : dComIfG_getObjectRes(mPropArc, info.bmdIndex));
         if (data == nullptr) {
-            mods::log::warn("puppet: {} has no {}", mPropArc, info.bmd);
+            if (info.bmd != nullptr) mods::log::warn("puppet: {} has no {}", mPropArc, info.bmd);
+            else mods::log::warn("puppet: {} has no model #{}", mPropArc, info.bmdIndex);
             mPropFailed = true;
             return false;
         }
@@ -393,9 +410,10 @@ void Puppet::armHitbox(const match::Player& p, bool disguised, int kind) {
     dComIfG_Ccsp()->Set(&mCyl);
 }
 
-void Puppet::publish(bool visible, float height) {
+void Puppet::publish(bool visible, float height, bool tracked) {
     Slot& s = slot();
     s.visible = visible;
+    s.tracked = tracked;
     s.feet = current.pos;
     s.height = height;
 }
@@ -415,7 +433,7 @@ int Puppet::execute() {
         fopAc_ac_c* player = dComIfGp_getPlayer(0);
         if (player == nullptr) {
             mVisible = false;
-            publish(false, 0.0f);
+            publish(false, 0.0f, false);
             return 1;
         }
         const bool moving = (player->current.pos - current.pos).abs() > 1.0f;
@@ -426,7 +444,7 @@ int Puppet::execute() {
         // replace Link in the same frame instead of leaving an invisible archive-loading gap.
         const bool ready = updateProp(local::prop(), local::disguised() && moving);
         mVisible = local::disguised() && ready;
-        publish(mVisible, mVisible ? prop_info(local::prop()).height : 0.0f);
+        publish(mVisible, mVisible ? prop_info(local::prop()).height : 0.0f, mVisible);
         return 1;
     }
 
@@ -434,7 +452,7 @@ int Puppet::execute() {
     const PlayerState& s = p.state;
     mVisible = p.present && p.hasState && same_stage_as_me(s) && now_ms() - p.stateAt < kStaleMs;
     if (!mVisible) {
-        publish(false, 0.0f);
+        publish(false, 0.0f, false);
         return 1;
     }
 
@@ -462,10 +480,9 @@ int Puppet::execute() {
         if (mBody == nullptr || color != mColor) buildLink(color);
         mVisible = mBody != nullptr && !(s.flags & STATE_WOLF);
         if (mVisible) poseLink(s);
-        mVisible = mVisible && mUnder[0].getAnmTransform() != nullptr;
     }
     armHitbox(p, mDisguised, kind);
-    publish(mVisible, mDisguised ? prop_info(kind).height : kLinkHeight);
+    publish(mVisible, mDisguised ? prop_info(kind).height : kLinkHeight, true);
     return 1;
 }
 
@@ -506,7 +523,7 @@ int Puppet::destroy() {
         mHeap->destroy();
         mHeap = nullptr;
     }
-    publish(false, 0.0f);
+    publish(false, 0.0f, false);
     this->~Puppet();
     return 1;
 }
@@ -546,6 +563,7 @@ void manage(Slot& slot, bool want, int id, bool local, const cXyz& at) {
     if (slot.actor != fpcM_ERROR_PROCESS_ID_e && fopAcM_SearchByID(slot.actor) == nullptr) {
         slot.actor = fpcM_ERROR_PROCESS_ID_e;
         slot.visible = false;
+        slot.tracked = false;
     }
     if (!local && want && slot.actor != fpcM_ERROR_PROCESS_ID_e) {
         // Rebuilt in the new colour by the actor itself; nothing to do here.
@@ -564,6 +582,7 @@ void manage(Slot& slot, bool want, int id, bool local, const cXyz& at) {
         svc_actor->delete_actor(mod_ctx, slot.actor);
         slot.actor = fpcM_ERROR_PROCESS_ID_e;
         slot.visible = false;
+        slot.tracked = false;
     }
 }
 
@@ -616,7 +635,7 @@ bool local_prop_visible() {
 }
 
 bool anchor(int id, cXyz& feet, float& height) {
-    if (id < 1 || id > kMaxPlayers || !s_slots[id].visible) return false;
+    if (id < 1 || id > kMaxPlayers || !s_slots[id].tracked) return false;
     feet = s_slots[id].feet;
     height = s_slots[id].height;
     return true;

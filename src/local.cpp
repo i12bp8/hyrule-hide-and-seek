@@ -30,6 +30,7 @@ DEFINE_HOOK(&daAlink_c::execute, HsLinkExecute);
 DEFINE_HOOK(&daAlink_c::draw, HsLinkDraw);
 DEFINE_HOOK(&daAlink_c::setCutType, HsLinkSetCutType);
 DEFINE_HOOK(&daAlink_c::setDamagePoint, HsLinkDamage);
+DEFINE_HOOK(&daAlink_c::checkNotBattleStage, HsCheckNotBattleStage);
 
 namespace hs::local {
 
@@ -38,6 +39,7 @@ namespace {
 constexpr uint64_t kTauntCooldownMs = 5000;
 constexpr uint64_t kAutoTauntEveryMs = 20000;
 constexpr uint32_t kAutoTauntLastMs = 60000;
+constexpr uint64_t kTauntRevealMs = 5000;
 constexpr uint64_t kSwingWindowMs = 650;
 constexpr uint64_t kSettleMs = 1500;
 constexpr uint64_t kWarpRetryMs = 12000;
@@ -71,6 +73,12 @@ int s_prop = 0;
 uint64_t s_lastTaunt = 0;
 uint64_t s_lastAutoTaunt = 0;
 
+struct TauntPing {
+    cXyz position{0.0f, 0.0f, 0.0f};
+    uint64_t at = 0;
+};
+TauntPing s_tauntPings[kSlots];
+
 // Hunters
 bool s_frozen = false;
 cXyz s_holdPos{0.0f, 0.0f, 0.0f};
@@ -78,6 +86,7 @@ bool s_swinging = false;
 bool s_swingHit = false;
 uint64_t s_swingAt = 0;
 u8 s_lastCutType = 0;
+uint64_t s_lastSwordCheck = 0;
 uint64_t s_lastColorCheck = 0;
 
 std::mt19937 s_rng{std::random_device{}()};
@@ -141,10 +150,33 @@ HookAction on_link_damage_pre(ModContext*, void* args, void* retval, void*) {
     return HOOK_SKIP_ORIGINAL;
 }
 
+HookAction on_not_battle_stage_pre(ModContext*, void*, void* retval, void*) {
+    // Castle Town and ST_ROOM stages normally suppress B-button combat. Those restrictions are
+    // story rules, not useful arena rules, and made a hunter's granted sword unusable there.
+    if (net::status() != net::Status::Online || !match::in_round() ||
+        match::my_role() != Role::Hunter) {
+        return HOOK_CONTINUE;
+    }
+    if (retval != nullptr) *static_cast<bool*>(retval) = false;
+    return HOOK_SKIP_ORIGINAL;
+}
+
 // ---- helpers ---------------------------------------------------------------------------------
 
 void play_at(uint32_t sound, const cXyz* pos) {
     mDoAud_seStart(sound, pos, 0, 0);
+}
+
+void ensure_hunter_sword() {
+    if (!dComIfGs_isCollectSword(COLLECT_ORDON_SWORD)) {
+        dComIfGs_setCollectSword(COLLECT_ORDON_SWORD);
+    }
+    if (dComIfGs_getSelectEquipSword() != dItemNo_SWORD_e) {
+        dComIfGs_setSelectEquipSword(dItemNo_SWORD_e);
+    }
+    // The live play-state copy can differ from the save-state copy after a stage transition.
+    dComIfGp_setSelectEquipSword(dItemNo_SWORD_e);
+    dComIfGs_onItemFirstBit(dItemNo_SWORD_e);
 }
 
 void read_state(daAlink_c* l, PlayerState& s) {
@@ -247,6 +279,9 @@ void follow_round(daAlink_c* l) {
 }
 
 void on_phase_change(Phase from, Phase to) {
+    if (to != Phase::Seek) {
+        for (TauntPing& ping : s_tauntPings) ping = TauntPing{};
+    }
     if (to == Phase::Gather && playing_prop_hunt()) {
         // Choose during the gathering/warp phase so the replacement model is already loaded when
         // the hider becomes disguised at the start of Hide.
@@ -265,6 +300,15 @@ void on_phase_change(Phase from, Phase to) {
 void hunter_controls(daAlink_c* l) {
     const match::Match& m = match::get();
     const uint64_t now = now_ms();
+    if (now - s_lastSwordCheck > 500) {
+        s_lastSwordCheck = now;
+        ensure_hunter_sword();
+        // B normally refuses even to draw the sword in Castle Town. Keep it readied during the
+        // hunt as a second line of defence in case that stage check was inlined by a game build.
+        if (m.phase == Phase::Seek && l->mEquipItem != 0x103 && !l->checkEquipAnime()) {
+            l->swordEquip(TRUE);
+        }
+    }
     // Backup for the setCutType hook, in case the game inlined that call: a new cut type is a
     // new swing.
     const u8 cut = l->getCutType();
@@ -330,6 +374,9 @@ bool init() {
     }
     if (mods::hook::add_pre<HsLinkDamage>(on_link_damage_pre) != MOD_OK) {
         mods::log::warn("damage hook unavailable: world hazards can hurt players");
+    }
+    if (mods::hook::add_pre<HsCheckNotBattleStage>(on_not_battle_stage_pre) != MOD_OK) {
+        mods::log::warn("battle-stage hook unavailable: swords may be blocked in Castle Town");
     }
     if (!s_hooked) mods::log::warn("Link hooks unavailable: hunters won't be held and props stay visible");
     match::set_hooks({.taunt = play_taunt, .roundStarted = nullptr, .foundMe = nullptr});
@@ -435,14 +482,41 @@ bool has_sword() {
     return dComIfGs_getSelectEquipSword() != dItemNo_NONE_e;
 }
 
+float taunt_ping(int id, cXyz& position) {
+    if (id < 1 || id > kMaxPlayers || match::my_role() != Role::Hunter ||
+        match::get().phase != Phase::Seek) {
+        return 0.0f;
+    }
+    const TauntPing& ping = s_tauntPings[id];
+    if (ping.at == 0) return 0.0f;
+    const uint64_t age = now_ms() - ping.at;
+    if (age >= kTauntRevealMs) return 0.0f;
+    position = ping.position;
+    return 1.0f - static_cast<float>(age) / static_cast<float>(kTauntRevealMs);
+}
+
 void note_hit() {
     s_swingHit = true;
 }
 
 void play_taunt(uint8_t from, uint8_t sound) {
+    if (from < 1 || from > kMaxPlayers) return;
     cXyz feet;
     float height;
-    if (puppet::anchor(from, feet, height)) play_at(kTaunts[sound % kTauntCount], &feet);
+    if (!puppet::anchor(from, feet, height)) {
+        const match::Player& p = match::player(from);
+        if (!p.hasState || !(p.state.flags & STATE_IN_WORLD) ||
+            std::strncmp(p.state.stage, stage(), 8) != 0) {
+            return;
+        }
+        feet.set(p.state.x, p.state.y, p.state.z);
+    }
+    play_at(kTaunts[sound % kTauntCount], &feet);
+    if (match::my_role() == Role::Hunter && match::get().phase == Phase::Seek) {
+        s_tauntPings[from] = {feet, now_ms()};
+        // The voice remains positional; this cue makes sure a distant taunt is not silently lost.
+        play_at(Z2SE_SY_HINT_BUTTON_BLINK, nullptr);
+    }
 }
 
 }  // namespace hs::local

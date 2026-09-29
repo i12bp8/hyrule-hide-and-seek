@@ -5,6 +5,7 @@
 #include "maps.hpp"
 #include "match.hpp"
 #include "protocol.hpp"
+#include "props.hpp"
 
 #include <cmath>
 #include <cstdio>
@@ -478,6 +479,29 @@ static void test_maps() {
     }
 }
 
+static void test_props() {
+    std::printf("prop catalogue\n");
+    CHECK(prop_count() == 21);
+    for (int i = 0; i < prop_count(); ++i) {
+        const PropInfo& prop = prop_info(i);
+        CHECK(prop.name != nullptr && prop.arc != nullptr);
+        CHECK(prop.bmd != nullptr || prop.bmdIndex >= 0);
+        CHECK(prop.radius > 0.0f && prop.height > 0.0f && prop.scale > 0.0f);
+    }
+    CHECK(std::strcmp(prop_info(15).name, "Sign") == 0);
+    CHECK(std::strcmp(prop_info(20).name, "Gravestone") == 0);
+    CHECK(prop_for_carry_type(3) == 10);   // cannonball
+    CHECK(prop_for_carry_type(6) == 11);   // Deku nut
+    CHECK(prop_for_carry_type(10) == 12);  // big blue pot
+    CHECK(prop_for_carry_type(12) == 13);  // small Twilight pot
+    CHECK(prop_for_carry_type(13) == 14);  // big Twilight pot
+    CHECK(prop_for_carry_type(99) == -1);
+    for (int i = 0; i < 200; ++i) {
+        const int prop = random_prop();
+        CHECK(prop >= 0 && prop < prop_count());
+    }
+}
+
 int main() {
     test_protocol_roundtrip();
     test_full_round_two_players();
@@ -488,6 +512,7 @@ int main() {
     test_client_and_host_migration();
     test_colors_unique();
     test_maps();
+    test_props();
     std::printf("%d checks, %d failed\n", s_checks, s_failed);
     return s_failed == 0 ? 0 : 1;
 }

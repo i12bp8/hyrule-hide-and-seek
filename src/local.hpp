@@ -6,6 +6,8 @@
 
 #include <cstdint>
 
+struct cXyz;
+
 namespace hs::local {
 
 bool init();  // installs hooks
@@ -20,10 +22,13 @@ bool blindfolded();        // hunter waiting during the hide phase
 float taunt_cooldown();    // 0..1, for the HUD
 bool has_sword();
 
+// A recent hider taunt as seen by a hunter. Returns its remaining 0..1 reveal strength.
+float taunt_ping(int id, cXyz& position);
+
 // A hunter's sword connected with a hider this swing (no miss penalty).
 void note_hit();
 
-// Plays a taunt sound at a player's position (hooked up to match).
+// Plays and records a taunt at a player's position (hooked up to match).
 void play_taunt(uint8_t from, uint8_t sound);
 
 }  // namespace hs::local

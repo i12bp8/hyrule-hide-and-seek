@@ -25,9 +25,10 @@ on this computer**.
 
 ## 1. Loads and connects
 
-- [ ] Log shows `Hyrule Hide & Seek 0.1.3 ready`. No "hook ... did not resolve" warnings for
+- [ ] Log shows `Hyrule Hide & Seek 0.1.4 ready`. No "hook ... did not resolve" warnings for
       `daAlink_c::execute`, `daAlink_c::draw`, `daAlink_c::setCutType`,
-      `daAlink_c::setDamagePoint`, `fopAc_Execute`, or `dComIfGp_event_order`.
+      `daAlink_c::setDamagePoint`, `daAlink_c::checkNotBattleStage`, `fopAc_Execute`, or
+      `dComIfGp_event_order`.
 - [ ] On the official Linux 2.0.2 build, log shows `using the HTTP relay fallback`; the mod is
       active rather than failing on a missing WebSocket service.
 - [ ] Hide & Seek tab opens the window with Play / Rules / How to play / Settings.
@@ -67,7 +68,8 @@ Start round. With 4 players (you + 3 bots) there is one hunter; restart until yo
 - [ ] The cucco prop animates when you walk.
 - [ ] The hunter bot waits at the spawn during Hide, then chases you during the hunt and tags you:
       "You were found!", you become Link again (and a hunter).
-- [ ] D-pad down taunts: a Link shout plays, the taunt bar under your role fills back up.
+- [ ] D-pad down taunts: a Link shout plays, the taunt bar fills, and the hunter gets a five-second
+      direction/distance clue plus a marker at your position.
 
 ## 5. A round as the hunter
 
@@ -76,6 +78,7 @@ Restart until you're the hunter (1 in 4).
 - [ ] Hide phase: black screen with a countdown, you can't walk away from the spawn.
 - [ ] The bots are props standing near you (pots, crates...). No name tags over them.
 - [ ] Sword swing (B) hitting a bot prop: spark, "Found Bot N!", the counter at the top drops.
+- [ ] Castle Town still allows drawing and swinging the sword during the hunt.
 - [ ] Swinging at nothing costs a quarter heart (never the last one). Hitting a real pot also costs one.
 - [ ] Hitting every prop ends the round: "HUNTERS WIN!", the scoreboard, then a new round.
 

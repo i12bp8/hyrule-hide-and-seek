@@ -59,14 +59,15 @@ Prop Hunt is the main mode; classic Hide & Seek comes along for free.
 
 ### Prop Hunt
 
-- Props: pot, big pot, crate, small crate, barrel, skull, pumpkin, Kakariko pot, rock, cucco
-  (animated). Models are read from the player's own game files.
+- Props: 21 objects including pots, crates, furniture, a sign, cannonball, bones, gravestone and an
+  animated cucco. Models are read from the player's own game files.
 - D-pad right copies the pot/crate/barrel you stand next to, like "become the prop you look at" in
   Garry's Mod; with nothing nearby it cycles. D-pad left goes back.
 - Hunters hit props with a real sword swing: each prop carries a hit cylinder that only Link's sword
   (and wolf attacks) can hit. A swing that hits no prop costs a quarter heart (never the last one).
-- D-pad down taunts (a Link shout at the prop's position) for a point. In the last minute every prop
-  taunts on its own every 20 s so rounds don't stall.
+- D-pad down taunts for a point. Hunters hear a Link shout and get a direction, distance and
+  through-scenery world marker for five seconds. In the last minute every prop taunts on its own
+  every 20 s so rounds don't stall.
 - Hunters don't see props' name tags.
 
 ### Hide & Seek
@@ -76,7 +77,7 @@ shows up for hunters only up close.
 
 ### Scoring
 
-- Props: 1 point per 10 s hidden during the hunt, +5 for surviving, +1 per taunt (every 10 s at most).
+- Props: 1 point per 10 s hidden during the hunt, +5 for surviving, +1 per taunt (every 5 s at most).
 - Hunters: +5 per find.
 - Totals are kept for the room until the host resets them.
 

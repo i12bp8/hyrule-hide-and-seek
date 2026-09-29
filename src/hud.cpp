@@ -19,7 +19,9 @@
 #include "m_Do/m_Do_lib.h"
 
 #include <algorithm>
+#include <cmath>
 #include <cstdio>
+#include <cstring>
 #include <string>
 #include <vector>
 
@@ -121,7 +123,7 @@ void draw_blindfold(Painter& p, const Screen& s) {
     p.centered("You're a HUNTER. When the timer ends, find them and hit them with your sword.", cx,
         cy + 50.0f, 16.0f, rgba(200, 200, 200));
     if (match::get().settings.mode == Mode::PropHunt) {
-        p.centered("Props look like pots, crates, barrels... Swinging at nothing costs a quarter heart.",
+        p.centered("Props can be objects or furniture. Swinging at nothing costs a quarter heart.",
             cx, cy + 74.0f, 14.0f, rgba(170, 170, 170));
     }
 }
@@ -179,15 +181,16 @@ void draw_role(Painter& p, const Screen& s) {
     std::string hint;
     if (role == Role::Hunter) {
         line = "You are a HUNTER";
-        hint = m.settings.mode == Mode::PropHunt ? "Hit props with your sword (B)" : "Touch hiders to catch them";
+        hint = m.settings.mode == Mode::PropHunt ? "Hit props with B - follow TAUNT clues"
+                                                 : "Touch hiders - follow TAUNT clues";
         if (!local::has_sword() && m.settings.mode == Mode::PropHunt) hint = "No sword! Play from the Hide & Seek save";
     } else if (role == Role::Hider && !match::player(me).found) {
         if (local::disguised()) {
             line = std::string("You are a ") + prop_info(local::prop()).name;
-            hint = "D-pad < > change prop   D-pad v taunt";
+            hint = "D-pad < > prop   D-pad v taunt (+1, reveals you)";
         } else {
             line = "You are HIDING";
-            hint = m.phase == Phase::Seek ? "D-pad v taunt" : "";
+            hint = m.phase == Phase::Seek ? "D-pad v taunt (+1, reveals you)" : "";
         }
     } else if (role == Role::Spectator || match::player(me).found) {
         line = "Spectating";
@@ -232,16 +235,29 @@ void draw_banner(Painter& p, const Screen& s) {
 }
 
 void draw_name_tags(Painter& p, const Screen& s) {
-    if (!settings::name_tags()) return;
     const match::Match& m = match::get();
     const Role myRole = match::my_role();
+    const bool namesEnabled = settings::name_tags();
     const view_class* view = dComIfGd_getView();
     if (view == nullptr) return;
     for (int id = 1; id <= kMaxPlayers; ++id) {
+        if (id == net::self_id()) continue;
+        const match::Player& pl = match::player(id);
         cXyz feet;
         float height;
-        if (id == net::self_id() || !puppet::anchor(id, feet, height)) continue;
-        const match::Player& pl = match::player(id);
+        if (!puppet::anchor(id, feet, height)) {
+            // Even a failed puppet allocation must not make a hunter untrackable to hiders.
+            if (!pl.present || !pl.hasState || !(pl.state.flags & STATE_IN_WORLD) ||
+                now_ms() - pl.stateAt >= 4000 || std::strncmp(pl.state.stage, local::stage(), 8) != 0) {
+                continue;
+            }
+            feet.set(pl.state.x, pl.state.y, pl.state.z);
+            height = (pl.state.flags & STATE_DISGUISED) ? prop_info(pl.state.prop).height : 150.0f;
+        }
+        // A hider must always be able to identify the threat. This also provides a reliable
+        // fallback if a remote Link model cannot be drawn after a stage transition.
+        const bool hunterMarker = match::in_round() && myRole == Role::Hider && pl.role == Role::Hunter;
+        if (!namesEnabled && !hunterMarker) continue;
         const bool hiding = match::in_round() && pl.role == Role::Hider && !pl.found;
         cXyz head = feet;
         head.y += height + 35.0f;
@@ -260,8 +276,75 @@ void draw_name_tags(Painter& p, const Screen& s) {
         if (out.x < s.x || out.x > s.x + s.w || out.y < s.y || out.y > s.y + s.h) continue;
         const f32 size = std::clamp(18.0f * 600.0f / std::max(dist, 1.0f), 9.0f, 18.0f);
         std::string label = name_of(id);
-        if (match::in_round() && pl.role == Role::Hunter) label += " [Hunter]";
-        p.centered(label, out.x, out.y - size, size, player_color(id));
+        if (match::in_round() && pl.role == Role::Hunter) label += " [HUNTER]";
+        p.centered(label, out.x, out.y - size, hunterMarker ? std::max(size, 14.0f) : size,
+            hunterMarker ? rgba(255, 105, 75) : player_color(id));
+    }
+}
+
+void draw_taunt_pings(Painter& p, const Screen& s) {
+    if (match::my_role() != Role::Hunter || match::get().phase != Phase::Seek) return;
+    const view_class* view = dComIfGd_getView();
+    if (view == nullptr) return;
+
+    struct Ping {
+        int id;
+        cXyz position;
+        Vec camera;
+        float strength;
+        float distance;
+    };
+    std::vector<Ping> pings;
+    for (int id = 1; id <= kMaxPlayers; ++id) {
+        cXyz position;
+        const float strength = local::taunt_ping(id, position);
+        if (strength <= 0.0f) continue;
+        Vec camera;
+        mDoLib_pos2camera(&position, &camera);
+        pings.push_back({id, position, camera, strength, (position - view->lookat.eye).abs()});
+    }
+    if (pings.empty()) return;
+    std::sort(pings.begin(), pings.end(),
+        [](const Ping& a, const Ping& b) { return a.strength > b.strength; });
+
+    const f32 cx = s.x + s.w * 0.5f;
+    const int lines = std::min<int>(3, pings.size());
+    for (int i = 0; i < lines; ++i) {
+        const Ping& ping = pings[i];
+        const float side = -ping.camera.z * 0.35f;
+        const char* direction = ping.camera.z > -1.0f ? "BEHIND"
+                                : ping.camera.x > side ? "RIGHT"
+                                : ping.camera.x < -side ? "LEFT"
+                                                       : "AHEAD";
+        const int metres = std::max(1, static_cast<int>(std::lround(ping.distance / 100.0f)));
+        const std::string clue = std::string("TAUNT: ") + name_of(ping.id) + " - " + direction +
+                                 " - " + std::to_string(metres) + "m";
+        const uint8_t alpha = static_cast<uint8_t>(100.0f + 155.0f * ping.strength);
+        const f32 y = s.y + 69.0f + static_cast<f32>(i) * 22.0f;
+        const f32 w = p.width(clue, 18.0f) + 24.0f;
+        p.box(cx - w * 0.5f, y - 3.0f, cx + w * 0.5f, y + 21.0f, rgba(0, 0, 0, alpha / 2));
+        p.centered(clue, cx, y, 18.0f, rgba(255, 205, 65, alpha));
+    }
+
+    // Projected markers are intentionally visible through scenery for five seconds. A hider gets
+    // a point for taking this risk, and hunters get a clue that remains useful across large maps.
+    for (const Ping& ping : pings) {
+        if (ping.camera.z > -1.0f) continue;
+        cXyz marker = ping.position;
+        const match::Player& pl = match::player(ping.id);
+        marker.y += (pl.hasState && (pl.state.flags & STATE_DISGUISED))
+                        ? prop_info(pl.state.prop).height + 35.0f
+                        : 185.0f;
+        Vec out;
+        mDoLib_project(&marker, &out);
+        if (out.x < s.x + 10.0f || out.x > s.x + s.w - 10.0f || out.y < s.y + 10.0f ||
+            out.y > s.y + s.h - 10.0f) {
+            continue;
+        }
+        const uint8_t alpha = static_cast<uint8_t>(80.0f + 175.0f * ping.strength);
+        const f32 pulse = 20.0f + 2.0f * std::sin(static_cast<f32>(now_ms() % 1000) * 0.012f);
+        p.centered(std::string("! TAUNT: ") + name_of(ping.id) + " !", out.x, out.y - pulse,
+            pulse, rgba(255, 205, 65, alpha));
     }
 }
 
@@ -312,6 +395,7 @@ public:
         }
         draw_name_tags(p, s);
         draw_top(p, s);
+        draw_taunt_pings(p, s);
         draw_role(p, s);
         draw_feed(p, s);
         if (match::get().phase == Phase::Results) draw_scoreboard(p, s);
