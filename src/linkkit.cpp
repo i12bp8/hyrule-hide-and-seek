@@ -32,6 +32,8 @@ constexpr int kAnimCacheSize = 256;
 
 JKRExpHeap* s_heap = nullptr;
 bool s_heapTried = false;
+JKRArchive* s_animArchive = nullptr;
+bool s_animArchiveTried = false;
 
 struct Raw {
     u8* data = nullptr;
@@ -218,20 +220,26 @@ J3DAnmTransform* anim(uint16_t idx) {
     slot->idx = idx;
     // Do not borrow the live daAlink animation archive here. It is remounted around stage changes,
     // and JKRReadIdxResource() can return zero even though the entry exists; that exact failure
-    // left remote players with no pose and therefore no body. Mount our own short-lived view,
-    // copy the BCK into persistent storage, then unmount it.
-    JKRArchive* arc =
-        JKRArchive::mount("/res/Object/AlAnm.arc", JKRArchive::MOUNT_MEM, s_heap,
+    // left remote players with no pose and therefore no body. Mount our own view instead, kept
+    // open for the mod's lifetime (mounting per lookup repeatedly loaded the whole multi-MB
+    // archive into our heap on every cache miss/retry, which is needless churn and, if the size
+    // this SDK reports back for a resource is ever wrong, an unbounded memcpy).
+    if (!s_animArchiveTried) {
+        s_animArchiveTried = true;
+        s_animArchive = JKRArchive::mount("/res/Object/AlAnm.arc", JKRArchive::MOUNT_MEM, s_heap,
             JKRArchive::MOUNT_DIRECTION_TAIL);
-    if (arc == nullptr) {
+    }
+    if (s_animArchive == nullptr) {
         slot->failedAt = now;
         return nullptr;
     }
-    void* resource = arc->getIdxResource(idx);
-    const u32 size = resource != nullptr ? arc->getResSize(resource) : 0;
-    u8* buffer = size != 0 ? static_cast<u8*>(s_heap->alloc(size, 32)) : nullptr;
+    void* resource = s_animArchive->getIdxResource(idx);
+    // A resource lookup miss reports its size as (u32)-1, not 0; never trust it past a sane cap
+    // (the largest of Link's BCKs is well under this) for an allocation and memcpy length.
+    constexpr u32 kMaxAnimSize = 256 * 1024;
+    const u32 size = resource != nullptr ? s_animArchive->getResSize(resource) : 0;
+    u8* buffer = size != 0 && size <= kMaxAnimSize ? static_cast<u8*>(s_heap->alloc(size, 32)) : nullptr;
     if (buffer != nullptr) std::memcpy(buffer, resource, size);
-    arc->unmount();
     if (buffer == nullptr) {
         mods::log::warn("linkkit: could not copy animation #{:#x}", idx);
         slot->failedAt = now;
