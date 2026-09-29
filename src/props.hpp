@@ -26,8 +26,31 @@ struct PropInfo {
     float offsetZ = 0.0f;
 };
 
+// How the native object blocks Link. Disguises and decoys copy it so they are exactly as solid as
+// the real thing: no more, no less.
+enum class Solid : uint8_t {
+    None,        // the native object can be walked through (grass, laundry, particles)
+    Cylinder,    // native push cylinder (pots, barrels, rocks)
+    Background,  // native collision mesh (.dzb) from the same archive (furniture, fences, chests)
+};
+
+struct PropSolid {
+    Solid kind = Solid::None;
+    float radius = 0.0f;         // Cylinder: the native push radius; zero uses the hit radius
+    const char* dzb = nullptr;   // Background: collision file by name, or
+    int dzbIndex = -1;           // by resource index when the archive has no stable name
+    // Background: the native collision matrix relative to the model's, for archives whose .dzb
+    // is authored at a different size than the .bmd.
+    float bgScaleX = 1.0f;
+    float bgScaleY = 1.0f;
+    float bgScaleZ = 1.0f;
+};
+
 int prop_count();
 const PropInfo& prop_info(int index);
+const PropSolid& prop_solid(int index);
+// Names in the collision table that match no prop. Zero unless someone renamed a prop.
+int prop_solid_unmatched();
 // Map-aware selection keeps Zora props near water, village furniture in settlements, and so on.
 // A negative map selects from every enabled entry. A zero mapMask keeps a legacy network ID but
 // prevents a composite or environment-sized model from being offered as a disguise.

@@ -45,16 +45,17 @@ the HTTP fallback, custom relays must use HTTPS (plain localhost HTTP is not sup
 | **D-pad down** | Props: taunt (+1 point every 10 s at most; reveals you to hunters for 5 s) |
 | **B** | Hunters: swing; while swimming, tag a nearby prop. A miss costs one heart. |
 
-There are 54 selectable props drawn from across Hyrule: pots, crates, furniture, village signs and
-targets, forest plants, mountain rocks, Zora ice and water props, plus a walking cucco. Selection is
-themed to the current map. Disguises are sword targets but stay walk-through, avoiding stale
-network collision pushing the hunter away from what they see.
+There are 50 selectable props drawn from across Hyrule: pots, crates, furniture, village signs and
+targets, forest plants, mountain rocks, Zora water props, plus a walking cucco. Selection is themed
+to the current map. Every disguise is the size of the real object and exactly as solid: you can't
+walk through a crate or a fence disguise, but grass stays walk-through.
 
 Each hider starts with five free decoy placements (host-adjustable from 0–10). After those are used,
 an extra decoy costs 3 points earned in that round and is available only during Hunt. Every player
 can keep ten active, so a full 16-player room can retain 160 decoys without evicting another player's
-setup. An eleventh placement replaces only that player's oldest decoy. Decoys have no physical
-collision, disappear when hit, give no hunter points, and deliberately count as a missed swing.
+setup. An eleventh placement replaces only that player's oldest decoy. Decoys are as solid as the
+real object, so hiders can block a passage with them; a hunter clears one by hitting it. They give
+no hunter points and deliberately count as a missed swing.
 
 ### Rules the host can change
 

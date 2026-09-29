@@ -118,7 +118,7 @@ void stock_render_update() {
     }
     if (s_left) {
         if (now - s_joined > 2000) {
-            mods::log::info("STOCK_RENDER_TEST PASS: lobby, 54 prop kinds, 160 decoys, cleanup; {} draw-list checks", s_checks);
+            mods::log::info("STOCK_RENDER_TEST PASS: lobby, 50 prop kinds, 160 decoys, cleanup; {} draw-list checks", s_checks);
             // This is an in-frame test, not application shutdown: exit() runs game globals'
             // destructors while the engine is still active. Gameplay actor cleanup ran above.
             std::fflush(nullptr);

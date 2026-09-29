@@ -664,11 +664,36 @@ static void test_props() {
     CHECK(std::strcmp(prop_info(15).name, "Sign") == 0);
     CHECK(std::strcmp(prop_info(20).name, "Gravestone") == 0);
     CHECK(std::strcmp(prop_info(58).name, "Map Table") == 0);
-    CHECK(prop_count_for_map(-1) == 54);        // five unsafe legacy IDs stay reserved
+    CHECK(prop_count_for_map(-1) == 50);        // nine unsafe or oversized legacy IDs stay reserved
     CHECK(prop_info(27).simpleShadowSize == 0.0f); // Lily Pad gets no black ground blob
-    CHECK(prop_info(5).simpleShadowSize == 50.0f); // pumpkins use a cheap native-sized shadow
-    CHECK(prop_info(9).simpleShadowSize == 40.0f); // Cucco no longer redraws into a shadow pass
-    CHECK(prop_info(35).simpleShadowSize == 55.0f); // neither does the oil jar
+    CHECK(prop_info(5).simpleShadowSize == 70.0f); // pumpkins use a cheap native-sized shadow
+    CHECK(prop_info(9).simpleShadowSize == 48.0f); // Cucco no longer redraws into a shadow pass
+    CHECK(prop_info(35).simpleShadowSize == 61.0f); // neither does the oil jar
+    // Disguises are drawn at the native actor's scale, the size of the real object beside them.
+    CHECK(prop_info(2).scale == 0.5f);   // Crate: daObjCarry_c KIBAKO
+    CHECK(prop_info(5).scale == 1.4f);   // Pumpkin: daObj_Pumpkin_Param_c
+    CHECK(prop_info(7).scale == 0.5f);   // Small Crate: Obj_kbox
+    CHECK(prop_info(11).scale == 0.6f);  // Deku Nut: daObjCarry_c BOKKURI
+    CHECK(prop_info(19).scale == 1.35f); // Boar Bones: daObjIBone_c
+    CHECK(prop_info(20).scale == 1.0f);  // Gravestone
+    CHECK(prop_info(45).scale == 2.0f);  // Large Box: daObj_Lbox_HIO_c
+    CHECK(!prop_on_map(28, -1) && !prop_on_map(29, -1)); // ice floes are platforms at real size
+    CHECK(!prop_on_map(30, -1) && !prop_on_map(31, -1)); // so are the raft and the kelp
+    // Collision copies the native actor's.
+    CHECK(prop_solid_unmatched() == 0);
+    CHECK(prop_solid(0).kind == Solid::Cylinder && prop_solid(0).radius == 30.0f);  // Pot
+    CHECK(prop_solid(20).kind == Solid::Background);   // Gravestone
+    CHECK(prop_solid(45).kind == Solid::Background);   // Large Box
+    CHECK(prop_solid(32).kind == Solid::None);         // Laundry hangs loose
+    CHECK(prop_solid(9).kind == Solid::None);          // a real Cucco is pushed aside
+    for (int i = 0; i < prop_count(); ++i) {
+        const PropSolid& solid = prop_solid(i);
+        if (solid.kind == Solid::Background) {
+            CHECK(solid.dzb != nullptr || solid.dzbIndex >= 0);
+            CHECK(solid.bgScaleX > 0.0f && solid.bgScaleY > 0.0f && solid.bgScaleZ > 0.0f);
+        }
+        if (solid.kind == Solid::Cylinder) CHECK(solid.radius >= 0.0f);
+    }
     CHECK(prop_info(32).scale == 1.0f && prop_info(32).offsetY > 140.0f); // Laundry
     CHECK(prop_info(26).scale == 4.0f && std::fabs(prop_info(26).offsetX) > 2000.0f); // Crystal
     CHECK(!prop_on_map(36, -1)); // environment-sized River Rock

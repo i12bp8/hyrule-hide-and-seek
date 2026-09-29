@@ -59,7 +59,7 @@ Prop Hunt is the main mode; classic Hide & Seek comes along for free.
 
 ### Prop Hunt
 
-- Props: 54 selectable objects drawn from every region, with map-themed selection. Models are read
+- Props: 50 selectable objects drawn from every region, with map-themed selection. Models are read
   from the player's own game files. Five legacy IDs remain reserved for protocol compatibility but
   are not offered because their native actors require multiple models, particles or environment
   placement that a standalone disguise cannot reproduce safely.
@@ -70,10 +70,15 @@ Prop Hunt is the main mode; classic Hide & Seek comes along for free.
   points earned in that round. Every player can keep ten active; an eleventh replaces only that
   player's oldest, never somebody else's setup. The room and wire format retain up to 160 decoys,
   enough for every slot's full allowance. Placements have a short cooldown and minimum spacing, are
-  target-only rather than solid, give no hunter points, and count as a miss when struck.
+  as solid as the object they copy, give no hunter points, and count as a miss when struck. A struck
+  decoy vanishes for the hunter at once and for everyone when the host confirms, so hiders can wall
+  off a passage and hunters can cut through it.
 - Hunters hit props with a real sword swing. Each hider has a target-only cylinder for Link's sword
-  (and wolf attacks), but no object-correction collision: every disguise stays walk-through rather
-  than pushing the hunter at an interpolated network position. While swimming, where the game
+  (and wolf attacks). Disguises and decoys also copy the native actor's collision (props.cpp
+  `kSolids`): a push cylinder like pots and rocks (Co 0x79), or the archive's own .dzb collision
+  mesh like furniture, fences and chests; grass, laundry and the other walk-through objects stay
+  walk-through. A mesh only becomes solid once the local Link is clear of it, so a decoy never traps
+  the hider who placed it. Your own disguise never blocks you. While swimming, where the game
   prevents sword use, B performs a close-range prop tag. A sword swing that hits no real hider costs
   one heart (never the last quarter-heart).
 - D-pad down taunts for a point. Hunters hear a Link shout and get a direction, distance and
