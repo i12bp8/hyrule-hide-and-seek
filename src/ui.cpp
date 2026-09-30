@@ -1,4 +1,5 @@
 #include "ui.hpp"
+#include "ui_style.hpp"
 
 #include "common.hpp"
 #include "maps.hpp"
@@ -87,6 +88,7 @@ enum Field : intptr_t {
     F_PENALTY,
     F_TAUNT,
     F_TRACKING,
+    F_TREASURE,
     F_IDLE_TAUNT,
     F_NEXT,
     F_PUBLIC
@@ -116,6 +118,7 @@ void get_rule(ModContext*, void* user, UiControlValue* out) {
     case F_PENALTY: out->bool_value = s.missPenalty; break;
     case F_TAUNT: out->bool_value = s.autoTaunt; break;
     case F_TRACKING: out->bool_value = s.trackingPulse; break;
+    case F_TREASURE: out->bool_value = s.treasure; break;
     case F_IDLE_TAUNT: out->int_value = idle_taunt_option(s.idleTauntSecs); break;
     case F_NEXT: out->bool_value = s.autoNext; break;
     case F_PUBLIC: out->bool_value = s.isPublic; break;
@@ -135,6 +138,7 @@ void set_rule(ModContext*, void* user, const UiControlValue* v) {
     case F_PENALTY: s.missPenalty = v->bool_value; break;
     case F_TAUNT: s.autoTaunt = v->bool_value; break;
     case F_TRACKING: s.trackingPulse = v->bool_value; break;
+    case F_TREASURE: s.treasure = v->bool_value; break;
     case F_IDLE_TAUNT: {
         const int option = std::clamp<int>(static_cast<int>(v->int_value), 0,
             static_cast<int>(std::size(kIdleTauntValues)) - 1);
@@ -149,7 +153,7 @@ void set_rule(ModContext*, void* user, const UiControlValue* v) {
 }
 
 bool rules_locked(ModContext*, void*) {
-    return net::status() == net::Status::Online && !net::is_host();
+    return match::in_round() || (net::status() == net::Status::Online && !net::is_host());
 }
 
 void add_rule(UiElementHandle pane, UiControlKind kind, const char* label, const char* help, Field f,
@@ -172,8 +176,10 @@ void add_rule(UiElementHandle pane, UiControlKind kind, const char* label, const
     svc_ui->pane_add_control(mod_ctx, pane, &c, nullptr);
 }
 
-ModResult build_rules(ModContext*, UiWindowHandle, UiElementHandle left, UiElementHandle, void*, ModError*) {
-    svc_ui->pane_add_section(mod_ctx, left, "Game");
+ModResult build_rules(ModContext*, UiWindowHandle, UiElementHandle left, UiElementHandle right, void*, ModError*) {
+    svc_ui->elem_set_class(mod_ctx, left, "hs-main", true);
+    svc_ui->elem_set_class(mod_ctx, right, "hs-help", true);
+    svc_ui->pane_add_section(mod_ctx, left, "Round");
     add_rule(left, UI_CONTROL_DROPDOWN, "Mode",
         "<b>Prop Hunt</b>: hiders turn into objects and furniture. Hunters must hit them with a "
         "sword before time runs out.<br/><b>Hide &amp; Seek</b>: everyone stays Link; hunters tag "
@@ -186,29 +192,33 @@ ModResult build_rules(ModContext*, UiWindowHandle, UiElementHandle left, UiEleme
     add_rule(left, UI_CONTROL_NUMBER, "Round time", "How long hunters have to find everyone.", F_SEEK,
         nullptr, 0, 60, 900, 30, " s");
     add_rule(left, UI_CONTROL_DROPDOWN, "Hunters", "Auto: one hunter per four players on compact maps, per three on large maps, rounded up. At least one hider remains.", F_HUNTERS, kHunters, std::size(kHunters));
-    svc_ui->pane_add_section(mod_ctx, left, "Rules");
-    add_rule(left, UI_CONTROL_NUMBER, "Free decoys per hider",
+    svc_ui->pane_add_section(mod_ctx, left, "Hunt balance");
+    add_rule(left, UI_CONTROL_NUMBER, "Free decoys",
         "A disguised hider can place these during hiding or hunting with D-pad up. After using them, "
         "extra decoys cost 3 points earned in the current round and can only be bought during the hunt.",
         F_DECOYS, nullptr, 0, 0, 10, 1);
-    add_rule(left, UI_CONTROL_TOGGLE, "Found players join the hunters",
+    add_rule(left, UI_CONTROL_TOGGLE, "Found hiders become hunters",
         "On: a found prop becomes a hunter. Off: they watch until the next round.", F_JOIN);
-    add_rule(left, UI_CONTROL_TOGGLE, "Missed swings cost a quarter heart",
-        "Stops hunters from swinging at everything. Never takes the last quarter heart.", F_PENALTY);
-    add_rule(left, UI_CONTROL_DROPDOWN, "Taunt when a hider stays still",
+    add_rule(left, UI_CONTROL_TOGGLE, "Miss penalty",
+        "A miss costs a quarter heart. At the final quarter, misses impose two seconds of recovery. A find restores one heart.", F_PENALTY);
+    add_rule(left, UI_CONTROL_DROPDOWN, "Stationary clue",
         "A hider that has not moved this long automatically taunts. Moving resets the timer. "
         "Works in both modes; Off disables stationary clues.",
         F_IDLE_TAUNT, kIdleTaunts, std::size(kIdleTaunts));
-    add_rule(left, UI_CONTROL_TOGGLE, "Regular taunt clues",
+    add_rule(left, UI_CONTROL_TOGGLE, "Automatic clues",
         "On by default: hiders reveal a three-second clue every 30 seconds (20 on large maps), "
-        "then every 10 seconds in the last minute. A manual or stationary taunt also satisfies "
+        "then every 10 seconds in the last minute (8 for the last hider). A manual or stationary taunt also satisfies "
         "the timer, so clues never stack.", F_TAUNT);
-    add_rule(left, UI_CONTROL_TOGGLE, "Hunter tracking pulse",
+    add_rule(left, UI_CONTROL_TOGGLE, "Hunter tracking",
         "D-pad down gives a three-second direction and rough range to the nearest hider. "
         "25-second cooldown; no name or exact world marker.", F_TRACKING);
-    add_rule(left, UI_CONTROL_TOGGLE, "Start the next round automatically",
+    add_rule(left, UI_CONTROL_TOGGLE, "Treasure rupees",
+        "Hiders collect rotating rupees for 3 points. Collect three in a round for a 5-point bonus. "
+        "Every third round is Treasure Rush: 5 points per rupee. Pickups publish a taunt clue.", F_TREASURE);
+    svc_ui->pane_add_section(mod_ctx, left, "Lobby");
+    add_rule(left, UI_CONTROL_TOGGLE, "Automatic rounds",
         "After the scoreboard, a new round starts with new hunters.", F_NEXT);
-    add_rule(left, UI_CONTROL_TOGGLE, "List this room publicly",
+    add_rule(left, UI_CONTROL_TOGGLE, "Public lobby",
         "Anyone can find and join it from the public list.", F_PUBLIC);
 
     UiControlDesc reset = UI_CONTROL_DESC_INIT;
@@ -253,9 +263,9 @@ void refresh_rooms() {
             std::vector<UiListItem> items;
             labels.reserve(s_rooms.size());
             for (const net::PublicRoom& r : s_rooms) {
-                std::string map = r.map == 255 ? "Random maps" : map_info(r.map).name;
-                labels.push_back(r.code + "   " + r.label + "   " + std::to_string(r.players) + "/" +
-                                 std::to_string(r.max) + "   " + kModes[r.mode == 1 ? 1 : 0] + ", " + map);
+                labels.push_back((r.label.empty() ? r.code : r.label) + "  |  " +
+                    std::to_string(r.players) + "/" + std::to_string(r.max) + "  |  " +
+                    kModes[r.mode == 1 ? 1 : 0]);
             }
             for (size_t i = 0; i < s_rooms.size(); ++i) {
                 UiListItem item = UI_LIST_ITEM_INIT;
@@ -303,11 +313,10 @@ void update_players() {
     for (int id = 1; id <= kMaxPlayers; ++id) {
         const match::Player& p = match::player(id);
         if (!net::member(id).present) continue;
-        std::string label = std::string(net::member(id).name) + "   " + color_of(p.color).name + "   " +
-                            role_name(p.role) + (p.found ? " (found)" : "") + "   " + std::to_string(p.score) +
-                            " pts";
-        if (id == net::host_id()) label += "   [host]";
-        if (id == net::self_id()) label += "   (you)";
+        std::string label = std::string(net::member(id).name);
+        if (id == net::self_id()) label += " (you)";
+        if (id == net::host_id()) label += " (host)";
+        label += "  |  " + role_name(p.role) + "  |  " + std::to_string(p.score) + " pts";
         labels.push_back(label);
         ids.push_back(id);
     }
@@ -366,15 +375,16 @@ ModResult build_host_page(ModContext*, UiElementHandle pane, void*, ModError*) {
     reset_play_detail();
     svc_ui->pane_add_section(mod_ctx, pane, "Host a game");
     svc_ui->pane_add_rml(mod_ctx, pane,
-        "<p>Create a room, then send its five-letter code to your friends. The code is copied "
-        "automatically. Choose the map and round rules in the <b>Rules</b> tab.</p>", nullptr);
+        "<div class='hs-guide'><h3>Bring your friends</h3><p>Create a lobby and share its code. "
+        "Choose the map in Rules, then start a round.</p></div>", nullptr);
     add_identity(pane);
 
     const auto offline = [](ModContext*, void*) { return net::status() != net::Status::Offline; };
-    button(pane, "Create room and copy code", [](ModContext*, void*) {
+    const auto create = button(pane, "Create lobby", [](ModContext*, void*) {
         s_error.clear();
         net::host_room(settings::server(), settings::name());
     }, offline, "Creates a room and copies its code to your clipboard. Send it to your friends.");
+    svc_ui->elem_set_class(mod_ctx, create, "hs-primary", true);
     return MOD_OK;
 }
 
@@ -382,7 +392,7 @@ ModResult build_join_page(ModContext*, UiElementHandle pane, void*, ModError*) {
     reset_play_detail();
     svc_ui->pane_add_section(mod_ctx, pane, "Join a game");
     svc_ui->pane_add_rml(mod_ctx, pane,
-        "<p>Enter a friend's room code, paste it from the clipboard, or choose a public game.</p>",
+        "<div class='hs-guide'><h3>Find your friends</h3><p>Enter a lobby code or pick a public game.</p></div>",
         nullptr);
     add_identity(pane);
     const auto offline = [](ModContext*, void*) { return net::status() != net::Status::Offline; };
@@ -393,8 +403,9 @@ ModResult build_join_page(ModContext*, UiElementHandle pane, void*, ModError*) {
     code.config_var = settings::room_code_var();
     code.max_length = 8;
     svc_ui->pane_add_control(mod_ctx, pane, &code, nullptr);
-    button(pane, "Join with this code",
+    const auto join = button(pane, "Join lobby",
         [](ModContext*, void*) { join_code(settings::room_code()); }, offline);
+    svc_ui->elem_set_class(mod_ctx, join, "hs-primary", true);
     button(pane, "Paste code and join", [](ModContext*, void*) {
         char buf[64] = {};
         if (svc_ui->get_clipboard_text(mod_ctx, buf, sizeof(buf), nullptr) == MOD_OK) join_code(buf);
@@ -418,6 +429,8 @@ ModResult build_room_page(ModContext*, UiElementHandle pane, void*, ModError*) {
     svc_ui->pane_add_section(mod_ctx, pane, "Current room");
     svc_ui->pane_add_text(mod_ctx, pane, "", &s_play.roomRole);
     svc_ui->pane_add_text(mod_ctx, pane, "", &s_play.code);
+    svc_ui->elem_set_class(mod_ctx, s_play.roomRole, "hs-muted", true);
+    svc_ui->elem_set_class(mod_ctx, s_play.code, "hs-code", true);
     const auto notOnline = [](ModContext*, void*) { return net::status() != net::Status::Online; };
     button(pane, "Copy room code", [](ModContext*, void*) {
         svc_ui->set_clipboard_text(mod_ctx, net::room_code().c_str());
@@ -425,8 +438,7 @@ ModResult build_room_page(ModContext*, UiElementHandle pane, void*, ModError*) {
     }, notOnline);
 
     svc_ui->pane_add_rml(mod_ctx, pane,
-        "<h3>Host controls</h3><p>Choose the game rules in the Rules tab, then start when everyone "
-        "is ready.</p>", &s_play.hostControls);
+        "<div class='hs-guide'><p>Choose a map in Rules. Start when everyone is ready.</p></div>", &s_play.hostControls);
     s_play.startRound = button(pane, "Start round", [](ModContext*, void*) {
         std::string why;
         if (!match::can_start(&why)) {
@@ -437,6 +449,7 @@ ModResult build_room_page(ModContext*, UiElementHandle pane, void*, ModError*) {
         if (s_window != 0) svc_ui->window_close(mod_ctx, s_window);
     }, [](ModContext*, void*) { return !net::is_host() || match::in_round(); },
         "Everyone is warped to the map. Hunters wait while the props hide.");
+    svc_ui->elem_set_class(mod_ctx, s_play.startRound, "hs-primary", true);
     s_play.endRound = button(pane, "End round now", [](ModContext*, void*) { match::end_round(); },
         [](ModContext*, void*) { return !net::is_host() || !match::in_round(); });
     svc_ui->pane_add_rml(mod_ctx, pane,
@@ -457,21 +470,26 @@ ModResult build_room_page(ModContext*, UiElementHandle pane, void*, ModError*) {
 ModResult build_play(
     ModContext*, UiWindowHandle, UiElementHandle left, UiElementHandle right, void*, ModError*) {
     s_play = PlayTab{};
+    svc_ui->elem_set_class(mod_ctx, left, "hs-nav", true);
+    svc_ui->elem_set_class(mod_ctx, right, "hs-detail", true);
+    svc_ui->pane_add_rml(mod_ctx, left,
+        "<div class='hs-brand'><small>HYRULE</small><h1>Hide &amp; Seek</h1></div>", nullptr);
     svc_ui->pane_add_text(mod_ctx, left, "", &s_play.status);
+    svc_ui->elem_set_class(mod_ctx, s_play.status, "hs-status", true);
     svc_ui->pane_add_section(mod_ctx, left, "Play");
 
     UiGroupDesc host = UI_GROUP_DESC_INIT;
-    host.label = "Host a game";
+    host.label = "Host";
     host.build = build_host_page;
     svc_ui->pane_add_group(mod_ctx, left, right, &host, &s_play.hostGroup);
 
     UiGroupDesc join = UI_GROUP_DESC_INIT;
-    join.label = "Join a game";
+    join.label = "Join";
     join.build = build_join_page;
     svc_ui->pane_add_group(mod_ctx, left, right, &join, &s_play.joinGroup);
 
     UiGroupDesc room = UI_GROUP_DESC_INIT;
-    room.label = "Current room";
+    room.label = "Your lobby";
     room.build = build_room_page;
     svc_ui->pane_add_group(mod_ctx, left, right, &room, &s_play.roomGroup);
     return MOD_OK;
@@ -492,33 +510,30 @@ ModResult update_play(ModContext*, void*, ModError*) {
     std::string status;
     switch (net::status()) {
     case net::Status::Offline:
-        status = s_error.empty() ? "Host a game, or join one with a room code." : s_error;
+        status = s_error.empty() ? "2-16 players. Hide, hunt, repeat." : s_error;
         break;
     case net::Status::Connecting: status = "Connecting..."; break;
     case net::Status::Online:
-        status = net::is_host() ? "You're the host. Pick the rules in the Rules tab, then start a round."
-                                : "You're in! The host starts the rounds.";
+        status = "Room " + net::room_code() + "  |  " + std::to_string(net::member_count()) + "/16 players";
         break;
     }
     if (s_play.status != 0) svc_ui->elem_set_text(mod_ctx, s_play.status, status.c_str());
     if (s_play.code != 0) {
         const std::string code = net::status() == net::Status::Online
-                                     ? "Room code: " + net::room_code()
+                                     ? net::room_code()
                                      : "Not in a room";
         svc_ui->elem_set_text(mod_ctx, s_play.code, code.c_str());
     }
     if (s_play.roomRole != 0) {
-        const char* role = net::is_host()
-                               ? "You are hosting. Set the rules, then start when everyone is ready."
-                               : "You joined this room. The host controls the rules and starts rounds.";
+        const char* role = net::is_host() ? "You're hosting" : "You're in. Waiting for the host.";
         svc_ui->elem_set_text(mod_ctx, s_play.roomRole, role);
     }
     const bool roomHost = online && net::is_host();
     if (s_play.hostControls != 0) {
         svc_ui->elem_set_visible(mod_ctx, s_play.hostControls, roomHost);
     }
-    if (s_play.startRound != 0) svc_ui->elem_set_visible(mod_ctx, s_play.startRound, roomHost);
-    if (s_play.endRound != 0) svc_ui->elem_set_visible(mod_ctx, s_play.endRound, roomHost);
+    if (s_play.startRound != 0) svc_ui->elem_set_visible(mod_ctx, s_play.startRound, roomHost && !match::in_round());
+    if (s_play.endRound != 0) svc_ui->elem_set_visible(mod_ctx, s_play.endRound, roomHost && match::in_round());
     if (s_play.joinWaiting != 0) {
         svc_ui->elem_set_visible(mod_ctx, s_play.joinWaiting, online && !roomHost);
     }
@@ -528,43 +543,35 @@ ModResult update_play(ModContext*, void*, ModError*) {
 
 // ---- help and settings -----------------------------------------------------------------------
 
-ModResult build_help(ModContext*, UiWindowHandle, UiElementHandle left, UiElementHandle, void*, ModError*) {
-    svc_ui->pane_add_section(mod_ctx, left, "Prop Hunt");
+ModResult build_help(ModContext*, UiWindowHandle, UiElementHandle left, UiElementHandle right, void*, ModError*) {
+    svc_ui->elem_set_class(mod_ctx, left, "hs-full", true);
+    svc_ui->elem_set_class(mod_ctx, right, "hs-unused", true);
     svc_ui->pane_add_rml(mod_ctx, left,
-        "<p><b>Props</b> turn into an object and hide in plain sight. <b>Hunters</b> wait with a black "
-        "screen, then have until the timer runs out to hit every prop with their sword.</p>"
-        "<p>Props: <b>D-pad right</b> copies a carryable object you stand next to (or picks the next "
-        "prop), <b>D-pad left</b> goes back, <b>D-pad up</b> places a decoy, and <b>D-pad down</b> "
-        "taunts for a bonus point. A taunt reveals "
-        "your direction and position to every hunter for three seconds, with a four-second cooldown. The host can also make props "
-        "taunt after staying still for a chosen time.</p>"
-        "<p>Hunters: swing with <b>B</b>. While swimming, B tags a nearby prop because Link cannot "
-        "draw his sword. A sword swing that hits no real prop costs a quarter heart; decoys count as misses. "
-        "Follow the direction, "
-        "distance and world marker shown when a prop taunts. <b>D-pad down</b> gives a brief "
-        "tracking direction and rough range, with a 25-second cooldown.</p>",
-        nullptr);
-    svc_ui->pane_add_section(mod_ctx, left, "Hide & Seek");
+        "<div class='hs-guide'><h3>Hide</h3><p>Blend in as an object, animal or person. "
+        "D-pad right copies a nearby carryable or picks the next prop; left goes back. "
+        "D-pad up places a decoy. You start with three; extras cost 3 round points.</p></div>", nullptr);
     svc_ui->pane_add_rml(mod_ctx, left,
-        "<p>Everyone stays Link. Hunters catch hiders by touching them or hitting them.</p>", nullptr);
-    svc_ui->pane_add_section(mod_ctx, left, "Points");
+        "<div class='hs-guide'><h3>Take a risk</h3><p>D-pad down taunts for a point. "
+        "Manual and automatic taunts reveal your position to hunters for 3 seconds. "
+        "Watch the reveal alert and move afterwards. Rupees give 3 points and a clue; "
+        "your third pickup adds 5 bonus points. Every third round gives 5 points per rupee.</p></div>", nullptr);
     svc_ui->pane_add_rml(mod_ctx, left,
-        "<p>Props: 1 point per 10 seconds hidden, 5 for surviving the round, 1 per taunt (at most once "
-        "every 10 seconds). Hunters: 5 per find. Free decoys do not affect score; after they are used, "
-        "an extra decoy costs 3 points earned that round.</p>",
-        nullptr);
-    svc_ui->pane_add_section(mod_ctx, left, "Tips");
+        "<div class='hs-guide'><h3>Hunt</h3><p>Use B to hit disguised hiders or tag nearby "
+        "props while swimming. Misses cost a quarter heart. At the last quarter, a miss "
+        "adds 2 seconds of recovery; finding someone restores a heart. D-pad down tracks "
+        "the nearest hider, with a 25-second cooldown.</p></div>", nullptr);
     svc_ui->pane_add_rml(mod_ctx, left,
-        "<p>Stand still next to real pots. Moving props give themselves away. Loading zones block "
-        "movement at the arena's edges, keeping the map loaded. Everyone starts with five hearts.</p>"
-        "<p>For the same completed world for everyone (no cutscenes, missions, enemies or bosses; "
-        "fixed daylight and the same items), start from the <b>Hide &amp; Seek</b> game mode on the "
-        "title screen.</p>",
-        nullptr);
+        "<div class='hs-guide'><h3>Play again</h3><p>Earn 1 point per 10 seconds hidden, "
+        "5 for surviving, or 5 per find. Hunters rotate each round. Hide &amp; Seek mode "
+        "keeps everyone as Link and uses touch tags. Start from the Hide &amp; Seek game "
+        "mode for matching worlds. On mobile, use Dusklight's touch D-pad and B button.</p></div>", nullptr);
     return MOD_OK;
 }
 
-ModResult build_settings(ModContext*, UiWindowHandle, UiElementHandle left, UiElementHandle, void*, ModError*) {
+ModResult build_settings(ModContext*, UiWindowHandle, UiElementHandle left, UiElementHandle right, void*, ModError*) {
+    svc_ui->elem_set_class(mod_ctx, left, "hs-main", true);
+    svc_ui->elem_set_class(mod_ctx, right, "hs-help", true);
+    svc_ui->pane_add_section(mod_ctx, left, "Display");
     UiControlDesc tags = UI_CONTROL_DESC_INIT;
     tags.kind = UI_CONTROL_TOGGLE;
     tags.label = "Show name tags";
@@ -572,11 +579,18 @@ ModResult build_settings(ModContext*, UiWindowHandle, UiElementHandle left, UiEl
     tags.config_var = settings::name_tags_var();
     svc_ui->pane_add_control(mod_ctx, left, &tags, nullptr);
 
-    svc_ui->pane_add_section(mod_ctx, left, "Server");
+    UiControlDesc hints = UI_CONTROL_DESC_INIT;
+    hints.kind = UI_CONTROL_TOGGLE;
+    hints.label = "Control hints";
+    hints.help_rml = "Show a small reminder above your status card. Leave off for a cleaner view.";
+    hints.binding = UI_BINDING_CONFIG_VAR;
+    hints.config_var = settings::control_hints_var();
+    svc_ui->pane_add_control(mod_ctx, left, &hints, nullptr);
+    svc_ui->pane_add_section(mod_ctx, left, "Connection");
     UiControlDesc server = UI_CONTROL_DESC_INIT;
     server.kind = UI_CONTROL_STRING;
     server.label = "Server address";
-    server.help_rml = "Leave this alone unless you run your own server (see server/README.md). "
+    server.help_rml = "The default public relay is ready to use. Change this only to join a private relay. "
                       "Everyone in a room must use the same server.";
     server.binding = UI_BINDING_CONFIG_VAR;
     server.config_var = settings::server_var();
@@ -598,13 +612,14 @@ void push_window() {
     tabs[0].update = update_play;
     tabs[1].title = "Rules";
     tabs[1].build = build_rules;
-    tabs[2].title = "How to play";
+    tabs[2].title = "Guide";
     tabs[2].build = build_help;
     tabs[3].title = "Settings";
     tabs[3].build = build_settings;
     UiWindowDesc desc = UI_WINDOW_DESC_INIT;
     desc.tabs = tabs;
     desc.tab_count = 4;
+    desc.rcss = kWindowStyle;
     desc.on_closed = [](ModContext*, UiWindowHandle, void*) {
         s_window = 0;
         s_play = PlayTab{};
@@ -642,6 +657,8 @@ bool init() {
 void open() {
     push_window();
 }
+
+bool is_open() { return s_window != 0; }
 
 void shutdown() {
     s_window = 0;

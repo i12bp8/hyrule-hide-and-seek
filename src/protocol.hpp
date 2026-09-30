@@ -11,8 +11,8 @@
 
 namespace hs {
 
-// v6 adds the tracking-pulse rule and regular automatic clues, with quarter-heart miss penalties.
-constexpr int kProtocolVersion = 6;
+// v7 adds host-confirmed clues, treasure pickups, round statistics and compact prop states.
+constexpr int kProtocolVersion = 7;
 
 enum MsgType : uint8_t {
     MSG_STATE = 1,     // everyone -> everyone, 10 Hz
@@ -24,12 +24,18 @@ enum MsgType : uint8_t {
     MSG_FOUND = 14,    // host -> all: a hider was found
     MSG_RESULTS = 15,  // host -> all: round over
     MSG_DECOYS = 16,   // host -> all: complete active-decoy snapshot
+    MSG_RUPEES = 17,   // host -> all: active treasure snapshot
+    MSG_CLUE = 18,     // host -> all: round, hider, sound, clue kind
+    MSG_PICKUP = 19,   // host -> all: round, hider, points, completed collection bonus
     MSG_READY = 20,    // -> host: loaded into the round's map
     MSG_HIT = 21,      // -> host: I hit / touched this hider
-    MSG_TAUNT = 23,    // hider -> all
+    MSG_TAUNT = 23,    // hider -> host: round, sound
     MSG_PLACE_DECOY = 24, // hider -> host
     MSG_HIT_DECOY = 25,   // hunter -> host: remove the struck decoy
+    MSG_COLLECT_RUPEE = 26, // hider -> host: round, pickup id
 };
+
+enum class ClueKind : uint8_t { Manual, Regular, Stationary, Treasure };
 
 enum class Mode : uint8_t { PropHunt = 0, HideAndSeek = 1, Count };
 enum class Phase : uint8_t { Lobby = 0, Gather = 1, Hide = 2, Seek = 3, Results = 4 };
@@ -121,6 +127,7 @@ enum StateFlags : uint8_t {
     STATE_DISGUISED = 1 << 2,  // drawn as a prop
     STATE_SWORD = 1 << 3,      // sword in hand
     STATE_SHIELD = 1 << 4,     // shield in hand
+    STATE_COMPACT = 1 << 5,    // no Link animation slots (props / loading)
 };
 
 struct PlayerState {
@@ -144,6 +151,7 @@ struct PlayerState {
         w.s16(yaw);
         w.u8(prop);
         w.s16(propYaw);
+        if (flags & STATE_COMPACT) return;
         for (const AnimSlot& a : under) write_slot(w, a);
         for (const AnimSlot& a : upper) write_slot(w, a);
     }
@@ -158,6 +166,7 @@ struct PlayerState {
         yaw = r.s16();
         prop = r.u8();
         propYaw = r.s16();
+        if (flags & STATE_COMPACT) return;
         for (AnimSlot& a : under) read_slot(r, a);
         for (AnimSlot& a : upper) read_slot(r, a);
     }

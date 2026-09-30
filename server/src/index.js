@@ -9,7 +9,6 @@
 
 import {
   RoomCore,
-  Listing,
   HttpPeer,
   decodeHttpBatch,
   newCode,
@@ -25,6 +24,13 @@ function lobbyStub(env) {
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
+
+    if (url.pathname === "/health") return Response.json({ ok: true, relay: 1, transport: "websocket" });
+    // Legacy long polling consumes full HTTP requests and prevents room hibernation. Operators
+    // can enable it deliberately; the public free server asks players to use fixed Dusklight.
+    if (url.pathname.startsWith("/session/") && env.ALLOW_HTTP_FALLBACK !== "true") {
+      return new Response("Update Dusklight to 2.0.3 or newer for WebSocket multiplayer.", { status: 426 });
+    }
 
     if (url.pathname === "/rooms") {
       return lobbyStub(env).fetch(new Request(`https://lobby/list${url.search}`));
@@ -111,10 +117,14 @@ export class Room {
 
   core(code) {
     const lobby = lobbyStub(this.env);
-    const post = (path, body) =>
-      lobby
+    const post = (path, body) => {
+      const work = lobby
         .fetch(new Request(`https://lobby/${path}`, { method: "POST", body: JSON.stringify(body) }))
-        .catch(() => {});
+        .then((response) => { if (!response.ok) throw new Error(`Lobby update failed: ${response.status}`); })
+        .catch((error) => console.error(JSON.stringify({ event: "listing_update_failed", message: error.message })));
+      this.ctx.waitUntil(work);
+      return work;
+    };
     return new RoomCore(code, {
       peers: () => [
         ...this.ctx.getWebSockets().map((ws) => this.peer(ws)),
@@ -262,23 +272,36 @@ export class Room {
 }
 
 export class Lobby {
-  constructor() {
-    this.listing = new Listing();
+  constructor(ctx) {
+    this.sql = ctx.storage.sql;
+    this.sql.exec("CREATE TABLE IF NOT EXISTS rooms (code TEXT PRIMARY KEY, v INTEGER, players INTEGER, maximum INTEGER, at INTEGER, entry TEXT)");
+    this.sql.exec("CREATE INDEX IF NOT EXISTS rooms_expiry ON rooms(at)");
+    this.sql.exec("CREATE INDEX IF NOT EXISTS rooms_version ON rooms(v, players)");
   }
 
   async fetch(request) {
     const url = new URL(request.url);
     if (url.pathname === "/publish") {
-      this.listing.publish(await request.json());
+      const entry = await request.json();
+      this.sql.exec("INSERT INTO rooms VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(code) DO UPDATE SET v=excluded.v, players=excluded.players, maximum=excluded.maximum, at=excluded.at, entry=excluded.entry",
+        entry.code, entry.v, entry.players, entry.max, entry.at, JSON.stringify(entry));
       return new Response("ok");
     }
     if (url.pathname === "/unpublish") {
-      this.listing.unpublish((await request.json()).code);
+      this.sql.exec("DELETE FROM rooms WHERE code = ?", (await request.json()).code);
       return new Response("ok");
     }
-    const rooms = this.listing.list(Number(url.searchParams.get("v")) || 0);
+    const cutoff = Date.now() - 3 * 60 * 1000;
+    this.sql.exec("DELETE FROM rooms WHERE at < ?", cutoff);
+    const version = Number(url.searchParams.get("v")) || 0;
+    const rows = version ? this.sql.exec("SELECT entry FROM rooms WHERE v = ? AND players < maximum AND at >= ? ORDER BY players DESC, code LIMIT 50", version, cutoff) :
+      this.sql.exec("SELECT entry FROM rooms WHERE players < maximum AND at >= ? ORDER BY players DESC, code LIMIT 50", cutoff);
+    const rooms = [...rows].map(({ entry }) => {
+      const { code, label, players, max, mode, map, phase } = JSON.parse(entry);
+      return { code, label, players, max, mode, map, phase };
+    });
     return new Response(JSON.stringify({ rooms }), {
-      headers: { "content-type": "application/json", "access-control-allow-origin": "*" },
+      headers: { "content-type": "application/json", "access-control-allow-origin": "*", "cache-control": "no-store" },
     });
   }
 }

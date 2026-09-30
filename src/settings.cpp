@@ -16,6 +16,7 @@ ConfigVarHandle s_color = 0;
 ConfigVarHandle s_server = 0;
 ConfigVarHandle s_room = 0;
 ConfigVarHandle s_tags = 0;
+ConfigVarHandle s_hints = 0;
 ConfigVarHandle s_rules = 0;
 ConfigVarHandle s_rulesVersion = 0;
 
@@ -64,6 +65,7 @@ void init() {
     s_server = reg("server", CONFIG_VAR_STRING, 0, false, HS_DEFAULT_SERVER);
     s_room = reg("room_code", CONFIG_VAR_STRING);
     s_tags = reg("name_tags", CONFIG_VAR_BOOL, 0, true);
+    s_hints = reg("control_hints", CONFIG_VAR_BOOL, 0, false);
     s_rules = reg("host_rules", CONFIG_VAR_STRING);
     s_rulesVersion = reg("host_rules_version", CONFIG_VAR_INT);
 
@@ -73,10 +75,16 @@ void init() {
         if (s_rules != 0 && migrated != text) svc_config->set_string(mod_ctx, s_rules, migrated.c_str());
         svc_config->set_int(mod_ctx, s_rulesVersion, 2);
     }
+    if (s_rulesVersion != 0 && get_int(s_rulesVersion, 0) < 3) {
+        const auto text = upgrade_treasure_rules(get_str(s_rules));
+        if (s_rules != 0) svc_config->set_string(mod_ctx, s_rules, text.c_str());
+        svc_config->set_int(mod_ctx, s_rulesVersion, 3);
+    }
 
     // v0.1.0/v0.1.1 shipped before the public relay was provisioned. Upgrade only that exact
     // placeholder, preserving custom and localhost server addresses.
-    if (s_server != 0 && get_str(s_server) == "wss://hyrule-hide-and-seek.example.workers.dev") {
+    if (s_server != 0 && (get_str(s_server) == "wss://hyrule-hide-and-seek.example.workers.dev" ||
+        get_str(s_server) == "wss://hyrule-hide-and-seek.tail5c3d0e.ts.net")) {
         svc_config->set_string(mod_ctx, s_server, HS_DEFAULT_SERVER);
     }
 
@@ -123,6 +131,12 @@ bool name_tags() {
     return v;
 }
 
+bool control_hints() {
+    bool value = false;
+    if (s_hints != 0) svc_config->get_bool(mod_ctx, s_hints, &value);
+    return value;
+}
+
 // Stored as "mode,map,hide,seek,hunters,flags,idle-taunt-seconds,free-decoys". Older saves keep
 // defaults for fields that did not exist yet.
 match::Settings host_rules() {
@@ -146,6 +160,10 @@ ConfigVarHandle room_code_var() {
 }
 ConfigVarHandle name_tags_var() {
     return s_tags;
+}
+
+ConfigVarHandle control_hints_var() {
+    return s_hints;
 }
 
 }  // namespace hs::settings

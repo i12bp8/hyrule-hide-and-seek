@@ -94,6 +94,11 @@ def main() -> None:
     if not entries:
         sys.exit("could not parse any prop entries")
 
+    animation_archives = {}
+    for row in re.findall(r'\{[^{}]*"(?:Mgeneral|Wgeneral)"\s*\}', source[start:end]):
+        names = re.findall(r'"([^"\n]+)"', row)
+        animation_archives[names[0]] = names[-1]
+
     errors: list[str] = []
     cache: dict[str, tuple[set[str], dict[int, str]]] = {}
     for name, archive, bmd_token, idle_token, move_token, index_text in entries:
@@ -121,11 +126,13 @@ def main() -> None:
                     f"{name}: {archive}.arc resource ID {index} is {indexed_name}, not a model"
                 )
 
+        animation_arc = animation_archives.get(name, archive)
+        animation_names = exact_names if animation_arc == archive else {Path(path).name for path in rarc_files((object_root / f"{animation_arc}.arc").read_bytes())}
         for label, token in (("idle", idle_token), ("move", move_token)):
             resource = token_value(token)
-            if resource is not None and resource not in exact_names:
+            if resource is not None and resource not in animation_names:
                 errors.append(
-                    f"{name}: {archive}.arc has no exact-case {label} animation {resource}"
+                    f"{name}: {animation_arc}.arc has no exact-case {label} animation {resource}"
                 )
 
     if errors:

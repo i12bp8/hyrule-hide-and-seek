@@ -59,13 +59,13 @@ Prop Hunt is the main mode; classic Hide & Seek comes along for free.
 
 ### Prop Hunt
 
-- Props: 50 selectable objects drawn from every region, with map-themed selection. Models are read
-  from the player's own game files. Five legacy IDs remain reserved for protocol compatibility but
+- Props: 57 selectable objects drawn from every region, with map-themed selection. Models are read
+  from the player's own game files. Nine legacy IDs remain reserved for protocol compatibility but
   are not offered because their native actors require multiple models, particles or environment
   placement that a standalone disguise cannot reproduce safely.
 - D-pad right copies the pot/crate/barrel you stand next to, like "become the prop you look at" in
   Garry's Mod; with nothing nearby it cycles. D-pad left goes back.
-- D-pad up places a copy of the current disguise. The default allowance is five free placements per
+- D-pad up places a copy of the current disguise. The default allowance is three free placements per
   hider and the host can choose 0–10. Once used, extra placements are available during Hunt for 3
   points earned in that round. Every player can keep ten active; an eleventh replaces only that
   player's oldest, never somebody else's setup. The room and wire format retain up to 160 decoys,
@@ -81,10 +81,10 @@ Prop Hunt is the main mode; classic Hide & Seek comes along for free.
   the hider who placed it. Your own disguise never blocks you. While swimming, where the game
   prevents sword use, B performs a close-range prop tag. A sword swing that hits no real hider costs
   a quarter heart (never the last quarter-heart). Every round starts with five hearts.
-- D-pad down taunts for a point. Hunters hear a Link shout and get a direction, distance and
+- D-pad down requests a host-confirmed taunt for a point (once per 10 seconds). Hunters hear a Link shout and get a direction, distance and
   through-scenery world marker for three seconds, with a four-second cooldown. Stationary hiders
   taunt after 20 seconds by default. Regular clues run every 30 seconds (20 on large maps), then
-  every 10 seconds in the last minute. Both systems work in either game mode and share a timer
+  every 10 seconds in the last minute. The last hider gets clues every eight seconds in the final minute. The hider sees a reveal banner and upcoming-clue countdown. Both systems work in either game mode and share a timer
   with manual taunts. Hunters get a three-second direction/rough-range pulse every 25 seconds.
 - Hunters don't see props' name tags.
 
@@ -97,7 +97,8 @@ shows up for hunters only up close.
 
 - Props: 1 point per 10 s hidden during the hunt, awarded live; +5 for surviving; +1 per taunt (every
   10 s at most). After the free allowance, an extra decoy spends 3 current-round points.
-- Hunters: +5 per find.
+- Treasure: +3 per pickup (+5 every third round), with a one-time +5 challenge bonus at three pickups. Each pickup publishes a clue; automatic taunts award no points.
+- Hunters: +5 per find and one heart restored. At the final quarter heart, misses impose two seconds of attack recovery.
 - Totals are kept for the room until the host resets them.
 
 ### Maps (spawn points verified against the disc files)
@@ -123,13 +124,66 @@ penalty still can remove hearts). The live sandbox protections also apply during
 started from a normal save, but only the dedicated game mode applies the matching completed-story
 save profile.
 
+## v0.3.0 review and changes
+
+| Finding in the previous rules | Change | Effect to assess in playtests |
+| --- | --- | --- |
+| Staying hidden is usually better than moving. | Reachable random treasure, eight at most, expires after 30 seconds; collecting publishes a three-second clue. | Gives hiders a choice between safety, score and decoy funding. |
+| Five free decoys postpone the point economy. | Recommended allowance reduced to three; extras remain three points. | Early placements still matter, then loot and manual taunts fund more. |
+| Automatic taunts were client scheduled and hard to notice locally. | Host schedules and confirms them; hider banner names the reason and counts down the reveal. | Everyone agrees a clue occurred; tiny movement cannot avoid stationary clues. |
+| Hunters can spam forever at the final quarter heart. | Two-second recovery after exhausted misses; confirmed finds restore one heart. | Makes misses matter while retaining the native five-heart round setup. |
+| Final moments with one hider can drag. | Eight-second clues for the last hider in the final minute. | Adds a readable endgame without continuously exposing a position. |
+| Repeated rounds have no optional side objective. | Three-pickup challenge each round and Treasure Rush every third round. | Introduces a score objective and periodic rule variation without persistent grinding. |
+| Regional prop pools lack recognisable friendly characters. | Ordon goat, village cat, Castle Town citizen/shopper and settlement containers. | New disguises use the disc's native models and idle/walk animations. |
+| Linux needs a different transport and idle state costs quota. | Pin official Dusklight 2.0.3, adaptive sends, compact prop states, bounded/coalesced transport. | Lower traffic and smoother moving players on the common WebSocket path. |
+| Lobby metadata exists only in memory. | Indexed SQLite listing in a hibernating Durable Object. | Public rooms survive Lobby reconstruction. |
+
+### Interface for mobile and crowded rounds
+
+The original theme colours and font families are retained. Menus use scoped RCSS, 46 dp minimum control targets, and a single-column layout below 640 dp.
+The game HUD uses the middle lane so the native touch controls can occupy the sides. Timer and
+role cards replace long persistent instructions. Control hints are optional. World labels reserve
+screen rectangles: at most four nearby names, two treasure labels and three compact clue markers
+are drawn; intersecting labels are skipped. One clue summary replaces stacked paragraphs. Reveal
+feedback names its cause and shows remaining time, with a restrained amber pulse. Results compute
+row height from available space and keep all 16 rows inside the viewport. Mobile hardware must
+still be used to verify touch dispatch and device safe areas.
+
+### Treasure implementation
+
+Only the host samples spawn candidates. Candidates are 650–1,800 units from a fresh player state
+on the current map. Native ground, line and intermediate floor probes reject missing floors,
+large height changes, walls and loading exits. Host placement enforces spacing and proximity to
+an active player. This is collision-based sampling across all maps; it is not a verified list of
+hand-placed coordinates. Tight spaces may have fewer valid candidates.
+
+The host accepts pickup requests only from live hiders in Hunt with a fresh state on the round's
+stage, the current round id, an unexpired pickup and a nearby position. It consumes the pickup
+before announcing points, preventing duplicate awards. Clients draw at most eight lightweight,
+non-solid rupee actors using the native rupee model and colour animation. New rounds/results clear
+them. Late joiners and a migrated host receive the remaining snapshot.
+
+### Limits and further evaluation
+
+The relay still trusts the host and cannot make a modified client honest. There is no account,
+matchmaking rank, persistent unlock grind or automatic recovery from a severed network connection.
+Friendly native animals and people are preserved, and new disguises are selectable; this release
+does not add a general synchronized NPC population. Native pot breakage still differs between
+clients. Real cross-platform playtesting must assess animation, disguise scale, pickup reachability,
+map balance, and latency. Regional prop masks help variety; map size and routes still determine
+how useful hiding spots are.
+
+Cloudflare can run many independent lobbies, but its Free quotas bound daily usage. A local
+200-player throughput test does not prove indefinite free hosting or worldwide smoothness. See
+[server capacity](../server/README.md#free-tier-capacity) and [checks](testing.md).
+
 ## Architecture
 
 ```
 ┌─────────── game (C++ mod) ───────────┐            ┌──── relay (Worker / Node) ────┐
 │ ui.cpp      window: host/join/lobby   │            │ rooms: code → players (≤16)   │
-│ game.cpp    rules, rounds, roles      │  wss://    │ forwards [to][payload]        │
-│ net.cpp     WebSocket, reconnect      │◀──────────▶│ as [from][payload]            │
+│ match.cpp   rules, rounds, roles      │  wss://    │ forwards [to][payload]        │
+│ net.cpp     WebSocket, bounded queues      │◀──────────▶│ as [from][payload]            │
 │ local.cpp   read Link, warp, freeze   │            │ JSON control: welcome, join,  │
 │ puppet.cpp  draw other players/props  │            │ leave, host changes           │
 │ hud.cpp     timer, banners, name tags │            │ /rooms: public room list      │
@@ -158,9 +212,9 @@ Game payloads start with a `u8` type; all numbers little-endian (`src/protocol.h
 
 | Type | Dir | Content |
 | --- | --- | --- |
-| `STATE` | all, 10 Hz | stage, room, position, yaw, prop, sword/shield out, under/upper animation slots (69 bytes) |
+| `STATE` | all, adaptive 1–10 Hz | full animated Link state (70 bytes) or compact prop/loading state (28 bytes), including type |
 | `SETTINGS` | host → all | mode, map, times, options |
-| `ROSTER` | host → all | per player: role, score, found flag |
+| `ROSTER` | host → all | per player: role, colour, scores, decoy allowance, found flag, loot and find counts |
 | `ROUND` | host → all | round id, map, seekers |
 | `PHASE` | host → all | phase + milliseconds left |
 | `HELLO` | → host | wanted tunic colour |
@@ -168,8 +222,12 @@ Game payloads start with a `u8` type; all numbers little-endian (`src/protocol.h
 | `HIT` | → host | "my sword hit / I touched player N" |
 | `FOUND` | host → all | target, hunter |
 | `RESULTS` | host → all | winner |
-| `DECOYS` | host → all | complete active-decoy snapshot (maximum 8) |
-| `TAUNT` | all | sound id |
+| `DECOYS` | host → all | complete active-decoy snapshot (maximum 160) |
+| `TAUNT` | → host | round id, sound request |
+| `CLUE` | host → all | round id, hider, sound, manual/regular/stationary/treasure reason |
+| `RUPEES` | host → all | round id, up to 8 pickups with id, position, remaining lifetime |
+| `COLLECT_RUPEE` | → host | round id and pickup id; no client coordinates or score |
+| `PICKUP` | host → all | collector, points and challenge-completion feedback |
 | `PLACE_DECOY` | → host | placement request for the current round |
 | `HIT_DECOY` | → host | decoy id struck by a hunter |
 
@@ -189,7 +247,7 @@ A custom actor (`HSPupt`, registered through ActorService) per remote player in 
 - Props: the prop's archive model through the resource manager, drawn at the player's position;
   joint callbacks and animations the real objects put on the shared model data are swapped out
   around our `calc()`.
-- Position is interpolated between 10 Hz updates. Player decoys use the same prop renderer but stay
+- Position uses a 100 ms snapshot buffer, short-angle yaw interpolation and at most 100 ms of extrapolation; teleports over 600 units snap. Moving players send at 10 Hz, stationary players at 2 Hz during rounds and 1 Hz in the lobby. Player decoys use the same prop renderer but stay
   fixed at host-approved snapshot positions. Carryables and a few movable actors use cheap
   native-sized simple shadows; static or flat/translucent scenery casts no extra dynamic blob.
   Disguises never use model-projected shadows, which would submit complex geometry again and can

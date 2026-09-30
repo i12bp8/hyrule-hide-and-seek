@@ -156,6 +156,23 @@ constexpr PropInfo kProps[] = {
     {"Lake Buoy", "buoy", nullptr, nullptr, nullptr, 60.0f, 145.0f, 0.7f, 3, 0},
     {"Map Table", "Table", nullptr, nullptr, nullptr, 200.0f, 191.0f, 1.0f, 5,
         static_cast<uint16_t>(kCastle | kSettled | bit(12))},
+    {"Ordon Goat", "Cow", "cow.bmd", "cow_wait_a.bck", "cow_walk_a.bck", 110.0f, 170.0f,
+        1.0f, -1, bit(1), 100.0f},
+    {"Village Cat", "Npc_ne", "ne.bmd", "ne_wait.bck", "ne_walk.bck", 30.0f, 55.0f,
+        1.0f, -1, static_cast<uint16_t>(bit(0) | bit(10) | bit(12)), 30.0f},
+    {"Town Citizen", "MAN_a", "man_a.bmd", "m_wait_a.bck", "m_walk_a.bck", 45.0f, 180.0f,
+        1.0f, -1, kCastle, 40.0f, 0, 0, 0, "Mgeneral"},
+    {"Town Shopper", "WAN_a", "wan_a.bmd", "w_wait_a.bck", "w_walk_a.bck", 45.0f, 180.0f,
+        1.0f, -1, kCastle, 40.0f, 0, 0, 0, "Wgeneral"},
+    {"Milk Jar", "object", "b_milktubo.bmd", nullptr, nullptr, 35.0f, 75.0f,
+        1.0f, -1, static_cast<uint16_t>(kOrdon | kSettled), 30.0f},
+    {"Market Basket", "object", "k_kagom.bmd", nullptr, nullptr, 40.0f, 80.0f,
+        1.0f, -1, kSettled, 35.0f},
+    {"Shopping Bag", "object", "celeb_bag_w.bmd", nullptr, nullptr, 40.0f, 70.0f,
+        1.0f, -1, kCastle, 30.0f},
+    // Last entry is used only by treasure actors. Its zero mask keeps it out of prop selection.
+    {"Treasure Rupee", "F_gD_rupy", "f_gd_rupy.bmd", nullptr, nullptr, 20.0f, 60.0f,
+        1.0f, -1, 0},
 };
 
 struct CarryMap {
@@ -276,6 +293,8 @@ int prop_solid_unmatched() {
 int prop_count() {
     return static_cast<int>(sizeof(kProps) / sizeof(kProps[0]));
 }
+
+int rupee_prop() { return prop_count() - 1; }
 
 const PropInfo& prop_info(int index) {
     return kProps[(index >= 0 && index < prop_count()) ? index : 0];

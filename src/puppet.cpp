@@ -1,6 +1,7 @@
 #include "puppet.hpp"
 
 #include "common.hpp"
+#include "interpolation.hpp"
 #include "linkkit.hpp"
 #include "local.hpp"
 #include "maps.hpp"
@@ -41,6 +42,7 @@ namespace {
 
 constexpr u32 kLocalFlag = 0x100;
 constexpr u32 kDecoyFlag = 0x200;
+constexpr u32 kRupeeFlag = 0x400;
 constexpr u32 kPropShift = 16;
 constexpr u32 kDecoyIdShift = 24;
 constexpr u32 kPuppetHeapSize = 640 * 1024;
@@ -85,6 +87,8 @@ struct DecoySlot {
     uint8_t kind = 0;
 };
 DecoySlot s_decoys[match::kMaxActiveDecoys];
+struct RupeeSlot { Slot slot; uint16_t id = 0; };
+RupeeSlot s_rupees[match::kMaxRupees];
 uint64_t s_worldSince = 0;
 
 // Link's sword can hit these: both swords, plus the wolf in case a hunter transforms.
@@ -177,12 +181,13 @@ private:
     void releaseSolid();
     void publish(bool visible, float height, bool tracked = false);
     Slot& slot() {
-        return mDecoy ? s_decoys[mSlot - 1].slot : (mLocal ? s_localProp : s_slots[mSlot]);
+        return mRupee ? s_rupees[mSlot - 1].slot : mDecoy ? s_decoys[mSlot - 1].slot : (mLocal ? s_localProp : s_slots[mSlot]);
     }
 
     int mSlot = 0;
     bool mLocal = false;
     bool mDecoy = false;
+    bool mRupee = false;
     uint8_t mDecoyId = 0;
     uint8_t mFixedProp = 0;
     bool mVisible = false;
@@ -216,11 +221,15 @@ private:
     bool mPropRequested = false;
     bool mPropFailed = false;
     const char* mPropArc = nullptr;
+    const char* mAnimationArc = nullptr;
+    bool mAnimationRequested = false;
+    request_of_phase_process_class mAnimationPhase;
     request_of_phase_process_class mPropPhase;
     JKRExpHeap* mPropHeap = nullptr;
     J3DModel* mPropModel = nullptr;
     mDoExt_bckAnm* mPropIdle = nullptr;
     mDoExt_bckAnm* mPropMove = nullptr;
+    mDoExt_brkAnm* mRupeeColor = nullptr;
     bool mPropMoving = false;
     int mWantedProp = -1;
 
@@ -250,15 +259,16 @@ int Puppet::create() {
     mSlot = static_cast<int>(prm & 0xFF);
     mLocal = (prm & kLocalFlag) != 0;
     mDecoy = (prm & kDecoyFlag) != 0;
+    mRupee = (prm & kRupeeFlag) != 0;
     mFixedProp = static_cast<uint8_t>(prm >> kPropShift);
     mDecoyId = static_cast<uint8_t>(prm >> kDecoyIdShift);
-    const int maxSlot = mDecoy ? match::kMaxActiveDecoys : kMaxPlayers;
+    const int maxSlot = mRupee ? match::kMaxRupees : mDecoy ? match::kMaxActiveDecoys : kMaxPlayers;
     if (mSlot < 1 || mSlot > maxSlot || (mDecoy && mDecoyId == 0) || linkkit::heap() == nullptr) {
         return cPhs_ERROR_e;
     }
     // Only a remote human Link needs the large private model heap. The local disguise only needs
     // its small prop-model heap.
-    if (!mLocal && !mDecoy) {
+    if (!mLocal && !mDecoy && !mRupee) {
         mHeap = JKRExpHeap::create(kPuppetHeapSize, linkkit::heap(), false);
         if (mHeap == nullptr) {
             mods::log::warn("puppet {}: out of memory", mSlot);
@@ -418,7 +428,7 @@ bool Puppet::poseLink(const PlayerState& s, bool moving) {
 bool Puppet::updateProp(int kind, bool moving) {
     // Disabled legacy IDs can still arrive from an older peer or saved local state. Keep packet
     // numbering stable but display the known-good pot instead of a broken composite/world model.
-    if (!prop_on_map(kind, -1)) kind = 0;
+    if (!prop_on_map(kind, -1) && !(mRupee && kind == rupee_prop())) kind = 0;
     if (kind != mWantedProp) {
         releaseProp();
         mWantedProp = kind;
@@ -444,6 +454,13 @@ bool Puppet::updateProp(int kind, bool moving) {
         }
         if (step != cPhs_COMPLEATE_e) return false;
         const PropInfo& info = prop_info(mPropKind);
+        mAnimationArc = info.animationArc;
+        if (mAnimationArc != nullptr) {
+            mAnimationRequested = true;
+            const auto animationStep = dComIfG_resLoad(&mAnimationPhase, mAnimationArc);
+            if (animationStep == cPhs_ERROR_e) { mPropFailed = true; return false; }
+            if (animationStep != cPhs_COMPLEATE_e) return false;
+        }
         auto* data = static_cast<J3DModelData*>(info.bmd != nullptr
                 ? dComIfG_getObjectRes(mPropArc, info.bmd)
                 : dComIfG_getObjectRes(mPropArc, info.bmdIndex));
@@ -462,7 +479,7 @@ bool Puppet::updateProp(int kind, bool moving) {
         mPropModel = mDoExt_J3DModel__create(data, 0x80000, 0x11000084);
         const auto bck = [&](const char* name) -> mDoExt_bckAnm* {
             if (name == nullptr) return nullptr;
-            auto* res = static_cast<J3DAnmTransform*>(dComIfG_getObjectRes(mPropArc, name));
+            auto* res = static_cast<J3DAnmTransform*>(dComIfG_getObjectRes(mAnimationArc != nullptr ? mAnimationArc : mPropArc, name));
             if (res == nullptr) return nullptr;
             auto* anm = JKR_NEW mDoExt_bckAnm();
             if (anm == nullptr || !anm->init(res, TRUE, J3DFrameCtrl::EMode_LOOP, 1.0f, 0, -1, false)) return nullptr;
@@ -470,6 +487,11 @@ bool Puppet::updateProp(int kind, bool moving) {
         };
         mPropIdle = bck(info.idleBck);
         mPropMove = bck(info.moveBck);
+        if (mRupee) {
+            auto* color = static_cast<J3DAnmTevRegKey*>(dComIfG_getObjectRes(mPropArc, 7));
+            mRupeeColor = color != nullptr ? JKR_NEW mDoExt_brkAnm() : nullptr;
+            if (mRupeeColor != nullptr && !mRupeeColor->init(data, color, FALSE, J3DFrameCtrl::EMode_LOOP, 0.0f, 0, -1)) mRupeeColor = nullptr;
+        }
         if (mPropModel == nullptr) {
             mods::log::warn("puppet: could not create {} model", info.name);
             mPropFailed = true;
@@ -510,6 +532,10 @@ void Puppet::releaseProp() {
     }
     mPropModel = nullptr;
     mPropIdle = mPropMove = nullptr;
+    mRupeeColor = nullptr;
+    if (mAnimationRequested && mAnimationArc != nullptr) dComIfG_resDelete(&mAnimationPhase, mAnimationArc);
+    mAnimationRequested = false;
+    mAnimationArc = nullptr;
     if (mPropRequested && mPropArc != nullptr) dComIfG_resDelete(&mPropPhase, mPropArc);
     mPropRequested = false;
     mPropFailed = false;
@@ -531,7 +557,7 @@ void Puppet::updateGround() {
 void Puppet::armHitbox(const match::Player& p, bool disguised, int kind) {
     const match::Match& m = match::get();
     mCylArmed = m.phase == Phase::Seek && match::my_role() == Role::Hunter && p.role == Role::Hider &&
-                !p.found;
+                !p.found && local::attack_recovery_ms() == 0;
     if (!mCylArmed) return;
     const float r = disguised ? prop_info(kind).radius : kLinkRadius;
     const float h = disguised ? prop_info(kind).height : kLinkHeight;
@@ -546,7 +572,7 @@ void Puppet::armHitbox(const match::Player& p, bool disguised, int kind) {
 
 void Puppet::armDecoyHitbox(int kind) {
     const match::Match& m = match::get();
-    mCylArmed = m.phase == Phase::Seek && match::my_role() == Role::Hunter;
+    mCylArmed = m.phase == Phase::Seek && match::my_role() == Role::Hunter && local::attack_recovery_ms() == 0;
     if (!mCylArmed) return;
     mCyl.SetCoSPrm(0);
     mCyl.SetC(current.pos);
@@ -676,6 +702,14 @@ int Puppet::execute() {
         return 1;
     }
 
+    if (mRupee) {
+        mDisguised = true;
+        shape_angle.y = static_cast<int16_t>((now_ms() % 2400) * 65536 / 2400);
+        mVisible = updateProp(rupee_prop(), false);
+        publish(mVisible, 60.0f);
+        return 1;
+    }
+
     if (mDecoy) {
         mDisguised = true;
         old.pos = current.pos;
@@ -694,7 +728,7 @@ int Puppet::execute() {
     }
 
     const match::Player& p = match::player(mSlot);
-    const PlayerState& s = p.state;
+    const PlayerState s = interpolate_state(p.previousState, p.previousStateAt, p.state, p.stateAt, now_ms());
     mVisible = p.present && p.hasState && same_stage_as_me(s) && now_ms() - p.stateAt < kStaleMs;
     if (!mVisible) {
         releaseSolid();
@@ -702,6 +736,7 @@ int Puppet::execute() {
         return 1;
     }
 
+    mDisguised = (s.flags & STATE_DISGUISED) != 0;
     const cXyz target(s.x, s.y, s.z);
     const cXyz before = current.pos;
     if (!mHaveTarget || (target - current.pos).abs() > kSnapDistance) {
@@ -709,8 +744,8 @@ int Puppet::execute() {
         shape_angle.y = s.yaw;
         mHaveTarget = true;
     } else {
-        current.pos += (target - current.pos) * 0.35f;
-        cLib_addCalcAngleS2(&shape_angle.y, s.yaw, 3, 0x2000);
+        current.pos = target;
+        shape_angle.y = mDisguised ? s.propYaw : s.yaw;
     }
     old.pos = before;
     updateGround();
@@ -756,6 +791,7 @@ int Puppet::draw() {
     if (mDisguised || mLocal) {
         if (mPropModel == nullptr) return 1;
         g_env_light.setLightTevColorType_MAJI(mPropModel, &tevStr);
+        if (mRupeeColor != nullptr) mRupeeColor->entry(mPropModel->getModelData(), match::rupee_points() == 5 ? 4.0f : 0.0f);
         // Keep shared resource callbacks away from our model. Its matrices were calculated in
         // execute(); EntryDL refreshes materials on presentation frames without re-entering the
         // packets that Dusklight retained from the last simulation tick.
@@ -764,6 +800,7 @@ int Puppet::draw() {
         mDoExt_bckAnm* anm = mPropMoving && mPropMove != nullptr ? mPropMove : mPropIdle;
         if (anm != nullptr) anm->entry(data);
         mDoExt_modelEntryDL(mPropModel);
+        if (mRupeeColor != nullptr) mRupeeColor->remove(data);
         // Never use model-projected shadows here: those redraw the prop's geometry into the shadow
         // pass. A metadata-sized simple quad is cheap and cannot double a complex model's indices.
         shadow = prop_info(mPropKind).simpleShadowSize;
@@ -845,7 +882,7 @@ const ActorProfileDesc kProfile = {
 };
 
 void manage(Slot& slot, bool want, int id, bool local, const cXyz& at, bool decoy = false,
-    uint8_t kind = 0, uint8_t decoyId = 0, int16_t yaw = 0) {
+    uint8_t kind = 0, uint8_t decoyId = 0, int16_t yaw = 0, bool rupee = false) {
     if (slot.actor != fpcM_ERROR_PROCESS_ID_e && fopAcM_SearchByID(slot.actor) == nullptr) {
         slot.actor = fpcM_ERROR_PROCESS_ID_e;
         slot.visible = false;
@@ -855,6 +892,7 @@ void manage(Slot& slot, bool want, int id, bool local, const cXyz& at, bool deco
         ActorSpawnParams params{};
         params.parameters = static_cast<uint32_t>(id) | (local ? kLocalFlag : 0u) |
                             (decoy ? kDecoyFlag : 0u) |
+                            (rupee ? kRupeeFlag : 0u) |
                             (static_cast<uint32_t>(kind) << kPropShift) |
                             (static_cast<uint32_t>(decoyId) << kDecoyIdShift);
         params.room_num = -1;
@@ -893,6 +931,7 @@ bool unregister_actor() {
     for (Slot& s : s_slots) s = Slot{};
     s_localProp = Slot{};
     for (DecoySlot& s : s_decoys) s = DecoySlot{};
+    for (auto& s : s_rupees) s = {};
     return true;
 }
 
@@ -941,6 +980,22 @@ void update() {
             manage(live.slot, false, i + 1, false, cXyz(0.0f, 0.0f, 0.0f));
             live.id = 0;
             live.kind = 0;
+        }
+    }
+    const bool treasureWorld = online && settled && game.phase == Phase::Seek && game.settings.treasure &&
+        std::strncmp(local::stage(), map_info(game.map).stage, 8) == 0;
+    for (int i = 0; i < match::kMaxRupees; ++i) {
+        auto& live = s_rupees[i];
+        const auto& r = game.rupees[i];
+        const bool want = treasureWorld && i < game.rupeeCount && r.expiresAt > now;
+        if (!want || live.id != r.id) {
+            manage(live.slot, false, i + 1, false, cXyz(0, 0, 0));
+            if (live.slot.actor != fpcM_ERROR_PROCESS_ID_e) continue;
+            live.id = 0;
+        }
+        if (want) {
+            live.id = r.id;
+            manage(live.slot, true, i + 1, false, cXyz(r.x, r.y + 35, r.z), false, 0, 0, 0, true);
         }
     }
 }

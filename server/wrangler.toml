@@ -1,6 +1,19 @@
 name = "hyrule-hide-and-seek"
 main = "src/index.js"
 compatibility_date = "2025-09-01"
+workers_dev = true
+minify = true
+
+[vars]
+ALLOW_HTTP_FALLBACK = "false"
+
+[observability]
+enabled = true
+head_sampling_rate = 0.01
+
+[observability.traces]
+enabled = true
+head_sampling_rate = 0.01
 
 [[durable_objects.bindings]]
 name = "ROOMS"

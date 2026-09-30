@@ -10,6 +10,8 @@
 #include "gameplay.hpp"
 #include "rules_config.hpp"
 #include "collision_cleanup.hpp"
+#include "interpolation.hpp"
+#include "hud_layout.hpp"
 
 #include <cmath>
 #include <cstdio>
@@ -109,12 +111,13 @@ static void host_room(int players) {
     CHECK(defaults.autoTaunt && defaults.trackingPulse);
     CHECK(defaults.hideSecs == 30 && defaults.seekSecs == 180);
     CHECK(defaults.idleTauntSecs == 20);
-    CHECK(defaults.freeDecoys == 5);
+    CHECK(defaults.freeDecoys == 3);
     match::Settings s;
     s.map = 0;
     s.hideSecs = 20;
     s.seekSecs = 60;
     s.autoNext = false;
+    s.freeDecoys = 5; // legacy decoy fixtures explicitly request this allowance
     match::set_settings(s);
 }
 
@@ -503,6 +506,8 @@ static void test_hit_rules() {
         CHECK(!match::player(hiders[0]).found);
         advance(4'000);
     }
+    // A real game continues publishing state throughout the immunity period.
+    for (int id = 1; id <= 3; ++id) deliver(static_cast<uint8_t>(id), state_msg(stage, 0, 0, 0));
     hit(hunter, hiders[0]);
     CHECK(match::player(hiders[0]).found);
     CHECK(match::player(hiders[0]).role == Role::Hunter);  // found props join the hunters
@@ -568,6 +573,8 @@ static void test_client_and_host_migration() {
         roster.u8(0);
         roster.u8(id == 1 ? 1 : 0);
         roster.u8(0);
+        roster.u8(0); // rupees
+        roster.u8(0); // finds
     }
     deliver(1, roster.bytes());
     Writer round(MSG_ROUND);
@@ -658,7 +665,7 @@ static void test_maps() {
 
 static void test_props() {
     std::printf("prop catalogue\n");
-    CHECK(prop_count() == 59);
+    CHECK(prop_count() == 67);
     for (int i = 0; i < prop_count(); ++i) {
         const PropInfo& prop = prop_info(i);
         CHECK(prop.name != nullptr && prop.arc != nullptr);
@@ -671,7 +678,7 @@ static void test_props() {
     CHECK(std::strcmp(prop_info(15).name, "Sign") == 0);
     CHECK(std::strcmp(prop_info(20).name, "Gravestone") == 0);
     CHECK(std::strcmp(prop_info(58).name, "Map Table") == 0);
-    CHECK(prop_count_for_map(-1) == 50);        // nine unsafe or oversized legacy IDs stay reserved
+    CHECK(prop_count_for_map(-1) == 57);        // nine unsafe or oversized legacy IDs stay reserved
     CHECK(prop_info(27).simpleShadowSize == 0.0f); // Lily Pad gets no black ground blob
     CHECK(prop_info(5).simpleShadowSize == 70.0f); // pumpkins use a cheap native-sized shadow
     CHECK(prop_info(9).simpleShadowSize == 48.0f); // Cucco no longer redraws into a shadow pass
@@ -819,7 +826,132 @@ static void test_exit_collision() {
     CHECK(retained[1] == nullptr && retained[2] == nullptr && retained[4] == nullptr);
 }
 
+static void test_treasure_and_clues() {
+    std::printf("host validates treasure and confirms clues\n");
+    host_room(3);
+    auto rules = match::get().settings;
+    rules.seekSecs = 180;
+    match::set_settings(rules);
+    match::start_round();
+    const char* stage = map_info(match::get().map).stage;
+    everyone_ready(3, stage);
+    advance(21'000);
+    const int hider = hider_id(), hunter = hunter_id();
+    const auto fresh = [&](int id, float x = 0.0f) {
+        deliver(static_cast<uint8_t>(id), state_msg(stage, x, 0, 0, STATE_IN_WORLD | STATE_DISGUISED));
+    };
+    const auto request = [&](int id, uint8_t type, uint16_t item = 0) {
+        Writer w(type); w.u32(match::get().round);
+        if (type == MSG_TAUNT) w.u8(0); else w.u16(item);
+        deliver(static_cast<uint8_t>(id), w.bytes());
+    };
+    fresh(hider); fresh(hunter);
+    CHECK(!match::spawn_rupee(NAN, 0, 0));
+    CHECK(!match::spawn_rupee(10000, 0, 0));
+    CHECK(match::spawn_rupee(700, 0, 0));
+    auto item = match::get().rupees[0].id;
+    request(hider, MSG_COLLECT_RUPEE, item); // too far
+    CHECK(match::get().rupeeCount == 1 && match::player(hider).rupeesCollected == 0);
+    fresh(hunter, 700); request(hunter, MSG_COLLECT_RUPEE, item);
+    CHECK(match::get().rupeeCount == 1); // hunters cannot collect
+    fresh(hider, 700); request(hider, MSG_COLLECT_RUPEE, item);
+    CHECK(match::get().rupeeCount == 0 && match::player(hider).rupeesCollected == 1);
+    CHECK(match::player(hider).roundPoints == 3);
+    CHECK(match::player(hider).revealedUntil > s_now);
+    request(hider, MSG_COLLECT_RUPEE, item);
+    CHECK(match::player(hider).roundPoints == 3); // consumed, no duplicate reward
+    for (int n = 0; n < 2; ++n) {
+        const float x = 1400 + n * 700;
+        fresh(hider, x - 700);
+        CHECK(match::spawn_rupee(x, 0, 0));
+        item = match::get().rupees[0].id;
+        fresh(hider, x); request(hider, MSG_COLLECT_RUPEE, item);
+    }
+    CHECK(match::player(hider).rupeesCollected == 3);
+    CHECK(match::player(hider).roundPoints == 14); // 3*3 + one collection bonus
+    advance(5000); fresh(hider, 2100);
+    const auto points = match::player(hider).roundPoints;
+    request(hider, MSG_TAUNT);
+    CHECK(match::player(hider).roundPoints == points + 1);
+    const auto reveal = match::player(hider).revealedUntil;
+    request(hider, MSG_TAUNT);
+    CHECK(match::player(hider).roundPoints == points + 1 && match::player(hider).revealedUntil == reveal);
+    Writer forged(MSG_CLUE); forged.u32(match::get().round); forged.u8(hunter); forged.u8(0); forged.u8(0);
+    deliver(static_cast<uint8_t>(hider == g_fake.host ? hunter : hider), forged.bytes());
+    CHECK(match::player(hunter).revealedUntil == 0);
+    advance(21000); fresh(hider, 2100); match::update();
+    CHECK(match::player(hider).revealedUntil > s_now); // host, rather than hider, enforces automatic clue
+    const auto before = match::player(hider).roundPoints;
+    CHECK(before == points + 3); // survival awards only, automatic taunts give no points
+    CHECK(match::spawn_rupee(2800, 0, 0));
+    item = match::get().rupees[0].id;
+    Writer stale(MSG_COLLECT_RUPEE); stale.u32(match::get().round - 1); stale.u16(item);
+    fresh(hider, 2800); deliver(static_cast<uint8_t>(hider), stale.bytes());
+    CHECK(match::get().rupeeCount == 1);
+    advance(match::kRupeeLifetimeMs + 100);
+    CHECK(match::get().rupeeCount == 0);
+    match::end_round();
+    CHECK(match::get().rupeeCount == 0);
+}
+
+static void test_interpolation_and_compact_states() {
+    std::printf("buffered movement, bounded prediction and compact states\n");
+    PlayerState a; a.flags = STATE_IN_WORLD | STATE_DISGUISED | STATE_COMPACT;
+    copy_str(a.stage, "F_SP103");
+    Writer w(MSG_STATE); a.write(w);
+    CHECK(w.bytes().size() == 28);
+    Reader r(w.bytes().data() + 1, w.bytes().size() - 1); PlayerState decoded; decoded.read(r);
+    CHECK(r.ok() && decoded.flags == a.flags && decoded.under[0].idx == 0xFFFF);
+    PlayerState b = a; b.x = 100; a.yaw = 32760; b.yaw = -32760;
+    const auto middle = interpolate_state(a, 1000, b, 1100, 1150);
+    CHECK(std::fabs(middle.x - 50) < 0.01f);
+    CHECK(std::abs(middle.yaw) > 32000); // crosses wrap by the short path
+    const auto bounded = interpolate_state(a, 1000, b, 1100, 100000);
+    CHECK(bounded.x == 200); // bounded extrapolation, no runaway stale movement
+    b.x = 10000;
+    CHECK(interpolate_state(a, 1000, b, 1100, 1150).x == 10000); // teleports snap
+    CHECK(prop_on_map(59, 1) && !prop_on_map(59, 10));
+    CHECK(prop_on_map(60, 12) && !prop_on_map(60, 13));
+    CHECK(prop_on_map(61, 10) && !prop_on_map(61, 1));
+    CHECK(!prop_on_map(rupee_prop(), -1));
+
+    // Moving players must stay smooth in the lobby as well as during rounds. Idle traffic drops.
+    reset_net(2); match::on_welcome(); g_fake.sent.clear();
+    PlayerState wire; wire.flags = STATE_IN_WORLD; copy_str(wire.stage, "F_SP103");
+    match::set_local_state(wire);
+    CHECK(count_sent(MSG_STATE) == 1);
+    s_now += 100; wire.x += 10; match::set_local_state(wire);
+    CHECK(count_sent(MSG_STATE) == 2);
+    s_now += 100; match::set_local_state(wire);
+    CHECK(count_sent(MSG_STATE) == 2);
+    s_now += 900; match::set_local_state(wire);
+    CHECK(count_sent(MSG_STATE) == 3);
+}
+
+static void test_mobile_hud_layout() {
+    std::printf("mobile HUD bounds and label collision\n");
+    const float sizes[][2] = {{320, 240}, {608, 448}, {844, 390}, {390, 844}, {1280, 720}};
+    for (const auto& size : sizes) {
+        const auto top = hud::centre_card(12, 24, size[0], 8, 40);
+        const auto footer = hud::centre_card(12, 24, size[0], size[1] - 56, 40);
+        CHECK(top.x >= 12 && top.x + top.w <= 12 + size[0]);
+        CHECK(footer.y >= 24 && footer.y + footer.h <= 24 + size[1]);
+        CHECK(!top.overlaps(footer));
+        for (int players = 1; players <= 16; ++players) {
+            const auto scores = hud::score_layout(12, 24, size[0], size[1], players);
+            CHECK(scores.card.x >= 12 && scores.card.x + scores.card.w <= 12 + size[0]);
+            CHECK(scores.card.y >= 24 && scores.card.y + scores.card.h <= 24 + size[1]);
+            CHECK(scores.rowHeight > 0 && scores.card.h >= scores.rowHeight * players);
+        }
+    }
+    CHECK((hud::Rect{0, 0, 20, 20}.overlaps(hud::Rect{18, 8, 20, 20})));
+    CHECK((!hud::Rect{0, 0, 20, 20}.overlaps(hud::Rect{28, 0, 20, 20})));
+}
+
 int main() {
+    test_treasure_and_clues();
+    test_interpolation_and_compact_states();
+    test_mobile_hud_layout();
     test_protocol_roundtrip();
     test_decoy_economy_and_validation();
     test_full_room_decoy_capacity();

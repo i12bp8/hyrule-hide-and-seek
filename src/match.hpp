@@ -17,6 +17,9 @@ namespace hs::match {
 constexpr int kMaxDecoysPerPlayer = 10;
 constexpr int kMaxActiveDecoys = kMaxPlayers * kMaxDecoysPerPlayer;
 constexpr int kExtraDecoyCost = 3;
+constexpr int kMaxRupees = 8;
+constexpr uint64_t kRupeeLifetimeMs = 30000;
+constexpr float kRupeeCollectRadius = 180.0f; // 100-unit local pickup plus one moving-state interval
 
 struct Settings {
     Mode mode = Mode::PropHunt;
@@ -28,10 +31,11 @@ struct Settings {
     bool missPenalty = true;
     bool autoTaunt = true;
     bool trackingPulse = true;
+    bool treasure = true;
     uint16_t idleTauntSecs = 20;  // 0 disables stationary-hider auto-taunts
     bool autoNext = true;
     bool isPublic = false;
-    uint8_t freeDecoys = 5;  // free placements per hider, available from the Hide phase
+    uint8_t freeDecoys = 3;  // free placements per hider, available from the Hide phase
 
     void write(Writer& w) const;
     void read(Reader& r);
@@ -51,8 +55,16 @@ struct Player {
     PlayerState state;
     bool hasState = false;
     uint64_t stateAt = 0;
+    PlayerState previousState;
+    uint64_t previousStateAt = 0;
     uint64_t stageChangedAt = 0;  // tag immunity after loading a new area
     uint64_t lastTauntAt = 0;
+    uint64_t lastClueAt = 0;
+    uint64_t lastMovedAt = 0;
+    uint64_t revealedUntil = 0;
+    float idleX = 0, idleY = 0, idleZ = 0;
+    uint8_t rupeesCollected = 0;
+    uint8_t finds = 0;
     uint64_t lastDecoyAt = 0;
     uint16_t survivalAwarded = 0;  // host bookkeeping for live 10-second awards
     uint8_t decoysUsed = 0;
@@ -76,6 +88,12 @@ struct Match {
     Player players[kSlots];
     Decoy decoys[kMaxActiveDecoys];
     uint8_t decoyCount = 0;
+    struct Rupee {
+        uint16_t id = 0;
+        float x = 0, y = 0, z = 0;
+        uint64_t expiresAt = 0;
+    } rupees[kMaxRupees];
+    uint8_t rupeeCount = 0;
 };
 
 // Short messages for the HUD feed and big centre banners.
@@ -97,6 +115,10 @@ int decoy_count();
 const Decoy& decoy(int index);
 int my_decoys_left();  // remaining free placements; extra placements cost kExtraDecoyCost
 bool can_place_decoy();
+uint32_t next_clue_ms();
+int rupee_points();
+bool spawn_rupee(float x, float y, float z); // host: position checked against game collision
+void collect_rupee(uint16_t id);
 
 // Presentation reads these; each Notice is shown for a few seconds.
 const std::vector<Notice>& notices();
@@ -130,7 +152,7 @@ void update();
 
 // Hooks for the local-player module: taunts from others and rounds starting.
 struct Hooks {
-    void (*taunt)(uint8_t from, uint8_t sound) = nullptr;
+    void (*taunt)(uint8_t from, uint8_t sound, ClueKind kind) = nullptr;
     void (*roundStarted)() = nullptr;
     void (*foundMe)(uint8_t by) = nullptr;
 };

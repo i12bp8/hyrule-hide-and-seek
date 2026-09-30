@@ -7,6 +7,7 @@
 #include <mods/svc/websocket.hpp>
 
 #include <cctype>
+#include <deque>
 
 namespace hs::net {
 
@@ -28,6 +29,11 @@ mods::http::Pending s_httpSend;
 std::string s_httpBase;
 std::string s_httpSession;
 std::string s_httpOut;
+std::string s_httpState;
+struct Outbound { bool text; std::vector<std::byte> bytes; };
+std::deque<Outbound> s_reliable;
+std::vector<std::byte> s_latestState;
+size_t s_queuedBytes = 0;
 uint32_t s_httpGeneration = 0;
 int s_httpFailures = 0;
 uint64_t s_httpRetryAt = 0;
@@ -109,6 +115,10 @@ void drop_transport(bool tellServer) {
     s_httpBase.clear();
     s_httpSession.clear();
     s_httpOut.clear();
+    s_httpState.clear();
+    s_reliable.clear();
+    s_latestState.clear();
+    s_queuedBytes = 0;
     s_httpFailures = 0;
     s_httpRetryAt = 0;
     s_transport = Transport::None;
@@ -146,10 +156,45 @@ void queue_http(uint8_t kind, const void* data, size_t size) {
         closed("The connection could not keep up with the game.");
         return;
     }
-    s_httpOut.push_back(static_cast<char>(kind));
-    s_httpOut.push_back(static_cast<char>(size & 0xff));
-    s_httpOut.push_back(static_cast<char>((size >> 8) & 0xff));
-    s_httpOut.append(static_cast<const char*>(data), size);
+    const auto* bytes = static_cast<const uint8_t*>(data);
+    const bool state = kind == 1 && size >= 2 && bytes[1] == MSG_STATE;
+    auto& out = state ? s_httpState : s_httpOut;
+    if (state) out.clear(); // keep only the most recent position while an HTTP send is pending
+    out.push_back(static_cast<char>(kind));
+    out.push_back(static_cast<char>(size & 0xff));
+    out.push_back(static_cast<char>((size >> 8) & 0xff));
+    out.append(static_cast<const char*>(data), size);
+}
+
+void queue_reliable(bool text, std::vector<std::byte> bytes) {
+    if (s_queuedBytes + bytes.size() > 128 * 1024) {
+        closed("The connection could not keep up with the game."); return;
+    }
+    s_queuedBytes += bytes.size();
+    s_reliable.push_back({text, std::move(bytes)});
+}
+
+void queue_text(const std::string& text) {
+    if (s_transport == Transport::Http) { queue_http(0, text.data(), text.size()); return; }
+    std::vector<std::byte> bytes(text.size());
+    std::memcpy(bytes.data(), text.data(), text.size());
+    queue_reliable(true, std::move(bytes));
+}
+
+void flush_websocket() {
+    while (!s_reliable.empty()) {
+        const auto& packet = s_reliable.front();
+        const ModResult result = packet.text ? s_conn.send_text({reinterpret_cast<const char*>(packet.bytes.data()), packet.bytes.size()}) :
+            s_conn.send_binary(packet.bytes);
+        if (result == MOD_CONFLICT) return;
+        if (result != MOD_OK) { closed("Could not send data to the Hide & Seek server."); return; }
+        s_queuedBytes -= packet.bytes.size(); s_reliable.pop_front();
+    }
+    if (!s_latestState.empty()) {
+        const auto result = s_conn.send_binary(s_latestState);
+        if (result == MOD_OK) s_latestState.clear();
+        else if (result != MOD_CONFLICT) closed("Could not send data to the Hide & Seek server.");
+    }
 }
 
 void start_http_poll() {
@@ -180,7 +225,8 @@ void start_http_poll() {
 }
 
 void start_http_send() {
-    if (s_httpSession.empty() || s_httpSend || s_httpOut.empty()) return;
+    if (s_httpSession.empty() || s_httpSend || (s_httpOut.empty() && s_httpState.empty())) return;
+    s_httpOut += s_httpState; s_httpState.clear();
     const uint32_t generation = s_httpGeneration;
     mods::http::Request request{
         .method = HTTP_METHOD_POST,
@@ -221,7 +267,8 @@ void start_http(const std::string& server, const std::string& path) {
             !json::parse({reinterpret_cast<const char*>(response.body.data()), response.body.size()}, body) ||
             body["session"].str().empty())
         {
-            closed("Could not reach the Hide & Seek server. Is the server address right?");
+            closed(response.statusCode == 426 ? "Update Dusklight to 2.0.3 or newer for WebSocket multiplayer." :
+                "Could not reach the Hide & Seek server. Is the server address right?");
             return;
         }
         s_httpSession = body["session"].str();
@@ -245,6 +292,7 @@ void connect_room(const std::string& server, const std::string& path) {
     s_conn = mods::ws::connect(options);
     if (s_conn) {
         s_transport = Transport::WebSocket;
+        mods::log::info("Using WebSocket multiplayer on this Dusklight build");
         return;
     }
     if (s_conn.result() == MOD_UNAVAILABLE) {
@@ -363,6 +411,7 @@ void update() {
         default: break;
         }
     }
+    if (s_transport == Transport::WebSocket && s_status == Status::Online) flush_websocket();
 }
 
 Status status() {
@@ -404,8 +453,9 @@ void send(uint8_t to, const std::vector<uint8_t>& payload) {
     if (s_transport == Transport::Http) {
         queue_http(1, frame.data(), frame.size());
     } else {
-        // MOD_CONFLICT means the outbound queue is full; position updates can be dropped.
-        (void)s_conn.send_binary(frame);
+        if (payload[0] == MSG_STATE) s_latestState = std::move(frame);
+        else queue_reliable(false, std::move(frame));
+        if (s_transport == Transport::WebSocket) flush_websocket();
     }
 }
 
@@ -417,21 +467,13 @@ void send_meta(bool isPublic, const std::string& label, int mode, int map, int p
     text += ",\"mode\":" + std::to_string(mode);
     text += ",\"map\":" + std::to_string(map);
     text += ",\"phase\":" + std::to_string(phase) + "}";
-    if (s_transport == Transport::Http) {
-        queue_http(0, text.data(), text.size());
-    } else {
-        (void)s_conn.send_text(text);
-    }
+    queue_text(text);
 }
 
 void kick(uint8_t id) {
     if (!is_host()) return;
     const std::string text = "{\"op\":\"kick\",\"id\":" + std::to_string(id) + "}";
-    if (s_transport == Transport::Http) {
-        queue_http(0, text.data(), text.size());
-    } else {
-        (void)s_conn.send_text(text);
-    }
+    queue_text(text);
 }
 
 std::string http_base(const std::string& server) {

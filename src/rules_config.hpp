@@ -23,6 +23,7 @@ inline match::Settings parse_rules(const std::string& text) {
     s.autoNext = v[5] & 8;
     s.isPublic = v[5] & 16;
     s.trackingPulse = v[5] & 32;
+    s.treasure = v[5] & 64;
     if (fields >= 7) s.idleTauntSecs = static_cast<uint16_t>(std::clamp(v[6], 0, 600));
     if (fields >= 8) s.freeDecoys = static_cast<uint8_t>(std::clamp(v[7], 0, 10));
     return s;
@@ -30,7 +31,8 @@ inline match::Settings parse_rules(const std::string& text) {
 
 inline std::string format_rules(const match::Settings& s) {
     const int flags = (s.foundJoinHunters ? 1 : 0) | (s.missPenalty ? 2 : 0) | (s.autoTaunt ? 4 : 0) |
-                      (s.autoNext ? 8 : 0) | (s.isPublic ? 16 : 0) | (s.trackingPulse ? 32 : 0);
+                      (s.autoNext ? 8 : 0) | (s.isPublic ? 16 : 0) | (s.trackingPulse ? 32 : 0) |
+                      (s.treasure ? 64 : 0);
     char text[80];
     std::snprintf(text, sizeof(text), "%d,%d,%u,%u,%u,%d,%u,%u", static_cast<int>(s.mode), s.map,
         s.hideSecs, s.seekSecs, s.hunters, flags, s.idleTauntSecs, s.freeDecoys);
@@ -53,6 +55,16 @@ inline std::string upgrade_rules(const std::string& text) {
         }
     }
     s.trackingPulse = true;
+    return format_rules(s);
+}
+
+inline std::string upgrade_treasure_rules(const std::string& text) {
+    if (text.empty()) return text;
+    auto s = parse_rules(text);
+    s.treasure = true;
+    // Only the previous recommended allowance changes; customized allowances are preserved.
+    if (s.freeDecoys == 5 && s.hideSecs == 30 && s.seekSecs == 180 &&
+        s.idleTauntSecs == 20 && s.autoTaunt && s.trackingPulse) s.freeDecoys = 3;
     return format_rules(s);
 }
 }  // namespace hs::settings

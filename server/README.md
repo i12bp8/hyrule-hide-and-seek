@@ -1,78 +1,90 @@
 # Relay server
 
-Every player connects here with one outgoing `wss://` connection. If Dusklight has no WebSocket
-backend (the official Linux 2.0.2 build), the mod automatically uses HTTPS long polling instead.
-The relay only keeps rooms and forwards bytes between the players in a room; the host's game runs
-the rules. Because nobody connects to anybody directly, it works on every network with no port
-forwarding.
+Default: `wss://hyrule-hide-and-seek.jhackerr.workers.dev`.
+Each room is an independent SQLite-backed Cloudflare Durable Object with at most 16 players.
+The host's game runs the rules; the relay forwards messages within that room. Clients never expose
+their home IP addresses to other players or accept incoming connections.
 
-The same room logic (`src/room.js`) runs on Cloudflare (`src/index.js`) and on plain Node
-(`node-server.mjs`).
+Use Dusklight **2.0.3 or newer**. The official Linux WebSocket backend and HTTPS CA fix are in
+[v2.0.3](https://github.com/TwilitRealm/dusklight/releases/tag/v2.0.3). The public Worker disables
+legacy HTTP polling and responds with an actionable upgrade message. A private Node relay retains
+the fallback for older clients. Everyone in a room must use the same game protocol (currently 7).
 
-## Put it online on Cloudflare (free, about five minutes)
-
-You need [Node.js](https://nodejs.org) and a free [Cloudflare account](https://dash.cloudflare.com/sign-up).
-No credit card.
+## Deploy with Wrangler
 
 ```sh
 cd server
-npm install
+npm ci
 npx wrangler login
 npx wrangler deploy
 ```
 
-`wrangler deploy` prints an address like `https://hyrule-hide-and-seek.<you>.workers.dev`. Change
-`https` to `wss` and put it in `HS_DEFAULT_SERVER` in the top-level `CMakeLists.txt`, then build a
-release. Every copy of the mod then uses it.
+Wrangler prints the `https://` endpoint. Use `wss://` in the mod's Settings or the
+`HS_DEFAULT_SERVER` CMake option. This configuration uses SQLite Durable Objects available on
+Workers Free; it does not upgrade an account to a paid subscription. Existing account subscriptions
+still determine billing. Check the account's Workers plan before inviting a large audience.
 
-### What it costs
+## Free tier capacity
 
-Cloudflare bills a Durable Object's incoming WebSocket messages at 1/20th of a request. Players send
-10 updates a second, so an 8-player game is about 15,000 requests an hour.
+As checked on 2026-09-30, Cloudflare's Durable Objects Free allowance is **100,000 metered requests
+and 13,000 GB-s per day**, plus SQLite storage allowances. Incoming WebSocket messages count at
+**20:1**; outgoing messages do not count. Connections, lobby requests and updates also use quota.
+Allowances are shared with other Workers on the account. Operations exceeding a free allowance
+fail until its daily reset at 00:00 UTC. See
+[Cloudflare's current pricing](https://developers.cloudflare.com/durable-objects/platform/pricing/).
 
-- Free plan: 100,000 requests a day, roughly 7 game-hours a day across all players. Past that, new
-  games fail until midnight UTC. Nothing is charged.
-- Workers Paid ($5 a month): includes about 65 game-hours of requests a month. After that, requests
-  ($0.15 per million) plus Durable Object time ($12.50 per million GB-s, ~460 GB-s per room-hour)
-  come to roughly $0.80 per 100 game-hours. Check Cloudflare's current prices before relying on this.
+For position updates alone:
 
-A room only costs anything while players are in it.
+| Player activity | Send rate | Metered requests per player-hour | Ideal daily player-hours |
+| --- | ---: | ---: | ---: |
+| Moving during a round | 10 Hz | 1,800 | 55.6 |
+| Stationary during a round | 2 Hz | 360 | 277.8 |
+| Stationary lobby | 1 Hz | 180 | 555.6 |
 
-The Linux HTTP fallback makes more requests than WebSockets, so a busy public relay can reach the
-Cloudflare free limit sooner. A self-hosted Node relay has no request quota.
+These are request-only upper bounds, excluding all other messages, joins, browsing, storage and
+duration. For example, 200 continuously moving players use about 100,000 requests in 17 minutes.
+Smaller payloads save bandwidth; they do not reduce the per-message count. Hibernation saves idle
+duration, but active play still consumes duration. Measure actual usage in the Cloudflare dashboard
+before treating any number as capacity. There is no honest unlimited-free guarantee for hundreds
+of active players all day.
 
-## Run it anywhere else
+### What keeps usage down
+
+- One Durable Object per room and bounded fan-out to 15 other players.
+- `acceptWebSocket` with attachments for hibernation; no room timers or continuous server tick.
+- Latest-only state queue during client backpressure; rules/results have a separate bounded queue.
+- 10 Hz moving state, 2 Hz stationary state, 1 Hz stationary lobby state; disguises omit Link animation slots.
+- Public listings use indexed SQLite and survive Lobby reconstruction after hibernation.
+- Legacy polling is off by default (`ALLOW_HTTP_FALLBACK = "false"`).
+
+## Run a private relay
 
 ```sh
-npm install
+npm ci
 node node-server.mjs --host 0.0.0.0 --port 8787
 ```
 
-The game only allows plain `ws://` to your own computer, so for other people put it behind a TLS
-proxy, e.g. Caddy: `your.domain { reverse_proxy 127.0.0.1:8787 }`, and use `wss://your.domain`.
+Use `ws://127.0.0.1:8787` on your own computer. Put remote connections behind a TLS proxy and use
+`wss://your.domain`. A private Node relay has no Cloudflare request quota; hardware, connectivity
+and hosting costs still apply. See [Pi/Tailscale setup](deploy/README.md).
 
-## Test
-
-```sh
-npm test                                   # against the Node relay
-npx wrangler dev --port 8788 &             # the Cloudflare version, locally
-RELAY_URL=ws://127.0.0.1:8788 npm test     # the same tests against it
-```
-
-## Test bots
+## Checks and bots
 
 ```sh
-node node-server.mjs
-node bots.mjs --room ABCDE --count 3 [--server ws://127.0.0.1:8787]
+npm test                                      # Node relay + protocol + SQLite listing tests
+npx wrangler dev --port 8788 --var ALLOW_HTTP_FALLBACK:true
+# In another terminal; exercises both transports on the actual Worker runtime:
+RELAY_URL=ws://127.0.0.1:8788 npm test
+node load.mjs 200 10        # local Node load measurement
+node bots.mjs --room ABCDE --count 3 --server ws://127.0.0.1:8787
 ```
 
-Host a room in the game first (Settings → Use a server on this computer), then start the bots with
-its code. They stand near you, follow you to the round's map, disguise themselves as props when
-they hide (hit them!), and chase and tag you when they hunt.
+Host a room in the game before starting bots. They follow the round's map, disguise as props when
+hiding and chase hiders when hunting. The load tool creates independent eight-player rooms on a
+local relay; its measurements are not worldwide latency or a Cloudflare free-capacity guarantee.
 
 ## Protocol
 
-See the top of [src/room.js](src/room.js) for the WebSocket and HTTP fallback framing and control
-messages, and [../src/protocol.hpp](../src/protocol.hpp) for the game messages. Bump
-`kProtocolVersion` in `protocol.hpp` (and `PROTOCOL` in `bots.mjs`) on any change; the relay keeps
-different versions apart.
+Relay framing and controls: [src/room.js](src/room.js). Game framing:
+[../src/protocol.hpp](../src/protocol.hpp). Bump `kProtocolVersion` and the bots' `PROTOCOL` whenever
+wire layouts change; different versions cannot join the same room.

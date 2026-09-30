@@ -2,7 +2,7 @@
 
 What's been verified without the game:
 
-- Everything compiles for Linux with GCC and Clang against Dusklight v2.0.2 (the other platforms build in CI).
+- v0.3.0 compiles for Linux with GCC against Dusklight v2.0.3; other platforms require CI builds and runtime checks.
 - The rules (`tests/run.sh`): rounds, hunter rotation, gather timeout, hit validation, tag immunity,
   live scoring, bounded/paid decoys, late joiners, host leaving mid-round, unique colours.
 - The relay (`server/`, `npm test`): on Node and on the actual Cloudflare Worker via `wrangler dev`.
@@ -13,6 +13,63 @@ What's been verified without the game:
 Everything below needs the game running. Go in order: later steps depend on earlier ones. Keep
 Dusklight's log open (`~/.local/share/TwilitRealm/Dusklight/logs/`); the mod logs as
 `com.i12bp8.hyrule_hide_and_seek`.
+
+## v0.3.0 gameplay checks
+
+- [ ] In Ordon Ranch, goat disguises idle and walk. In Hidden Village, cats idle and walk.
+- [ ] Castle Town citizens and shoppers animate with the shared Mgeneral/Wgeneral archives.
+- [ ] Milk jars, baskets and bags match the nearby scenery in scale and placement.
+- [ ] Friendly native animals and townspeople remain present; no unwanted scripted dialogue begins.
+- [ ] Rupees appear on reachable ground, with no wall/cliff/exit placements, in each of the 15 maps.
+- [ ] Hiders collect once, receive 3 points, and complete the three-pickup challenge for +5.
+- [ ] Round 3 gives 5 points per pickup; a new round resets loot counts. Treasure Off spawns none.
+- [ ] A pickup triggers the local cue and a three-second clue for hunters. The hider sees the reason.
+- [ ] Manual and both automatic taunts show the pulsing reveal strip and correct countdown.
+- [ ] Spinning in place does not reset the stationary timer; moving far enough does.
+- [ ] Two hiders reaching the same rupee cannot both receive its points. Expired pickups disappear.
+- [ ] With the miss penalty on, repeated misses at the last quarter heart require two seconds between
+      counted attacks; finding a hider restores one heart.
+- [ ] Rules cannot change until Results. The last hider in the final minute gets an eight-second clue.
+- [ ] Compare real clients at 50, 100 and 200 ms latency: walking, corners, teleports, hiding and finding.
+      Movement should interpolate smoothly and stop extrapolating after 100 ms of missing updates.
+- [ ] Leave the host during Hunt: remaining loot and scores survive the authority change.
+
+### Recorded automated checks (2026-09-30)
+
+- Rules/protocol/interpolation/layout: over 2,900 assertions passed.
+- Node server suite: 16 tests passed. Worker runtime suite: 14 passed, two Node-specific tests skipped.
+- Live Cloudflare: health, host/join, sender framing, public listing and host migration passed.
+- Official Linux Dusklight 2.0.3 also joined the deployed relay over WSS; a temporary guest
+  received the native host's live state packets. No Linux HTTP fallback was used.
+- Local Node load: 200 clients / 25 rooms / 10 Hz / 10 seconds; 140,000 expected deliveries received,
+  no cross-room messages, p95 ~23 ms. This is a local synthetic test, not worldwide latency.
+- Disc asset validation: 67 catalogue entries and 64 unique archives resolved, including disabled IDs
+  and the renderer-only rupee. File existence does not establish visual scale or playable balance.
+
+### Mobile and clean interface
+
+- [ ] On Android and iOS, tap Host/Join, edit a code, open dropdowns and scroll public lobbies.
+- [ ] In landscape and portrait, the menu stays within the safe area and the navigation stacks
+      on narrow screens. Touch targets stay at least 46 dp high.
+- [ ] Native touch controls remain available during play, clear of the mod's central status cards.
+- [ ] Nearby names do not overlap each other, alerts or the status cards. Hunters never see prop names.
+- [ ] At most two nearby treasure point labels appear; gems remain visible without a label.
+- [ ] Simultaneous clues show one summary and at most three small world markers.
+- [ ] Results with 16 players stay within the screen; long names truncate before score columns.
+- [ ] Control hints default off; the Display toggle shows and hides them cleanly.
+
+Official Linux 2.0.3 completed the real actor sweep in both Hide and Hunt, including all 57
+selectable props, 160 decoys and eight rupees during Hunt; no retained draw-list cycles or prop
+fallback warnings occurred. This checks rendering and cleanup, not every map's balance or native
+mobile touch input.
+
+The native menu was also inspected at a narrow 640 × 720 window: the navigation stacked,
+the player list remained visible, and the original theme colours and fonts were retained.
+Desktop Dusklight enforces a 640-pixel minimum window width; this is a layout check, not an
+Android or iOS device check. Automated HUD bounds cover 320 × 240 through 1280 × 720, including
+390 × 844 portrait and all 16 results rows.
+The native HUD was inspected during Hunt with an injected manual clue and eight rupees:
+the reveal strip named the cause and showed a countdown; only two nearby point labels appeared.
 
 ## Setup
 
@@ -25,13 +82,13 @@ on this computer**.
 
 ## 1. Loads and connects
 
-- [ ] Log shows `Hyrule Hide & Seek 0.2.1 ready`. No "hook ... did not resolve" warnings for
+- [ ] Log shows `Hyrule Hide & Seek 0.3.0 ready`. No "hook ... did not resolve" warnings for
       `daAlink_c::execute`, `daAlink_c::draw`, `daAlink_c::setCutType`,
       `daAlink_c::setDamagePoint`, `daAlink_c::checkNotBattleStage`, `fopAc_Execute`, or
       `dComIfGp_event_order`.
-- [ ] On the official Linux 2.0.2 build, log shows `using the HTTP relay fallback`; the mod is
-      active rather than failing on a missing WebSocket service.
-- [ ] Hide & Seek tab opens the window with Play / Rules / How to play / Settings.
+- [ ] On the official Linux 2.0.3 build, log shows `Using WebSocket multiplayer on this Dusklight build`.
+      On an old Linux build, the public relay tells the player to update Dusklight.
+- [ ] Hide & Seek tab opens the window with Play / Rules / Guide / Settings.
 - [ ] Play cleanly separates **Host a game**, **Join a game**, and (once connected) **Current room**.
 - [ ] **Host a game** → **Create room and copy code** gives a toast, copies the code, and the HUD
       shows `Room ABCDE` at the top.
@@ -68,16 +125,16 @@ Start round. With 4 players (you + 3 bots) there is one hunter; restart until yo
       disappears before its prop model is ready.
 - [ ] D-pad left/right/up/down performs only the Hide & Seek action. The vanilla Items and Map menus
       do not open underneath it.
-- [ ] During Hide, D-pad up places five free copies of the current disguise at your position. The HUD
-      counts down 5 → 0; they remain fixed after you move away, are at least a prop-width apart, and
-      placing a sixth free one fails cleanly.
+- [ ] During Hide, D-pad up places three free copies of the current disguise at your position. The HUD
+      counts down 3 → 0; they remain fixed after you move away, are at least a prop-width apart, and
+      placing a fourth free one fails cleanly.
 - [ ] Set **Free decoys per hider** to 0 and 10 in separate rounds. Zero starts with none; ten grants
       ten placement charges and retains all ten from that hider. With eight players, each hider
       can retain ten without evicting anyone else's decoys; the structural room capacity is 160.
 - [ ] The cucco prop animates when you walk.
 - [ ] Cycling props stays within a varied, map-appropriate pool; test at least one village, water,
       forest, mountain and desert map.
-- [ ] Cycle all 50 selectable catalogue entries across those maps. Every choice draws a model; a bad
+- [ ] Cycle all 57 selectable catalogue entries across those maps. Every choice draws a model; a bad
       optional asset logs a warning and shows the fallback pot instead of making the hider invisible.
 - [ ] Laundry is roughly player-height and rests on the floor instead of appearing tiny/underground.
       Crystal appears near the player at a readable size instead of at its authored world origin.
@@ -87,7 +144,7 @@ Start round. With 4 players (you + 3 bots) there is one hunter; restart until yo
       direction/distance clue plus a marker at your position.
 - [ ] Regular taunts start enabled: every 30 seconds (20 on large maps), then every 10 seconds
       in the last minute. Turning the rule off leaves manual and stationary taunts only.
-- [ ] The stationary auto-taunt defaults to 20 seconds. Moving more than a small step resets its
+- [ ] The stationary auto-taunt defaults to 20 seconds. Moving more than 120 units horizontally or 80 vertically resets its
       timer; Off disables it, and a shorter setting fires at the selected delay.
 - [ ] Cucco, pumpkin and oil jar have one clean circular shadow with a sensible footprint. Static
       rocks/furniture, targets and flat/translucent plants have no added black blob or duplicate mesh.
@@ -201,15 +258,14 @@ cmake -B build-stock-render -DHS_STOCK_RENDER_TEST=ON
 cmake --build build-stock-render --parallel
 ```
 
-Use the default secure relay, or configure another HTTPS relay (stock Linux's HttpService rejects
-plain HTTP, including loopback). Copy the test bundle into an isolated user directory's `mods`
+Use Dusklight 2.0.3 and a local WebSocket relay, or the default secure relay. Copy the test bundle into an isolated user directory's `mods`
 folder, configure its disc path, and copy a playable save into its `USA/Card A` folder. Launch the
 original, unmodified Dusklight with `--user-dir <isolated-dir> --mods <isolated-dir>/mods
 --load-save 1 --stage F_SP103,0,13,-1`. Enable frame interpolation and keep the window focused
 (or disable pause-on-focus-loss in the isolated profile).
 
-The driver populates 16 player states, starts a round, cycles all 50 selectable props with 160
-decoy snapshots, then leaves and checks cleanup. It checks the actual material/shape lists for
+The driver populates 16 player states, starts a round, cycles all 57 selectable props with 160
+decoy snapshots and eight treasure actors, then leaves and checks cleanup. It checks the actual material/shape lists for
 cycles before rendering and exits successfully only after logging `STOCK_RENDER_TEST PASS`.
 Injected states exercise the real actors and rendering, not 16 independent network clients.
 

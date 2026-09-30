@@ -18,7 +18,7 @@ const args = Object.fromEntries(
 const server = String(args.server || "ws://127.0.0.1:8787").replace(/\/$/, "");
 const room = String(args.room || "").toUpperCase();
 const count = Number(args.count || 3);
-const PROTOCOL = 6;
+const PROTOCOL = 7;
 if (!room) {
   console.error("usage: node bots.mjs --room ABCDE [--count 3] [--server ws://127.0.0.1:8787]");
   process.exit(2);
@@ -27,10 +27,10 @@ if (!room) {
 const MSG = { STATE: 1, HELLO: 2, SETTINGS: 10, ROSTER: 11, ROUND: 12, PHASE: 13, FOUND: 14, RESULTS: 15, DECOYS: 16, READY: 20, HIT: 21, TAUNT: 23, PLACE_DECOY: 24, HIT_DECOY: 25 };
 const ROLE = { NONE: 0, HIDER: 1, HUNTER: 2, SPECTATOR: 3 };
 const PHASE = ["Lobby", "Gather", "Hide", "Seek", "Results"];
-const FLAG = { IN_WORLD: 1, WOLF: 2, DISGUISED: 4, SWORD: 8, SHIELD: 16 };
+const FLAG = { IN_WORLD: 1, WOLF: 2, DISGUISED: 4, SWORD: 8, SHIELD: 16, COMPACT: 32 };
 const ANIM = { WAIT: 0x26a, RUN: 0xc5 };
-const PROP_COUNT = 59;
-const DISABLED_PROPS = new Set([36, 43, 47, 50, 57]);
+const PROP_COUNT = 66;
+const DISABLED_PROPS = new Set([28, 29, 30, 31, 36, 43, 47, 50, 57]);
 
 function randomProp() {
   let prop;
@@ -82,6 +82,7 @@ function writeState(w, s) {
   w.s16(s.yaw);
   w.u8(s.prop);
   w.s16(s.propYaw);
+  if (s.flags & FLAG.COMPACT) return;
   for (const a of [...s.under, ...s.upper]) { w.u16(a.idx); w.f32(a.frame); w.u8(a.ratio); }
 }
 
@@ -103,7 +104,8 @@ class Bot {
     this.pos = null;
     this.stage = "";
     this.yaw = 0;
-    this.prop = randomProp();
+    this.prop = this.map === 1 ? 59 : this.map === 12 ? 60 : this.map === 10 ? 61 + this.n % 2 : randomProp();
+        if (this.map !== 1 && this.map !== 12 && this.map !== 10 && this.prop >= 59) this.prop = 0;
     this.spot = null;
     this.readyFor = 0;
     this.lastTaunt = Date.now();
@@ -160,7 +162,7 @@ class Bot {
       case MSG.ROSTER: {
         const n = r.u8();
         for (let i = 0; i < n; ++i) {
-          const id = r.u8(); const role = r.u8(); r.u8(); r.u16(); r.u16(); r.u8(); r.u8(); r.u8();
+          const id = r.u8(); const role = r.u8(); r.u8(); r.u16(); r.u16(); r.u8(); r.u8(); r.u8(); r.u8(); r.u8();
           this.roles.set(id, role);
         }
         break;
@@ -168,8 +170,10 @@ class Bot {
       case MSG.ROUND:
         this.round = r.u32();
         this.mode = r.u8();
+        this.map = r.u8();
         this.spot = null;
-        this.prop = randomProp();
+        this.prop = this.map === 1 ? 59 : this.map === 12 ? 60 : this.map === 10 ? 61 + this.n % 2 : randomProp();
+        if (this.map !== 1 && this.map !== 12 && this.map !== 10 && this.prop >= 59) this.prop = 0;
         console.log(`${this.name}: round ${this.round}, I'm a ${this.myRole() === ROLE.HUNTER ? "hunter" : "prop"}`);
         break;
       case MSG.PHASE:
@@ -257,8 +261,8 @@ class Bot {
     if (hider && this.phase === 3 && now - this.lastTaunt > 12000 + this.n * 1500) {
       this.lastTaunt = now;
       const w = new Writer(MSG.TAUNT);
-      w.u8(Math.floor(Math.random() * 6));
-      this.send(0, w.bytes());
+      w.u32(this.round); w.u8(Math.floor(Math.random() * 6));
+      this.send(255, w.bytes());
     }
 
     const t = now / 1000;
@@ -266,7 +270,7 @@ class Bot {
     anim.ratio = 255;
     const disguised = this.mode === 0 && hider && playing;
     const s = {
-      flags: FLAG.IN_WORLD | (disguised ? FLAG.DISGUISED : 0) | (hunter && this.phase === 3 ? FLAG.SWORD | FLAG.SHIELD : 0),
+      flags: FLAG.IN_WORLD | (disguised ? FLAG.DISGUISED | FLAG.COMPACT : 0) | (hunter && this.phase === 3 ? FLAG.SWORD | FLAG.SHIELD : 0),
       stage: this.stage,
       room: h.s.room,
       x: this.pos.x, y: this.pos.y, z: this.pos.z,

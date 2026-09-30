@@ -24,6 +24,7 @@ struct PropInfo {
     float offsetX = 0.0f;
     float offsetY = 0.0f;
     float offsetZ = 0.0f;
+    const char* animationArc = nullptr; // Castle Town pedestrians share animation archives
 };
 
 // How the native object blocks Link. Disguises and decoys copy it so they are exactly as solid as
@@ -47,6 +48,7 @@ struct PropSolid {
 };
 
 int prop_count();
+int rupee_prop(); // renderer-only catalogue entry, never a selectable disguise
 const PropInfo& prop_info(int index);
 const PropSolid& prop_solid(int index);
 // Names in the collision table that match no prop. Zero unless someone renamed a prop.

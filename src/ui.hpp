@@ -8,6 +8,7 @@ namespace hs::ui {
 
 bool init();
 void open();
+bool is_open();
 void shutdown();
 
 void on_welcome();

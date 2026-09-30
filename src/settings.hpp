@@ -19,6 +19,7 @@ std::string server();
 std::string room_code();
 void set_room_code(const std::string& code);
 bool name_tags();
+bool control_hints();
 
 // The host's last-used rules, so a new room starts with them.
 match::Settings host_rules();
@@ -29,5 +30,6 @@ ConfigVarHandle name_var();
 ConfigVarHandle server_var();
 ConfigVarHandle room_code_var();
 ConfigVarHandle name_tags_var();
+ConfigVarHandle control_hints_var();
 
 }  // namespace hs::settings

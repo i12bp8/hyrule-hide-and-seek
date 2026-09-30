@@ -1,4 +1,5 @@
 #include "hud.hpp"
+#include "hud_layout.hpp"
 
 #include "common.hpp"
 #include "local.hpp"
@@ -8,6 +9,7 @@
 #include "props.hpp"
 #include "puppet.hpp"
 #include "settings.hpp"
+#include "ui.hpp"
 
 #include "JSystem/J2DGraph/J2DOrthoGraph.h"
 #include "JSystem/JUtility/JUTFont.h"
@@ -19,6 +21,7 @@
 #include "m_Do/m_Do_lib.h"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstdio>
 #include <cstring>
@@ -93,6 +96,34 @@ public:
         text(s, cx - width(s, size) * 0.5f, top, size, c);
     }
 
+    void card(const Rect& r, JUtility::TColor color) {
+        const float radius = std::min(4.0f, r.h * 0.25f);
+        box(r.x + radius, r.y, r.x + r.w - radius, r.y + 1, color);
+        box(r.x + 2, r.y + 1, r.x + r.w - 2, r.y + radius, color);
+        box(r.x, r.y + radius, r.x + r.w, r.y + r.h - radius, color);
+        box(r.x + 2, r.y + r.h - radius, r.x + r.w - 2, r.y + r.h - 1, color);
+        box(r.x + radius, r.y + r.h - 1, r.x + r.w - radius, r.y + r.h, color);
+    }
+
+    f32 fit(const std::string& text, f32 size, f32 maximum) const {
+        const auto measured = width(text, size);
+        return measured > maximum && measured > 0 ? size * maximum / measured : size;
+    }
+
+    std::string shortened(std::string text, f32 size, f32 maximum) const {
+        if (width(text, size) <= maximum) return text;
+        while (!text.empty() && width(text + "...", size) > maximum) {
+            size_t start = text.size() - 1;
+            while (start > 0 && (static_cast<unsigned char>(text[start]) & 0xC0) == 0x80) --start;
+            text.resize(start);
+        }
+        return text.empty() ? "" : text + "...";
+    }
+
+    void centred_fit(const std::string& text, f32 cx, f32 top, f32 size, f32 maximum, JUtility::TColor color) {
+        centered(text, cx, top, fit(text, size, maximum), color);
+    }
+
 private:
     J2DOrthoGraph m_ortho;
     JUTFont* m_font = nullptr;
@@ -114,118 +145,151 @@ const char* name_of(int id) {
     return net::member(id).name;
 }
 
+std::array<Rect, 12> s_labels;
+int s_labelCount = 0;
+
+bool reserve_label(const Rect& r, const Screen& s) {
+    if (r.x < s.x + 8 || r.x + r.w > s.x + s.w - 8 || r.y < s.y + 102 ||
+        r.y + r.h > s.y + s.h - 88 || s_labelCount == static_cast<int>(s_labels.size())) return false;
+    for (int i = 0; i < s_labelCount; ++i) if (r.overlaps(s_labels[i])) return false;
+    s_labels[s_labelCount++] = r;
+    return true;
+}
+
 void draw_blindfold(Painter& p, const Screen& s) {
     p.box(s.x, s.y, s.x + s.w, s.y + s.h, rgba(4, 4, 10, 250));
-    const f32 cx = s.x + s.w * 0.5f;
-    const f32 cy = s.y + s.h * 0.5f;
-    p.centered("The props are hiding...", cx, cy - 70.0f, 26.0f, rgba(235, 235, 235));
-    p.centered(clock(match::ms_left()), cx, cy - 30.0f, 64.0f, rgba(255, 110, 90));
-    p.centered("You're a HUNTER. When the timer ends, find them and hit them with your sword.", cx,
-        cy + 50.0f, 16.0f, rgba(200, 200, 200));
-    if (match::get().settings.mode == Mode::PropHunt) {
-        p.centered("Props can be objects or furniture. A missed swing costs a quarter heart.",
-            cx, cy + 74.0f, 14.0f, rgba(170, 170, 170));
-    }
+    const f32 cx = s.x + s.w * 0.5f, cy = s.y + s.h * 0.5f;
+    p.centred_fit("HUNTER", cx, cy - 60, 15, s.w - 40, rgba(255, 110, 90));
+    p.centred_fit(clock(match::ms_left()), cx, cy - 30, 44, s.w - 40, rgba(235, 235, 235));
+    p.centred_fit("Let them hide. Your hunt starts soon.", cx, cy + 34, 12, s.w - 40, rgba(200, 200, 200));
 }
 
 void draw_top(Painter& p, const Screen& s) {
-    const match::Match& m = match::get();
-    const f32 cx = s.x + s.w * 0.5f;
-    std::string label;
-    JUtility::TColor color = rgba(255, 255, 255);
+    const auto& m = match::get();
+    std::string title, detail;
+    auto accent = rgba(255, 230, 140);
     switch (m.phase) {
     case Phase::Lobby:
-        label = "Room " + net::room_code();
-        color = rgba(255, 230, 140);
+        title = "ROOM " + net::room_code();
+        detail = std::to_string(net::member_count()) + "/16 players";
         break;
-    case Phase::Gather:
-        label = "GET READY";
-        color = rgba(255, 230, 140);
-        break;
+    case Phase::Gather: title = "GET READY"; detail = map_info(m.map).name; break;
     case Phase::Hide:
-        label = "HIDE  " + clock(match::ms_left());
-        color = rgba(130, 235, 130);
-        break;
+        title = "HIDE  " + clock(match::ms_left()); detail = map_info(m.map).name;
+        accent = rgba(130, 235, 130); break;
     case Phase::Seek:
-        label = "HUNT  " + clock(match::ms_left());
-        color = match::ms_left() < 30000 ? rgba(255, 90, 70) : rgba(255, 190, 120);
+        title = "HUNT  " + clock(match::ms_left()) + "  |  " + std::to_string(match::hiders_left()) + " LEFT";
+        detail = map_info(m.map).name;
+        accent = match::ms_left() <= 30000 ? rgba(255, 90, 70) : rgba(255, 190, 120);
         break;
-    case Phase::Results:
-        label = "ROUND OVER";
-        color = rgba(255, 230, 140);
-        break;
+    case Phase::Results: title = "ROUND " + std::to_string(m.round); detail = "Results"; break;
     }
-    const f32 w = std::max(p.width(label, 24.0f), 140.0f) + 30.0f;
-    p.box(cx - w * 0.5f, s.y + 8.0f, cx + w * 0.5f, s.y + 44.0f, rgba(0, 0, 0, 150));
-    p.centered(label, cx, s.y + 13.0f, 24.0f, color);
-
-    std::string sub;
-    if (m.phase == Phase::Lobby) {
-        const int n = net::member_count();
-        sub = std::to_string(n) + (n == 1 ? " player" : " players") + " - " +
-              (net::is_host() ? "start from the Hide & Seek menu" : "waiting for the host");
-    } else if (match::in_round()) {
-        const bool props = m.settings.mode == Mode::PropHunt;
-        sub = std::string(map_info(m.map).name) + " - " + std::to_string(match::hiders_left()) +
-              (props ? " props left" : " hiders left");
-    }
-    if (!sub.empty()) p.centered(sub, cx, s.y + 48.0f, 14.0f, rgba(230, 230, 230, 230));
+    const auto card = centre_card(s.x, s.y, s.w, 8, 40, 284);
+    p.card(card, rgba(0, 0, 0, 160));
+    const auto cx = card.x + card.w * 0.5f;
+    p.centred_fit(title, cx, card.y + 5, 16, card.w - 20, accent);
+    p.centred_fit(detail, cx, card.y + 25, 10, card.w - 20, rgba(230, 230, 230));
 }
 
 void draw_role(Painter& p, const Screen& s) {
-    const match::Match& m = match::get();
+    const auto& m = match::get();
     if (!match::in_round()) return;
-    const Role role = match::my_role();
-    const int me = net::self_id();
-    std::string line;
-    std::string hint;
-    if (role == Role::Hunter) {
-        line = "You are a HUNTER";
-        hint = m.settings.mode == Mode::PropHunt ? "B: sword / nearby swim tag - follow TAUNT clues"
-                                                 : "Touch hiders - follow TAUNT clues";
-        if (!local::has_sword() && m.settings.mode == Mode::PropHunt) hint = "No sword! Play from the Hide & Seek save";
-        if (m.phase == Phase::Seek && m.settings.trackingPulse) {
-            const auto cooldown = local::tracking_cooldown_secs();
-            hint += cooldown == 0 ? "   v tracking READY" : "   v tracking " + std::to_string(cooldown) + "s";
+    const auto& me = match::player(net::self_id());
+    std::string title, detail;
+    if (me.role == Role::Hunter) {
+        title = "HUNTER";
+        if (local::attack_recovery_ms() > 0) detail = "Recovering  " + std::to_string((local::attack_recovery_ms() + 999) / 1000) + "s";
+        else if (m.phase == Phase::Seek && m.settings.trackingPulse) {
+            const auto seconds = local::tracking_cooldown_secs();
+            detail = seconds == 0 ? "Tracking ready" : "Tracking  " + std::to_string(seconds) + "s";
+        } else detail = "Find every hider";
+    } else if (me.role == Role::Hider && !me.found) {
+        title = local::disguised() ? prop_info(local::prop()).name : "HIDING";
+        if (local::disguised()) detail = "Decoys " + std::to_string(match::my_decoys_left());
+        if (m.phase == Phase::Seek && m.settings.treasure) {
+            if (!detail.empty()) detail += "  |  ";
+            detail += me.rupeesCollected < 3 ? "Loot " + std::to_string(me.rupeesCollected) + "/3" : "Loot complete";
         }
-    } else if (role == Role::Hider && !match::player(me).found) {
-        if (local::disguised()) {
-            const match::Player& mePlayer = match::player(me);
-            line = std::string("You are a ") + prop_info(local::prop()).name + "  |  " +
-                   std::to_string(mePlayer.roundPoints) + " round pts";
-            const int free = match::my_decoys_left();
-            hint = "D-pad ^ decoy (" +
-                   (free > 0 ? std::to_string(free) + " free"
-                             : std::to_string(match::kExtraDecoyCost) + " pts") +
-                   ")   < > prop";
-            if (m.phase == Phase::Seek) hint += "   v taunt (+1, reveals you)";
-        } else {
-            line = "You are HIDING";
-            hint = m.phase == Phase::Seek ? "D-pad v taunt (+1, reveals you)" : "";
-        }
-    } else if (role == Role::Spectator || match::player(me).found) {
-        line = "Spectating";
+        if (detail.empty()) detail = m.phase == Phase::Hide ? "Find your spot" : "Stay alert";
+    } else { title = "WATCHING"; detail = "Next round soon"; }
+    const auto card = centre_card(s.x, s.y, s.w, s.h - 56, 40, 300);
+    p.card(card, rgba(0, 0, 0, 150));
+    const std::string score = std::to_string(me.roundPoints) + " pts";
+    const f32 scoreWidth = p.width(score, 11);
+    p.text(p.shortened(title, 13, std::max(0.0f, card.w - scoreWidth - 35)), card.x + 12, card.y + 5, 13, player_color(net::self_id()));
+    p.text(score, card.x + card.w - scoreWidth - 12, card.y + 6, 11, rgba(255, 230, 140));
+    p.centred_fit(detail, card.x + card.w * 0.5f, card.y + 25, 10, card.w - 20, rgba(225, 225, 225));
+    if (settings::control_hints()) {
+        const char* hint = me.role == Role::Hunter ? (m.settings.mode == Mode::PropHunt ? "B: sword / swim tag  |  Down: track" : "Touch hiders  |  Down: track") : "D-pad: < > prop, up decoy, down taunt";
+        p.centred_fit(hint, s.x + s.w * 0.5f, card.y - 16, 10, std::min(s.w - 24, 320.0f), rgba(225, 225, 225));
     }
-    if (line.empty()) return;
-    const f32 x = s.x + 16.0f;
-    const f32 y = s.y + s.h - 62.0f;
-    p.box(x - 8.0f, y - 6.0f, x + std::max(p.width(line, 20.0f), p.width(hint, 13.0f)) + 10.0f, y + 46.0f,
-        rgba(0, 0, 0, 130));
-    p.text(line, x, y, 20.0f, player_color(me));
-    p.text(hint, x, y + 25.0f, 13.0f, rgba(225, 225, 225));
-    if (role == Role::Hider && m.phase == Phase::Seek && local::taunt_cooldown() > 0.0f) {
-        const f32 w = 90.0f * local::taunt_cooldown();
-        p.box(x, y + 41.0f, x + w, y + 43.0f, rgba(255, 230, 140, 200));
+}
+
+void draw_hider_feedback(Painter& p, const Screen& s) {
+    const auto& m = match::get();
+    const auto& me = match::player(net::self_id());
+    if (m.phase != Phase::Seek || me.role != Role::Hider || me.found) return;
+    const f32 cx = s.x + s.w * 0.5f;
+    const auto now = now_ms();
+    if (me.revealedUntil > now) {
+        const auto kind = local::taunt_kind();
+        const char* reason = kind == ClueKind::Manual ? "Manual taunt" : kind == ClueKind::Stationary ?
+            "Stayed still too long" : kind == ClueKind::Treasure ? "Treasure pickup" : "Automatic taunt";
+        const auto card = centre_card(s.x, s.y, s.w, 55, 39, 284);
+        const uint8_t opacity = static_cast<uint8_t>(195 + 15 * std::sin(now % 1200 * 0.005236f));
+        p.card(card, rgba(120, 45, 15, opacity));
+        p.box(card.x + 1, card.y + 6, card.x + 3, card.y + card.h - 6, rgba(255, 205, 65));
+        p.centred_fit("REVEALED  " + std::to_string((me.revealedUntil - now + 999) / 1000) + "s", cx, card.y + 5, 14, card.w - 22, rgba(255, 230, 140));
+        p.centred_fit(reason, cx, card.y + 25, 10, card.w - 22, rgba(255, 235, 195));
+    } else {
+        const auto next = match::next_clue_ms();
+        if (next != UINT32_MAX) {
+            const std::string text = (next <= 3000 ? "Taunt in " : "Next clue  ") + std::to_string((next + 999) / 1000) + "s";
+            p.centred_fit(text, cx, s.y + 56, next <= 3000 ? 13 : 10, s.w * 0.56f, next <= 3000 ? rgba(255, 170, 90) : rgba(240, 230, 180));
+        }
+    }
+}
+
+void draw_treasure(Painter& p, const Screen& s) {
+    const auto& m = match::get();
+    if (m.phase != Phase::Seek || !m.settings.treasure || match::my_role() != Role::Hider ||
+        std::strncmp(local::stage(), map_info(m.map).stage, 8) != 0) return;
+    const auto* view = dComIfGd_getView();
+    if (view == nullptr) return;
+    std::vector<std::pair<float, int>> nearby;
+    for (int i = 0; i < m.rupeeCount; ++i) {
+        const auto& r = m.rupees[i];
+        const float distance = (cXyz(r.x, r.y, r.z) - view->lookat.eye).abs();
+        if (r.expiresAt > now_ms() && distance < 1400) nearby.emplace_back(distance, i);
+    }
+    std::sort(nearby.begin(), nearby.end());
+    int drawn = 0;
+    for (const auto& candidate : nearby) {
+        if (drawn == 2) break;
+        const auto& r = m.rupees[candidate.second];
+        cXyz at(r.x, r.y + 80, r.z);
+        Vec camera; mDoLib_pos2camera(&at, &camera); if (camera.z > -1) continue;
+        Vec out; mDoLib_project(&at, &out);
+        const std::string text = "+" + std::to_string(match::rupee_points());
+        const Rect label{out.x - 13, out.y - 12, 26, 18};
+        if (!reserve_label(label, s)) continue;
+        p.card(label, rgba(0, 0, 0, 150));
+        p.centered(text, out.x, label.y + 3, 10, rgba(110, 255, 155));
+        ++drawn;
     }
 }
 
 void draw_feed(Painter& p, const Screen& s) {
-    f32 y = s.y + 70.0f;
-    for (const match::Notice& n : match::notices()) {
-        if (n.big) continue;
-        p.text(n.text, s.x + 16.0f, y, 15.0f, rgba(n.r, n.g, n.b, 235));
-        y += 20.0f;
+    if (local::blindfolded() || match::get().phase == Phase::Results) return;
+    const match::Notice* latest = nullptr;
+    for (const auto& notice : match::notices()) {
+        if (notice.big && now_ms() - notice.at < 3500) return;
+        if (!notice.big) latest = &notice;
     }
+    if (latest == nullptr || now_ms() - latest->at > 2800) return;
+    const auto card = centre_card(s.x, s.y, s.w, s.h - 98, 21, 310);
+    p.card(card, rgba(0, 0, 0, 140));
+    p.centered(p.shortened(latest->text, 10, card.w - 20), card.x + card.w * 0.5f, card.y + 5, 10, rgba(230, 230, 230));
 }
 
 void draw_banner(Painter& p, const Screen& s) {
@@ -233,179 +297,155 @@ void draw_banner(Painter& p, const Screen& s) {
     for (const match::Notice& n : match::notices()) {
         if (n.big) latest = &n;
     }
-    if (latest == nullptr) return;
+    if (latest == nullptr || match::get().phase == Phase::Results) return;
     const uint64_t age = now_ms() - latest->at;
     if (age > 3500) return;
     // Pop in, hold, fade out.
     const f32 t = static_cast<f32>(age) / 1000.0f;
     const f32 scale = t < 0.15f ? 0.6f + t / 0.15f * 0.4f : 1.0f;
     const uint8_t alpha = age > 2800 ? static_cast<uint8_t>(255 * (3500 - age) / 700) : 255;
-    const f32 size = 44.0f * scale;
+    const f32 size = p.fit(latest->text, 28.0f * scale, s.w - 48);
     p.centered(latest->text, s.x + s.w * 0.5f, s.y + s.h * 0.30f, size,
         rgba(latest->r, latest->g, latest->b, alpha));
 }
 
 void draw_name_tags(Painter& p, const Screen& s) {
-    const match::Match& m = match::get();
-    const Role myRole = match::my_role();
-    const bool namesEnabled = settings::name_tags();
-    const view_class* view = dComIfGd_getView();
+    const auto& m = match::get();
+    const auto mine = match::my_role();
+    const auto* view = dComIfGd_getView();
     if (view == nullptr) return;
+    struct Tag { int id; cXyz head; float distance; bool hunter; };
+    std::vector<Tag> tags;
     for (int id = 1; id <= kMaxPlayers; ++id) {
-        if (id == net::self_id()) continue;
-        const match::Player& pl = match::player(id);
-        cXyz feet;
-        float height;
+        const auto& player = match::player(id);
+        if (id == net::self_id() || !player.present) continue;
+        const bool hunter = match::in_round() && mine == Role::Hider && player.role == Role::Hunter;
+        if (!settings::name_tags() && !hunter) continue;
+        cXyz feet; float height;
         if (!puppet::anchor(id, feet, height)) {
-            // Even a failed puppet allocation must not make a hunter untrackable to hiders.
-            if (!pl.present || !pl.hasState || !(pl.state.flags & STATE_IN_WORLD) ||
-                now_ms() - pl.stateAt >= 4000 || std::strncmp(pl.state.stage, local::stage(), 8) != 0) {
-                continue;
-            }
-            feet.set(pl.state.x, pl.state.y, pl.state.z);
-            height = (pl.state.flags & STATE_DISGUISED) ? prop_info(pl.state.prop).height : 150.0f;
+            if (!player.hasState || !(player.state.flags & STATE_IN_WORLD) || now_ms() - player.stateAt >= 4000 ||
+                std::strncmp(player.state.stage, local::stage(), 8) != 0) continue;
+            feet.set(player.state.x, player.state.y, player.state.z);
+            height = (player.state.flags & STATE_DISGUISED) ? prop_info(player.state.prop).height : 150;
         }
-        // A hider must always be able to identify the threat. This also provides a reliable
-        // fallback if a remote Link model cannot be drawn after a stage transition.
-        const bool hunterMarker = match::in_round() && myRole == Role::Hider && pl.role == Role::Hunter;
-        if (!namesEnabled && !hunterMarker) continue;
-        const bool hiding = match::in_round() && pl.role == Role::Hider && !pl.found;
-        cXyz head = feet;
-        head.y += height + 35.0f;
-        const f32 dist = (head - view->lookat.eye).abs();
-        if (hiding && myRole != Role::Hider) {
-            // The whole point: hunters don't get told where props are. In Hide & Seek a hider's
-            // name shows up once you're close.
-            if (m.settings.mode == Mode::PropHunt || dist > 500.0f) continue;
-        }
-        if (dist > 5000.0f) continue;
-        Vec cam;
-        mDoLib_pos2camera(&head, &cam);
-        if (cam.z > -1.0f) continue;  // behind us
-        Vec out;
-        mDoLib_project(&head, &out);
-        if (out.x < s.x || out.x > s.x + s.w || out.y < s.y || out.y > s.y + s.h) continue;
-        const f32 size = std::clamp(18.0f * 600.0f / std::max(dist, 1.0f), 9.0f, 18.0f);
-        std::string label = name_of(id);
-        if (match::in_round() && pl.role == Role::Hunter) label += " [HUNTER]";
-        p.centered(label, out.x, out.y - size, hunterMarker ? std::max(size, 14.0f) : size,
-            hunterMarker ? rgba(255, 105, 75) : player_color(id));
+        cXyz head = feet; head.y += height + 28;
+        const float distance = (head - view->lookat.eye).abs();
+        if (match::in_round() && player.role == Role::Hider && !player.found && mine != Role::Hider &&
+            (m.settings.mode == Mode::PropHunt || distance > 500)) continue;
+        if (distance > (hunter ? 2500 : match::in_round() ? 1200 : 2000)) continue;
+        tags.push_back({id, head, distance, hunter});
+    }
+    std::sort(tags.begin(), tags.end(), [](const Tag& a, const Tag& b) {
+        return a.hunter != b.hunter ? a.hunter : a.distance < b.distance;
+    });
+    int drawn = 0;
+    for (const auto& tag : tags) {
+        if (drawn == 4) break;
+        cXyz head = tag.head;
+        Vec camera; mDoLib_pos2camera(&head, &camera); if (camera.z > -1) continue;
+        Vec out; mDoLib_project(&head, &out);
+        const float size = tag.hunter ? 11.0f : 10.0f;
+        const std::string label = tag.hunter ? "Hunter" : p.shortened(name_of(tag.id), size, 92);
+        if (label.empty()) continue;
+        const float width = p.width(label, size) + 14;
+        const Rect card{out.x - width * 0.5f, out.y - 18, width, 19};
+        if (!reserve_label(card, s)) continue;
+        p.card(card, rgba(0, 0, 0, tag.hunter ? 160 : 130));
+        p.centered(label, out.x, card.y + 4, size, tag.hunter ? rgba(255, 105, 75) : player_color(tag.id));
+        ++drawn;
     }
 }
 
 void draw_taunt_pings(Painter& p, const Screen& s) {
     if (match::my_role() != Role::Hunter || match::get().phase != Phase::Seek) return;
-    const view_class* view = dComIfGd_getView();
+    const auto* view = dComIfGd_getView();
     if (view == nullptr) return;
-    cXyz tracking;
-    if (local::tracking_clue(tracking)) {
-        Vec camera;
-        mDoLib_pos2camera(&tracking, &camera);
-        const float side = -camera.z * 0.35f;
-        const char* direction = camera.z > -1.0f ? "BEHIND" : camera.x > side ? "RIGHT" :
-                                camera.x < -side ? "LEFT" : "AHEAD";
-        const float distance = (tracking - view->lookat.eye).abs();
-        const char* range = distance < 1200.0f ? "NEAR" : distance < 3500.0f ? "WARM" : "DISTANT";
-        const std::string clue = std::string("TRACKING: ") + direction + " - " + range;
-        const f32 cx = s.x + s.w * 0.5f, y = s.y + 139.0f;
-        const f32 width = p.width(clue, 18.0f) + 24.0f;
-        p.box(cx - width * 0.5f, y - 3.0f, cx + width * 0.5f, y + 21.0f, rgba(0, 0, 0, 160));
-        p.centered(clue, cx, y, 18.0f, rgba(120, 230, 255));
-    }
-
-    struct Ping {
-        int id;
-        cXyz position;
-        Vec camera;
-        float strength;
-        float distance;
-    };
+    struct Ping { cXyz position; Vec camera; float strength; float distance; };
     std::vector<Ping> pings;
     for (int id = 1; id <= kMaxPlayers; ++id) {
-        cXyz position;
-        const float strength = local::taunt_ping(id, position);
-        if (strength <= 0.0f) continue;
-        Vec camera;
-        mDoLib_pos2camera(&position, &camera);
-        pings.push_back({id, position, camera, strength, (position - view->lookat.eye).abs()});
+        cXyz position; const auto strength = local::taunt_ping(id, position);
+        if (strength <= 0) continue;
+        Vec camera; mDoLib_pos2camera(&position, &camera);
+        pings.push_back({position, camera, strength, (position - view->lookat.eye).abs()});
     }
-    if (pings.empty()) return;
-    std::sort(pings.begin(), pings.end(),
-        [](const Ping& a, const Ping& b) { return a.strength > b.strength; });
-
-    const f32 cx = s.x + s.w * 0.5f;
-    const int lines = std::min<int>(3, pings.size());
-    for (int i = 0; i < lines; ++i) {
-        const Ping& ping = pings[i];
-        const float side = -ping.camera.z * 0.35f;
-        const char* direction = ping.camera.z > -1.0f ? "BEHIND"
-                                : ping.camera.x > side ? "RIGHT"
-                                : ping.camera.x < -side ? "LEFT"
-                                                       : "AHEAD";
-        const int metres = std::max(1, static_cast<int>(std::lround(ping.distance / 100.0f)));
-        const std::string clue = std::string("TAUNT: ") + name_of(ping.id) + " - " + direction +
-                                 " - " + std::to_string(metres) + "m";
-        const uint8_t alpha = static_cast<uint8_t>(100.0f + 155.0f * ping.strength);
-        const f32 y = s.y + 69.0f + static_cast<f32>(i) * 22.0f;
-        const f32 w = p.width(clue, 18.0f) + 24.0f;
-        p.box(cx - w * 0.5f, y - 3.0f, cx + w * 0.5f, y + 21.0f, rgba(0, 0, 0, alpha / 2));
-        p.centered(clue, cx, y, 18.0f, rgba(255, 205, 65, alpha));
+    std::sort(pings.begin(), pings.end(), [](const Ping& a, const Ping& b) {
+        return a.strength != b.strength ? a.strength > b.strength : a.distance < b.distance;
+    });
+    const auto direction = [](const Vec& camera) {
+        const float side = -camera.z * 0.35f;
+        return camera.z > -1 ? "Behind" : camera.x > side ? "Right" : camera.x < -side ? "Left" : "Ahead";
+    };
+    std::string text;
+    bool tracking = false;
+    if (!pings.empty()) {
+        const auto& ping = pings.front();
+        text = std::string("Clue  |  ") + direction(ping.camera) + "  |  " +
+            std::to_string(std::max(1, static_cast<int>(std::lround(ping.distance / 100)))) + "m";
+        if (pings.size() > 1) text += "  +" + std::to_string(pings.size() - 1);
+    } else {
+        cXyz at;
+        if (!local::tracking_clue(at)) return;
+        Vec camera; mDoLib_pos2camera(&at, &camera);
+        const float distance = (at - view->lookat.eye).abs();
+        text = std::string("Tracking  |  ") + direction(camera) + "  |  " +
+            (distance < 1200 ? "Near" : distance < 3500 ? "Warm" : "Distant");
+        tracking = true;
     }
-
-    // Projected markers are intentionally visible through scenery for three seconds. A hider gets
-    // a point for taking this risk, and hunters get a clue that remains useful across large maps.
-    for (const Ping& ping : pings) {
-        if (ping.camera.z > -1.0f) continue;
-        cXyz marker = ping.position;
-        const match::Player& pl = match::player(ping.id);
-        marker.y += (pl.hasState && (pl.state.flags & STATE_DISGUISED))
-                        ? prop_info(pl.state.prop).height + 35.0f
-                        : 185.0f;
-        Vec out;
-        mDoLib_project(&marker, &out);
-        if (out.x < s.x + 10.0f || out.x > s.x + s.w - 10.0f || out.y < s.y + 10.0f ||
-            out.y > s.y + s.h - 10.0f) {
-            continue;
-        }
-        const uint8_t alpha = static_cast<uint8_t>(80.0f + 175.0f * ping.strength);
-        const f32 pulse = 20.0f + 2.0f * std::sin(static_cast<f32>(now_ms() % 1000) * 0.012f);
-        p.centered(std::string("! TAUNT: ") + name_of(ping.id) + " !", out.x, out.y - pulse,
-            pulse, rgba(255, 205, 65, alpha));
+    const auto card = centre_card(s.x, s.y, s.w, 55, 25, 284);
+    p.card(card, rgba(0, 0, 0, 160));
+    p.centred_fit(text, card.x + card.w * 0.5f, card.y + 6, 12, card.w - 20,
+        tracking ? rgba(120, 230, 255) : rgba(255, 205, 65));
+    int drawn = 0;
+    for (const auto& ping : pings) {
+        if (drawn == 3) break;
+        if (ping.camera.z > -1) continue;
+        cXyz at = ping.position; at.y += 175;
+        Vec out; mDoLib_project(&at, &out);
+        const Rect marker{out.x - 8, out.y - 16, 16, 20};
+        if (!reserve_label(marker, s)) continue;
+        const auto alpha = static_cast<uint8_t>(130 + 100 * ping.strength);
+        p.card(marker, rgba(0, 0, 0, alpha));
+        p.centered("!", out.x, marker.y + 4, 13, rgba(255, 205, 65, alpha));
+        ++drawn;
     }
 }
 
 void draw_scoreboard(Painter& p, const Screen& s) {
-    const match::Match& m = match::get();
+    const auto& m = match::get();
     std::vector<int> ids;
-    for (int id = 1; id <= kMaxPlayers; ++id) {
-        if (match::player(id).present) ids.push_back(id);
-    }
+    for (int id = 1; id <= kMaxPlayers; ++id) if (match::player(id).present) ids.push_back(id);
     std::sort(ids.begin(), ids.end(), [](int a, int b) {
-        const match::Player& pa = match::player(a);
-        const match::Player& pb = match::player(b);
-        return pa.roundPoints != pb.roundPoints ? pa.roundPoints > pb.roundPoints : pa.score > pb.score;
+        const auto& first = match::player(a); const auto& second = match::player(b);
+        return first.roundPoints != second.roundPoints ? first.roundPoints > second.roundPoints : first.score > second.score;
     });
-    const f32 rowH = 22.0f;
-    const f32 w = 420.0f;
-    const f32 h = 70.0f + rowH * static_cast<f32>(ids.size());
-    const f32 x0 = s.x + (s.w - w) * 0.5f;
-    const f32 y0 = s.y + s.h * 0.42f;
-    p.box(x0, y0, x0 + w, y0 + h, rgba(0, 0, 0, 185));
-    const char* title = m.winner == 1 ? "Hunters win!" : (m.settings.mode == Mode::PropHunt ? "Props win!" : "Hiders win!");
-    p.centered(title, x0 + w * 0.5f, y0 + 8.0f, 24.0f, m.winner == 1 ? rgba(255, 110, 90) : rgba(130, 235, 130));
-    p.text("Player", x0 + 16.0f, y0 + 42.0f, 13.0f, rgba(180, 180, 180));
-    p.text("Round", x0 + w - 150.0f, y0 + 42.0f, 13.0f, rgba(180, 180, 180));
-    p.text("Total", x0 + w - 70.0f, y0 + 42.0f, 13.0f, rgba(180, 180, 180));
-    f32 y = y0 + 62.0f;
+    const auto layout = score_layout(s.x, s.y, s.w, s.h, ids.size());
+    const auto& card = layout.card;
+    p.card(card, rgba(0, 0, 0, 215));
+    const char* title = m.winner == 1 ? "Hunters win" : m.settings.mode == Mode::PropHunt ? "Props win" : "Hiders win";
+    p.centred_fit(title, card.x + card.w * 0.5f, card.y + 9, 18, card.w - 24,
+        m.winner == 1 ? rgba(255, 110, 90) : rgba(130, 235, 130));
+    const float loot = card.x + card.w * 0.51f, finds = card.x + card.w * 0.62f;
+    const float round = card.x + card.w * 0.75f, total = card.x + card.w * 0.89f;
+    const auto cell = [&](const std::string& text, float x, float y, float size, JUtility::TColor color) {
+        p.centred_fit(text, x, y, size, card.w * 0.10f, color);
+    };
+    p.text("Player", card.x + 12, card.y + 36, 10, rgba(180, 180, 180));
+    cell("Loot", loot, card.y + 36, 10, rgba(180, 180, 180));
+    cell("Finds", finds, card.y + 36, 10, rgba(180, 180, 180));
+    cell("Round", round, card.y + 36, 10, rgba(180, 180, 180));
+    cell("Total", total, card.y + 36, 10, rgba(180, 180, 180));
+    float y = card.y + 54;
+    const float size = std::min(13.0f, layout.rowHeight * 0.72f);
     for (int id : ids) {
-        const match::Player& pl = match::player(id);
-        std::string name = name_of(id);
-        if (pl.role == Role::Hunter && !pl.found) name += "  (hunter)";
-        else if (pl.found) name += "  (found)";
-        p.text(name, x0 + 16.0f, y, 16.0f, player_color(id));
-        p.text("+" + std::to_string(pl.roundPoints), x0 + w - 150.0f, y, 16.0f, rgba(255, 230, 140));
-        p.text(std::to_string(pl.score), x0 + w - 70.0f, y, 16.0f, rgba(240, 240, 240));
-        y += rowH;
+        const auto& player = match::player(id);
+        if (id == net::self_id()) p.box(card.x + 6, y - 1, card.x + card.w - 6, y + layout.rowHeight - 2, rgba(255, 230, 140, 25));
+        const auto name = p.shortened(name_of(id), size, card.w * 0.44f - 20);
+        p.text(name, card.x + 12, y + 1, size, player_color(id));
+        cell(std::to_string(player.rupeesCollected), loot, y + 1, size, rgba(200, 215, 205));
+        cell(std::to_string(player.finds), finds, y + 1, size, rgba(200, 215, 205));
+        cell(std::to_string(player.roundPoints), round, y + 1, size, rgba(255, 230, 140));
+        cell(std::to_string(player.score), total, y + 1, size, rgba(240, 240, 240));
+        y += layout.rowHeight;
     }
 }
 
@@ -414,15 +454,18 @@ public:
     void draw() override {
         Painter p;
         const Screen s = screen();
+        s_labelCount = 0;
         if (local::blindfolded()) {
             draw_blindfold(p, s);
             draw_feed(p, s);
             return;
         }
-        draw_name_tags(p, s);
-        draw_top(p, s);
         draw_taunt_pings(p, s);
+        draw_name_tags(p, s);
+        draw_treasure(p, s);
+        draw_top(p, s);
         draw_role(p, s);
+        draw_hider_feedback(p, s);
         draw_feed(p, s);
         if (match::get().phase == Phase::Results) draw_scoreboard(p, s);
         draw_banner(p, s);
@@ -435,6 +478,7 @@ HudDlst s_dlst;
 
 void queue() {
     if (net::status() != net::Status::Online || !local::in_world()) return;
+    if (ui::is_open() && !local::blindfolded()) return;
     dDlst_list_c& lists = g_dComIfG_gameInfo.drawlist;
     for (dDlst_base_c** it = lists.mp2DXluDrawLists; it < lists.mp2DXluStart; ++it) {
         if (*it == &s_dlst) return;

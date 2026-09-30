@@ -24,6 +24,7 @@
 #include "net.hpp"
 #include "puppet.hpp"
 #include "settings.hpp"
+#include "treasure.hpp"
 #include "ui.hpp"
 
 DEFINE_MOD();
@@ -92,6 +93,7 @@ MOD_EXPORT ModResult mod_update(ModError*) {
     hs::testing::stock_render_update();
 #endif
     hs::local::update();
+    hs::treasure::update();
     hs::puppet::update();
     hs::game_mode::update();
     return MOD_OK;

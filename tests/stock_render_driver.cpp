@@ -1,5 +1,5 @@
 // Run only in an isolated --user-dir on stock Dusklight, with --stage F_SP103,0,13,-1.
-// This drives the real actors/render lists, not a mock GPU. Stock Linux needs an HTTPS relay.
+// This drives the real actors/render lists, not a mock GPU. Dusklight 2.0.3 supports WebSockets.
 #include "common.hpp"
 #include "arena.hpp"
 #include "gameplay.hpp"
@@ -11,6 +11,7 @@
 #include "net.hpp"
 #include "props.hpp"
 #include "settings.hpp"
+#include "ui.hpp"
 
 #include <mods/svc/hook.hpp>
 #include "JSystem/J3DGraphBase/J3DDrawBuffer.h"
@@ -43,6 +44,8 @@ int s_checks = 0;
 bool s_left = false;
 const bool s_hunterOnly = std::getenv("HS_STOCK_HUNTER_TEST") != nullptr;
 const bool s_arenaTest = std::getenv("HS_ARENA_TEST") != nullptr;
+const bool s_uiTest = std::getenv("HS_UI_TEST") != nullptr;
+const char* s_hudTest = std::getenv("HS_HUD_TEST");
 
 void require(bool condition, const char* message) {
     if (condition) return;
@@ -228,16 +231,16 @@ void roster() {
         w.u8(static_cast<uint8_t>(id == 2 ? Role::Hunter : Role::Hider));
         w.u8(id - 1);
         w.u16(0); w.u16(0);
-        w.u8(2); w.u8(0); w.u8(0);
+        w.u8(2); w.u8(0); w.u8(0); w.u8(0); w.u8(0);
     }
     apply(net::self_id(), w);
 }
 
-void decoys(int kind, const cXyz& at) {
+void decoys(int kind, const cXyz& at, int count = match::kMaxActiveDecoys) {
     Writer w(MSG_DECOYS);
     w.u32(1);
-    w.u8(match::kMaxActiveDecoys);
-    for (int i = 0; i < match::kMaxActiveDecoys; ++i) {
+    w.u8(count);
+    for (int i = 0; i < count; ++i) {
         w.u8(i + 1); w.u8(i / match::kMaxDecoysPerPlayer + 1); w.u8(kind);
         w.f32(at.x + (i % 16 - 8) * 120.0f);
         w.f32(at.y);
@@ -245,11 +248,22 @@ void decoys(int kind, const cXyz& at) {
         w.s16(0);
     }
     apply(net::self_id(), w);
-    if (match::decoy_count() != match::kMaxActiveDecoys) {
+    if (match::decoy_count() != count) {
         mods::log::error("STOCK_RENDER_TEST FAIL: snapshot rejected");
         std::exit(2);
     }
-    mods::log::info("STOCK_RENDER_TEST: 160 decoys of {}", prop_info(kind).name);
+    mods::log::info("STOCK_RENDER_TEST: {} decoys of {}", count, prop_info(kind).name);
+}
+
+void rupees(const cXyz& at) {
+    Writer w(MSG_RUPEES);
+    w.u32(1); w.u8(match::kMaxRupees);
+    for (int i = 0; i < match::kMaxRupees; ++i) {
+        w.u16(i + 1); w.f32(at.x + (i - 4) * 180.0f);
+        w.f32(at.y); w.f32(at.z + 500.0f); w.u32(match::kRupeeLifetimeMs);
+    }
+    apply(net::self_id(), w);
+    require(match::get().rupeeCount == match::kMaxRupees, "treasure snapshot rejected");
 }
 }  // namespace
 
@@ -259,6 +273,11 @@ void stock_render_update() {
         s_start = now;
         if (mods::hook::add_pre<DrawHead>(check_packets) != MOD_OK) std::exit(2);
         if (mods::hook::add_pre<MatDraw>(check_shapes) != MOD_OK) std::exit(2);
+    }
+    if (s_hudTest && s_joined != 0 && now - s_joined > 60000) {
+        mods::log::info("HUD_INSPECTION: finished; {} draw-list checks", s_checks);
+        std::fflush(nullptr);
+        std::_Exit(0);
     }
     if (now - s_start > (s_arenaTest ? 600000u : 240000u)) {
         mods::log::error("STOCK_RENDER_TEST FAIL: timed out");
@@ -276,7 +295,7 @@ void stock_render_update() {
     }
     if (s_left) {
         if (now - s_joined > 2000) {
-            mods::log::info("STOCK_RENDER_TEST PASS: lobby, 50 prop kinds, 160 decoys, cleanup; {} draw-list checks", s_checks);
+            mods::log::info("STOCK_RENDER_TEST PASS: lobby, all selectable prop kinds, 160 decoys, 8 rupees, cleanup; {} draw-list checks", s_checks);
             // This is an in-frame test, not application shutdown: exit() runs game globals'
             // destructors while the engine is still active. Gameplay actor cleanup ran above.
             std::fflush(nullptr);
@@ -285,15 +304,20 @@ void stock_render_update() {
         return;
     }
     if (net::status() != net::Status::Online) return;
+    if (s_uiTest) {
+        if (s_joined == 0) { s_joined = now; ui::open(); }
+        if (now - s_joined > 120000) std::_Exit(0);
+        return;
+    }
     if (s_joined == 0) {
         s_joined = now;
-        for (int id = 2; id <= kMaxPlayers; ++id) match::on_joined(id);
+        for (int id = 2; id <= (s_hudTest ? 4 : kMaxPlayers); ++id) match::on_joined(id);
         mods::log::info("STOCK_RENDER_TEST: full 16-player lobby");
     }
     const auto* link = dComIfGp_getPlayer(0);
     if (link == nullptr) return;
     const cXyz at = link->current.pos;
-    for (int id = 2; id <= kMaxPlayers; ++id) {
+    for (int id = 2; id <= (s_hudTest ? 4 : kMaxPlayers); ++id) {
         PlayerState state;
         state.flags = STATE_IN_WORLD;
         if (s_round && id != 2) state.flags |= STATE_DISGUISED;
@@ -317,11 +341,19 @@ void stock_render_update() {
         round.u32(1); round.u8(0); round.u8(0); round.u16(600); round.u16(600);
         apply(net::self_id(), round);
         Writer phase(MSG_PHASE);
-        phase.u32(1); phase.u8(static_cast<uint8_t>(Phase::Hide)); phase.u32(600000);
+        phase.u32(1); phase.u8(static_cast<uint8_t>(Phase::Seek)); phase.u32(600000);
         apply(net::self_id(), phase);
         s_round = true;
     }
     if (!s_round || now - s_joined < 12000) return;
+    if (s_hudTest && std::strcmp(s_hudTest, "reveal") == 0) {
+        static uint64_t lastReveal = 0;
+        if (now - lastReveal > 5000) {
+            lastReveal = now;
+            Writer w(MSG_CLUE); w.u32(1); w.u8(net::self_id()); w.u8(1);
+            w.u8(static_cast<uint8_t>(ClueKind::Manual)); apply(net::self_id(), w);
+        }
+    }
     if (s_hunterOnly) {
         static bool hunting = false;
         if (!hunting) {
@@ -340,7 +372,7 @@ void stock_render_update() {
         return;
     }
     static uint64_t changedAt = 0;
-    if (now - changedAt < 2000) return;
+    if (now < changedAt || now - changedAt < 2000) return;
     changedAt = now;
     int next = s_kind + 1;
     while (next < prop_count() && !prop_on_map(next, -1)) ++next;
@@ -352,6 +384,12 @@ void stock_render_update() {
         return;
     }
     s_kind = next;
-    decoys(s_kind, at);
+    decoys(s_kind, at, s_hudTest ? 3 : match::kMaxActiveDecoys);
+    rupees(at);
+    if (s_hudTest && std::strcmp(s_hudTest, "results") == 0) match::end_round();
+    if (s_hudTest) {
+        s_kind = -1;
+        changedAt = now + 30000; // hold the layout long enough to inspect and capture it
+    }
 }
 }  // namespace hs::testing

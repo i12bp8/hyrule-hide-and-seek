@@ -5,6 +5,7 @@
 // controls.
 
 #include <cstdint>
+#include "protocol.hpp"
 
 struct cXyz;
 
@@ -23,6 +24,8 @@ float taunt_cooldown();    // 0..1, for the HUD
 bool has_sword();
 uint32_t tracking_cooldown_secs();
 bool tracking_clue(cXyz& position);
+uint32_t attack_recovery_ms();
+ClueKind taunt_kind();
 
 // A recent hider taunt as seen by a hunter. Returns its remaining 0..1 reveal strength.
 float taunt_ping(int id, cXyz& position);
@@ -31,6 +34,6 @@ float taunt_ping(int id, cXyz& position);
 void note_hit();
 
 // Plays and records a taunt at a player's position (hooked up to match).
-void play_taunt(uint8_t from, uint8_t sound);
+void play_taunt(uint8_t from, uint8_t sound, ClueKind kind);
 
 }  // namespace hs::local

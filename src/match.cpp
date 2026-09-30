@@ -3,6 +3,7 @@
 #include "maps.hpp"
 #include "net.hpp"
 #include "props.hpp"
+#include "gameplay.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -31,11 +32,15 @@ Match s_match;
 std::vector<Notice> s_notices;
 Hooks s_hooks;
 uint64_t s_lastStateSent = 0;
+PlayerState s_lastWireState;
+bool s_haveWireState = false;
 uint64_t s_lastMeta = 0;
 uint64_t s_seekStartedAt = 0;  // host clock, for survival points
 uint64_t s_lastHitSent[kSlots] = {};
 uint64_t s_lastDecoyHitSent[kMaxActiveDecoys + 1] = {};
 uint8_t s_nextDecoyId = 1;
+uint16_t s_nextRupeeId = 1;
+uint64_t s_lastPickupSent = 0;
 std::mt19937 s_rng{std::random_device{}()};
 
 Player& P(int id) {
@@ -115,6 +120,8 @@ Writer roster_msg() {
         w.u8(static_cast<uint8_t>((p.found ? 1 : 0) | (p.ready ? 2 : 0)));
         w.u8(p.hunterRounds);
         w.u8(p.decoysUsed);
+        w.u8(p.rupeesCollected);
+        w.u8(p.finds);
     }
     return w;
 }
@@ -146,6 +153,19 @@ Writer round_msg() {
     return w;
 }
 
+Writer rupees_msg() {
+    Writer w(MSG_RUPEES);
+    w.u32(s_match.round);
+    w.u8(s_match.rupeeCount);
+    for (int i = 0; i < s_match.rupeeCount; ++i) {
+        const auto& r = s_match.rupees[i];
+        w.u16(r.id);
+        w.f32(r.x); w.f32(r.y); w.f32(r.z);
+        w.u32(static_cast<uint32_t>(r.expiresAt > now_ms() ? r.expiresAt - now_ms() : 0));
+    }
+    return w;
+}
+
 Writer phase_msg() {
     Writer w(MSG_PHASE);
     w.u32(s_match.round);
@@ -163,10 +183,17 @@ void send_meta() {
 }
 
 void go_phase(Phase phase, uint32_t ms) {
+    // Set on reception too; our announcement follows the same path as every other client.
+    const Phase previous = s_match.phase;
     s_match.phase = phase;
     s_match.phaseEnd = now_ms() + ms;
     if (phase == Phase::Seek) s_seekStartedAt = now_ms();
-    announce(phase_msg());
+    const Writer transition = phase_msg();
+    s_match.phase = previous;
+    announce(transition);
+    if (phase == Phase::Seek && previous != Phase::Seek) {
+        for (auto& p : s_match.players) p.lastClueAt = p.lastMovedAt = now_ms();
+    }
     send_meta();
 }
 
@@ -198,6 +225,61 @@ void give(int id, int points) {
     Player& p = P(id);
     p.roundPoints = static_cast<uint16_t>(std::min(65535, p.roundPoints + points));
     p.score = static_cast<uint16_t>(std::min(65535, p.score + points));
+}
+
+bool fresh_on_map(const Player& p) {
+    return p.present && p.hasState && now_ms() - p.stateAt <= kFreshStateMs &&
+           (p.state.flags & STATE_IN_WORLD) &&
+           std::strncmp(p.state.stage, map_info(s_match.map).stage, 8) == 0;
+}
+
+void host_clue(int id, uint8_t sound, ClueKind kind) {
+    Player& p = P(id);
+    const uint64_t now = now_ms();
+    if (s_match.phase != Phase::Seek || p.role != Role::Hider || p.found || !fresh_on_map(p) ||
+        (kind != ClueKind::Treasure && p.lastClueAt != 0 && now - p.lastClueAt < kTauntCooldownMs)) return;
+    // Only deliberate taunts earn a point. Automatic clues cannot farm a hiding spot.
+    const bool award = kind == ClueKind::Manual &&
+                       (p.lastTauntAt == 0 || now - p.lastTauntAt >= kTauntPointEveryMs);
+    if (award) { p.lastTauntAt = now; give(id, 1); }
+    Writer w(MSG_CLUE);
+    w.u32(s_match.round); w.u8(static_cast<uint8_t>(id)); w.u8(sound); w.u8(static_cast<uint8_t>(kind));
+    announce(w);
+    if (award) announce(roster_msg());
+}
+
+void clear_rupees() {
+    s_match.rupeeCount = 0;
+    for (auto& r : s_match.rupees) r = {};
+}
+
+void erase_rupee(int index) {
+    for (int i = index + 1; i < s_match.rupeeCount; ++i) s_match.rupees[i - 1] = s_match.rupees[i];
+    s_match.rupees[--s_match.rupeeCount] = {};
+}
+
+void host_collect(int id, uint16_t pickupId) {
+    Player& p = P(id);
+    if (!s_match.settings.treasure || s_match.phase != Phase::Seek || p.role != Role::Hider ||
+        p.found || !fresh_on_map(p)) return;
+    for (int i = 0; i < s_match.rupeeCount; ++i) {
+        const auto& r = s_match.rupees[i];
+        if (r.id != pickupId || r.expiresAt <= now_ms()) continue;
+        const float dx = p.state.x - r.x, dy = p.state.y - r.y, dz = p.state.z - r.z;
+        if (dx * dx + dz * dz > kRupeeCollectRadius * kRupeeCollectRadius || std::fabs(dy) > 140.0f) return;
+        erase_rupee(i); // consume before announcing; simultaneous requests can only award once
+        p.rupeesCollected = static_cast<uint8_t>(std::min(255, p.rupeesCollected + 1));
+        const bool bonus = p.rupeesCollected == 3;
+        const int points = rupee_points() + (bonus ? 5 : 0);
+        give(id, points);
+        announce(rupees_msg());
+        announce(roster_msg());
+        Writer w(MSG_PICKUP);
+        w.u32(s_match.round); w.u8(static_cast<uint8_t>(id)); w.u8(static_cast<uint8_t>(points)); w.u8(bonus);
+        announce(w);
+        host_clue(id, 5, ClueKind::Treasure);
+        return;
+    }
 }
 
 bool award_survival(int id, uint64_t until) {
@@ -320,6 +402,8 @@ void finish(int winner) {
         }
     }
     clear_decoys();
+    clear_rupees();
+    announce(rupees_msg());
     announce(decoys_msg());
     Writer w(MSG_RESULTS);
     w.u32(s_match.round);
@@ -335,6 +419,7 @@ void found(int target, int by) {
     t.role = s_match.settings.foundJoinHunters ? Role::Hunter : Role::Spectator;
     award_survival(target, now_ms());
     give(by, kFindPoints);
+    P(by).finds = static_cast<uint8_t>(std::min(255, P(by).finds + 1));
     Writer w(MSG_FOUND);
     w.u32(s_match.round);
     w.u8(static_cast<uint8_t>(target));
@@ -353,7 +438,7 @@ void host_hit(int attacker, int target) {
     Player& a = P(attacker);
     Player& t = P(target);
     if (!a.present || !t.present || a.role != Role::Hunter || t.role != Role::Hider || t.found) return;
-    if (!a.hasState || !t.hasState) return;
+    if (!fresh_on_map(a) || !fresh_on_map(t)) return;
     if (std::strcmp(a.state.stage, t.state.stage) != 0) return;
     if (now_ms() - t.stageChangedAt < kImmunityMs) return;
     const float d = distance(a.state, t.state);
@@ -382,10 +467,23 @@ void host_update() {
     case Phase::Seek:
         {
             bool changed = false;
+            bool pickupsChanged = false;
+            for (int i = s_match.rupeeCount - 1; i >= 0; --i) {
+                if (s_match.rupees[i].expiresAt <= now) { erase_rupee(i); pickupsChanged = true; }
+            }
+            if (pickupsChanged) announce(rupees_msg());
             for (int id = 1; id <= kMaxPlayers; ++id) {
                 const Player& p = P(id);
                 if (p.present && p.role == Role::Hider && !p.found) {
                     changed = award_survival(id, now) || changed;
+                    uint64_t interval = clue_interval_ms(s_match.map, ms_left());
+                    if (hiders_left() == 1 && ms_left() <= 60000) interval = 8000;
+                    if (s_match.settings.autoTaunt && now - p.lastClueAt >= interval) {
+                        host_clue(id, static_cast<uint8_t>(s_rng() % 6), ClueKind::Regular);
+                    } else if (s_match.settings.idleTauntSecs != 0 &&
+                        now - std::max(p.lastMovedAt, p.lastClueAt) >= s_match.settings.idleTauntSecs * 1000u) {
+                        host_clue(id, static_cast<uint8_t>(s_rng() % 6), ClueKind::Stationary);
+                    }
                 }
             }
             if (changed) announce(roster_msg());
@@ -435,6 +533,8 @@ void handle_roster(Reader& r) {
         const uint8_t flags = r.u8();
         const uint8_t hunterRounds = r.u8();
         const uint8_t decoysUsed = r.u8();
+        const uint8_t rupeesCollected = r.u8();
+        const uint8_t finds = r.u8();
         if (!r.ok() || id < 1 || id > kMaxPlayers) break;
         Player& p = P(id);
         listed[id] = true;
@@ -447,19 +547,40 @@ void handle_roster(Reader& r) {
         p.ready = (flags & 2) != 0;
         p.hunterRounds = hunterRounds;
         p.decoysUsed = decoysUsed;
+        p.rupeesCollected = rupeesCollected;
+        p.finds = finds;
     }
     (void)listed;
 }
 
-void handle_state(uint8_t from, Reader& r) {
-    Player& p = P(from);
-    PlayerState s;
-    s.read(r);
-    if (!r.ok()) return;
-    if (!p.hasState || std::strcmp(p.state.stage, s.stage) != 0) p.stageChangedAt = now_ms();
+bool valid_state(const PlayerState& s) {
+    if (!std::isfinite(s.x) || !std::isfinite(s.y) || !std::isfinite(s.z) ||
+        std::fabs(s.x) > 1000000 || std::fabs(s.y) > 1000000 || std::fabs(s.z) > 1000000) return false;
+    for (const auto& a : s.under) if (!std::isfinite(a.frame)) return false;
+    for (const auto& a : s.upper) if (!std::isfinite(a.frame)) return false;
+    return true;
+}
+
+void remember_state(Player& p, const PlayerState& s) {
+    const bool stageChanged = !p.hasState || std::strcmp(p.state.stage, s.stage) != 0;
+    const uint64_t now = now_ms();
+    if (stageChanged) p.stageChangedAt = now;
+    const float dx = s.x - p.idleX, dz = s.z - p.idleZ;
+    if (stageChanged || dx * dx + dz * dz > 120.0f * 120.0f || std::fabs(s.y - p.idleY) > 80.0f) {
+        p.idleX = s.x; p.idleY = s.y; p.idleZ = s.z; p.lastMovedAt = now;
+    }
+    if (!stageChanged && p.stateAt != now) { p.previousState = p.state; p.previousStateAt = p.stateAt; }
+    if (stageChanged) p.previousStateAt = 0;
     p.state = s;
     p.hasState = true;
-    p.stateAt = now_ms();
+    p.stateAt = now;
+}
+
+void handle_state(uint8_t from, Reader& r) {
+    PlayerState s;
+    s.read(r);
+    if (!r.ok() || !valid_state(s)) return;
+    remember_state(P(from), s);
 }
 
 }  // namespace
@@ -474,7 +595,7 @@ void Settings::write(Writer& w) const {
     w.u8(hunters);
     w.u8(static_cast<uint8_t>((foundJoinHunters ? 1 : 0) | (missPenalty ? 2 : 0) |
                               (autoTaunt ? 4 : 0) | (autoNext ? 8 : 0) | (isPublic ? 16 : 0) |
-                              (trackingPulse ? 32 : 0)));
+                              (trackingPulse ? 32 : 0) | (treasure ? 64 : 0)));
     w.u16(idleTauntSecs);
     w.u8(freeDecoys);
 }
@@ -494,6 +615,7 @@ void Settings::read(Reader& r) {
     autoNext = f & 8;
     isPublic = f & 16;
     trackingPulse = f & 32;
+    treasure = f & 64;
     idleTauntSecs = std::clamp<uint16_t>(r.u16(), 0, 600);
     freeDecoys = std::clamp<uint8_t>(r.u8(), 0, 10);
 }
@@ -572,6 +694,53 @@ bool can_place_decoy() {
            (s_match.phase == Phase::Seek && me.roundPoints >= kExtraDecoyCost);
 }
 
+uint32_t next_clue_ms() {
+    const auto& p = P(self());
+    if (s_match.phase != Phase::Seek || p.role != Role::Hider || p.found) return UINT32_MAX;
+    uint64_t next = UINT64_MAX;
+    if (s_match.settings.autoTaunt) {
+        uint64_t interval = clue_interval_ms(s_match.map, ms_left());
+        if (hiders_left() == 1 && ms_left() <= 60000) interval = 8000;
+        next = p.lastClueAt + interval;
+    }
+    if (s_match.settings.idleTauntSecs != 0) next = std::min(next,
+        std::max(p.lastMovedAt, p.lastClueAt) + s_match.settings.idleTauntSecs * 1000u);
+    if (next == UINT64_MAX) return UINT32_MAX;
+    return static_cast<uint32_t>(next > now_ms() ? next - now_ms() : 0);
+}
+
+int rupee_points() { return s_match.round % 3 == 0 ? 5 : 3; }
+
+bool spawn_rupee(float x, float y, float z) {
+    if (!host() || !s_match.settings.treasure || s_match.phase != Phase::Seek ||
+        s_match.rupeeCount >= kMaxRupees || !std::isfinite(x) || !std::isfinite(y) || !std::isfinite(z)) return false;
+    for (int i = 0; i < s_match.rupeeCount; ++i) {
+        const auto& r = s_match.rupees[i];
+        const float dx = x - r.x, dy = y - r.y, dz = z - r.z;
+        if (dx * dx + dy * dy + dz * dz < 500.0f * 500.0f) return false;
+    }
+    bool nearArena = false;
+    for (const auto& p : s_match.players) {
+        if (!fresh_on_map(p)) continue;
+        const float dx = p.state.x - x, dy = p.state.y - y, dz = p.state.z - z;
+        if (dx * dx + dy * dy + dz * dz <= 2500.0f * 2500.0f) nearArena = true;
+    }
+    if (!nearArena) return false;
+    auto& r = s_match.rupees[s_match.rupeeCount++];
+    r = {s_nextRupeeId++, x, y, z, now_ms() + kRupeeLifetimeMs};
+    if (s_nextRupeeId == 0) s_nextRupeeId = 1;
+    announce(rupees_msg());
+    return true;
+}
+
+void collect_rupee(uint16_t id) {
+    if (now_ms() - s_lastPickupSent < 350) return;
+    s_lastPickupSent = now_ms();
+    if (host()) { host_collect(self(), id); return; }
+    Writer w(MSG_COLLECT_RUPEE); w.u32(s_match.round); w.u16(id);
+    net::send(net::kToHost, w.bytes());
+}
+
 const std::vector<Notice>& notices() {
     return s_notices;
 }
@@ -579,7 +748,7 @@ const std::vector<Notice>& notices() {
 // ---- actions ---------------------------------------------------------------------------------
 
 void set_settings(const Settings& s) {
-    if (!host()) return;
+    if (!host() || in_round()) return;
     announce([&] {
         Writer w(MSG_SETTINGS);
         s.write(w);
@@ -591,6 +760,10 @@ void set_settings(const Settings& s) {
 bool can_start(std::string* why) {
     if (!host()) {
         if (why) *why = "Only the host can start a round.";
+        return false;
+    }
+    if (in_round()) {
+        if (why) *why = "A round is already in progress.";
         return false;
     }
     int n = 0;
@@ -629,16 +802,22 @@ void start_round() {
         p.lastDecoyAt = 0;
         p.survivalAwarded = 0;
         p.decoysUsed = 0;
+        p.rupeesCollected = 0;
+        p.finds = 0;
+        p.lastTauntAt = p.lastClueAt = p.lastMovedAt = p.revealedUntil = 0;
     }
 
     s_match.round += 1;
     s_match.winner = -1;
     s_seekStartedAt = 0;
     s_nextDecoyId = 1;
+    s_nextRupeeId = 1;
     clear_decoys();
+    clear_rupees();
     announce(roster_msg());
     announce(round_msg());
     announce(decoys_msg());
+    announce(rupees_msg());
     go_phase(Phase::Gather, kGatherMs);
 }
 
@@ -666,15 +845,20 @@ void set_wanted_color(uint8_t color) {
 }
 
 void set_local_state(const PlayerState& s) {
-    if (net::status() != net::Status::Online) return;
+    if (net::status() != net::Status::Online || !valid_state(s)) return;
     Player& me = P(self());
-    if (!me.hasState || std::strcmp(me.state.stage, s.stage) != 0) me.stageChangedAt = now_ms();
-    me.state = s;
-    me.hasState = true;
-    me.stateAt = now_ms();
+    remember_state(me, s);
     const uint64_t now = now_ms();
-    if (now - s_lastStateSent < kStateIntervalMs) return;
+    const bool changed = !s_haveWireState || s.flags != s_lastWireState.flags ||
+        std::strcmp(s.stage, s_lastWireState.stage) != 0 || s.room != s_lastWireState.room ||
+        s.prop != s_lastWireState.prop || std::fabs(s.x - s_lastWireState.x) > 1.0f ||
+        std::fabs(s.y - s_lastWireState.y) > 1.0f || std::fabs(s.z - s_lastWireState.z) > 1.0f ||
+        s.yaw != s_lastWireState.yaw || s.propYaw != s_lastWireState.propYaw;
+    const uint64_t interval = changed ? kStateIntervalMs : (in_round() ? 500 : 1000);
+    if (s_haveWireState && now - s_lastStateSent < interval) return;
     s_lastStateSent = now;
+    s_lastWireState = s;
+    s_haveWireState = true;
     Writer w(MSG_STATE);
     s.write(w);
     net::send(net::kToEveryone, w.bytes());
@@ -734,24 +918,17 @@ void report_decoy_hit(uint8_t decoyId) {
 
 void send_taunt(uint8_t sound) {
     Writer w(MSG_TAUNT);
-    w.u8(sound);
-    net::send(net::kToEveryone, w.bytes());
-    if (host()) {
-        Player& me = P(self());
-        const uint64_t now = now_ms();
-        if (s_match.phase == Phase::Seek && me.role == Role::Hider &&
-            now - me.lastTauntAt > kTauntPointEveryMs) {
-            me.lastTauntAt = now;
-            give(self(), 1);
-            announce(roster_msg());
-        }
-    }
+    w.u32(s_match.round); w.u8(sound);
+    if (host()) host_clue(self(), sound, ClueKind::Manual);
+    else net::send(net::kToHost, w.bytes());
 }
 
 // ---- net wiring ------------------------------------------------------------------------------
 
 void on_welcome() {
     s_match = Match{};
+    s_haveWireState = false;
+    s_lastStateSent = s_lastPickupSent = 0;
     s_notices.clear();
     for (int id = 1; id <= kMaxPlayers; ++id) {
         P(id).present = net::member(id).present;
@@ -784,6 +961,7 @@ void on_joined(uint8_t id) {
         net::send(id, round_msg().bytes());
         net::send(id, phase_msg().bytes());
         net::send(id, decoys_msg().bytes());
+        net::send(id, rupees_msg().bytes());
     }
     send_meta();
 }
@@ -819,12 +997,17 @@ void on_host_changed(uint8_t id) {
         s_nextDecoyId = 1;
         while (decoy_index(s_nextDecoyId) >= 0 && s_nextDecoyId != 0) ++s_nextDecoyId;
         if (s_nextDecoyId == 0) s_nextDecoyId = 1;
+        s_nextRupeeId = 1;
+        for (int i = 0; i < s_match.rupeeCount; ++i)
+            s_nextRupeeId = std::max<uint16_t>(s_nextRupeeId, s_match.rupees[i].id + 1);
+        if (s_nextRupeeId == 0) s_nextRupeeId = 1;
         const uint16_t survived = static_cast<uint16_t>(std::max(0, survival_points(now_ms())));
         for (int player = 1; player <= kMaxPlayers; ++player) {
             P(player).survivalAwarded = survived;
         }
         announce(roster_msg());
         announce(decoys_msg());
+        announce(rupees_msg());
         send_meta();
     }
 }
@@ -889,6 +1072,50 @@ void on_message(uint8_t from, const uint8_t* data, size_t size) {
         break;
     }
 
+    case MSG_RUPEES: {
+        if (!fromHost) break;
+        const uint32_t round = r.u32();
+        const uint8_t count = r.u8();
+        if (count > kMaxRupees) break;
+        Match::Rupee incoming[kMaxRupees];
+        bool valid = true;
+        for (int i = 0; i < count; ++i) {
+            auto& p = incoming[i];
+            p.id = r.u16(); p.x = r.f32(); p.y = r.f32(); p.z = r.f32();
+            const uint32_t lifetime = r.u32(); p.expiresAt = now_ms() + lifetime;
+            if (p.id == 0 || !std::isfinite(p.x) || !std::isfinite(p.y) || !std::isfinite(p.z) ||
+                lifetime > kRupeeLifetimeMs) valid = false;
+            for (int j = 0; j < i; ++j) if (incoming[j].id == p.id) valid = false;
+        }
+        if (!r.ok() || !valid || round != s_match.round) break;
+        clear_rupees(); s_match.rupeeCount = count;
+        for (int i = 0; i < count; ++i) s_match.rupees[i] = incoming[i];
+        break;
+    }
+
+    case MSG_CLUE: {
+        if (!fromHost) break;
+        const uint32_t round = r.u32(); const uint8_t id = r.u8(); const uint8_t sound = r.u8();
+        const uint8_t kind = r.u8();
+        if (!r.ok() || round != s_match.round || s_match.phase != Phase::Seek ||
+            id < 1 || id > kMaxPlayers || kind > static_cast<uint8_t>(ClueKind::Treasure) ||
+            P(id).role != Role::Hider || P(id).found) break;
+        P(id).lastClueAt = now_ms(); P(id).revealedUntil = now_ms() + kTauntRevealMs;
+        if (s_hooks.taunt) s_hooks.taunt(id, sound, static_cast<ClueKind>(kind));
+        break;
+    }
+
+    case MSG_PICKUP: {
+        if (!fromHost) break;
+        const uint32_t round = r.u32(); const uint8_t id = r.u8();
+        const uint8_t points = r.u8(); const bool bonus = r.u8() != 0;
+        if (!r.ok() || round != s_match.round || id < 1 || id > kMaxPlayers) break;
+        if (id == self()) {
+            big("+" + std::to_string(points) + (bonus ? "! Treasure challenge complete!" : " treasure points!"), 120, 255, 145);
+        } else if (bonus) notice(std::string(name_of(id)) + " completed the treasure challenge", P(id).color);
+        break;
+    }
+
     case MSG_ROUND: {
         if (!fromHost) break;
         const uint32_t round = r.u32();
@@ -896,7 +1123,7 @@ void on_message(uint8_t from, const uint8_t* data, size_t size) {
         const uint8_t map = r.u8();
         const uint16_t hide = r.u16();
         const uint16_t seek = r.u16();
-        if (!r.ok()) break;
+        if (!r.ok() || map >= map_count() || mode >= static_cast<uint8_t>(Mode::Count)) break;
         s_match.round = round;
         s_match.settings.mode = mode < static_cast<uint8_t>(Mode::Count) ? static_cast<Mode>(mode)
                                                                         : Mode::PropHunt;
@@ -925,6 +1152,10 @@ void on_message(uint8_t from, const uint8_t* data, size_t size) {
         s_match.phase = phase;
         s_match.phaseEnd = now_ms() + left;
         if (phase == before) break;
+        if (phase == Phase::Seek) {
+            for (auto& p : s_match.players) p.lastClueAt = p.lastMovedAt = now_ms();
+            if (s_match.settings.treasure && s_match.round % 3 == 0) notice("TREASURE RUSH: rupees are worth 5 points!", -1);
+        }
         if (phase == Phase::Hide) {
             if (my_role() == Role::Hunter) {
                 big("Wait for it...", 255, 120, 90);
@@ -1003,17 +1234,16 @@ void on_message(uint8_t from, const uint8_t* data, size_t size) {
     }
 
     case MSG_TAUNT: {
+        const uint32_t round = r.u32();
         const uint8_t sound = r.u8();
-        if (!r.ok()) break;
-        if (s_hooks.taunt) s_hooks.taunt(from, sound);
-        Player& p = P(from);
-        const uint64_t now = now_ms();
-        if (host() && s_match.phase == Phase::Seek && p.role == Role::Hider && !p.found &&
-            now - p.lastTauntAt > kTauntPointEveryMs) {
-            p.lastTauntAt = now;
-            give(from, 1);
-            announce(roster_msg());
-        }
+        if (!r.ok() || !host() || round != s_match.round) break;
+        host_clue(from, sound, ClueKind::Manual);
+        break;
+    }
+
+    case MSG_COLLECT_RUPEE: {
+        const uint32_t round = r.u32(); const uint16_t id = r.u16();
+        if (r.ok() && host() && round == s_match.round) host_collect(from, id);
         break;
     }
 

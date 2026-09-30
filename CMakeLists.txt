@@ -6,11 +6,11 @@ endif ()
 
 # The version shown in the mod manager. Players need the same protocol version (src/protocol.hpp)
 # to play together; the mod version itself may differ.
-project(hyrule_hide_and_seek VERSION 0.2.1 LANGUAGES CXX)
+project(hyrule_hide_and_seek VERSION 0.3.0 LANGUAGES CXX)
 
 # The Dusklight version to build against: a release tag or a commit SHA.
 if (NOT DUSKLIGHT_VERSION)
-    set(DUSKLIGHT_VERSION "v2.0.2")
+    set(DUSKLIGHT_VERSION "v2.0.3")
 endif ()
 # Fetches the Dusklight sources into ./dusklight and provides DUSKLIGHT_DIR.
 # Use -DDUSKLIGHT_DIR=/path/to/dusklight to build against an existing checkout.
@@ -19,7 +19,7 @@ add_subdirectory("${DUSKLIGHT_DIR}/sdk" dusklight-sdk EXCLUDE_FROM_ALL)
 
 # The relay every player connects to. Change it after deploying server/ (see server/README.md),
 # or override per player with the "server" setting in the mod's Settings tab.
-set(HS_DEFAULT_SERVER "wss://hyrule-hide-and-seek.tail5c3d0e.ts.net" CACHE STRING "Default relay URL")
+set(HS_DEFAULT_SERVER "wss://hyrule-hide-and-seek.jhackerr.workers.dev" CACHE STRING "Default relay URL")
 
 configure_file(mod.json.in "${CMAKE_CURRENT_BINARY_DIR}/mod.json" @ONLY NEWLINE_STYLE LF)
 
@@ -44,6 +44,7 @@ add_mod(hyrule_hide_and_seek
             src/settings.cpp
             src/game_mode.cpp
             src/arena.cpp
+            src/treasure.cpp
         MOD_JSON "${CMAKE_CURRENT_BINARY_DIR}/mod.json"
         ${hs_res}
 )
