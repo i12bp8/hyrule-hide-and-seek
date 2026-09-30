@@ -231,7 +231,7 @@ void roster() {
         w.u8(static_cast<uint8_t>(id == 2 ? Role::Hunter : Role::Hider));
         w.u8(id - 1);
         w.u16(0); w.u16(0);
-        w.u8(2); w.u8(0); w.u8(0); w.u8(0); w.u8(0);
+        w.u8(id == 2 ? 6 : 10); w.u8(0); w.u8(0); w.u8(0); w.u8(0); w.u8(0); w.u8(0);
     }
     apply(net::self_id(), w);
 }
@@ -339,6 +339,7 @@ void stock_render_update() {
         roster();
         Writer round(MSG_ROUND);
         round.u32(1); round.u8(0); round.u8(0); round.u16(600); round.u16(600);
+        round.u8(kMaxPlayers - 1); round.u8(0);
         apply(net::self_id(), round);
         Writer phase(MSG_PHASE);
         phase.u32(1); phase.u8(static_cast<uint8_t>(Phase::Seek)); phase.u32(600000);

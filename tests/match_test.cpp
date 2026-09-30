@@ -12,6 +12,8 @@
 #include "collision_cleanup.hpp"
 #include "interpolation.hpp"
 #include "hud_layout.hpp"
+#include "scoring.hpp"
+#include "treasure_layout.hpp"
 
 #include <cmath>
 #include <cstdio>
@@ -110,7 +112,7 @@ static void host_room(int players) {
     match::Settings defaults;
     CHECK(defaults.autoTaunt && defaults.trackingPulse);
     CHECK(defaults.hideSecs == 30 && defaults.seekSecs == 180);
-    CHECK(defaults.idleTauntSecs == 20);
+    CHECK(defaults.idleTauntSecs == 30);
     CHECK(defaults.freeDecoys == 3);
     match::Settings s;
     s.map = 0;
@@ -274,13 +276,13 @@ static void test_decoy_economy_and_validation() {
     while (match::get().phase == Phase::Hide) advance(1000);
     CHECK(match::get().phase == Phase::Seek);
     advance(30'000);
-    CHECK(match::player(hiders[0]).roundPoints == 3);  // awarded live, so it is spendable
+    CHECK(match::player(hiders[0]).roundPoints == 6);  // half of a 60-second hunt, spendable live
 
     // The sixth placement costs three points and remains alongside the free placements.
     state(hiders[0], 1700.0f, 0.0f, true);
     place(hiders[0]);
     CHECK(match::player(hiders[0]).decoysUsed == 6);
-    CHECK(match::player(hiders[0]).roundPoints == 0);
+    CHECK(match::player(hiders[0]).roundPoints == 3);
     CHECK(match::decoy_count() == 11);
 
     const match::Decoy target = match::decoy(0);
@@ -379,7 +381,7 @@ static void test_full_round_two_players() {
     CHECK(hunter != 0 && hider != 0 && hunter != hider);
 
     // Put them next to each other.
-    advance(30'000);  // the prop survives 30 s: 3 points
+    advance(30'000);  // half of the 60-second hunt: 6 points
     const auto near = [&](int id, float x) {
         if (id == g_fake.self) {
             PlayerState s;
@@ -404,12 +406,14 @@ static void test_full_round_two_players() {
     else deliver(static_cast<uint8_t>(hunter), hit_msg(1, static_cast<uint8_t>(hider)));
     CHECK(match::player(hider).found);
     CHECK(count_sent(MSG_FOUND) == 1);
-    CHECK(match::player(hunter).roundPoints == 5);
-    CHECK(match::player(hider).roundPoints == 3);
+    CHECK(match::player(hunter).roundPoints == 12 + 6);
+    CHECK(match::player(hider).roundPoints == 6);
 
     advance(100);
     CHECK(match::get().phase == Phase::Results);
     CHECK(match::get().winner == 1);
+    CHECK(match::player(hunter).roundPoints == 12 + 6 + 6);
+    CHECK(match::player(hider).roundPoints == 6); // joining hunters earns no second win bonus
     CHECK(count_sent(MSG_RESULTS) == 1);
 
     advance(13'000);
@@ -434,7 +438,7 @@ static void test_props_win_on_time_and_rotation() {
     CHECK(match::get().winner == 0);
     for (int id = 1; id <= 4; ++id) {
         if (id == firstHunter) CHECK(match::player(id).roundPoints == 0);
-        else CHECK(match::player(id).roundPoints == 6 + 5);  // 60 s hidden + survived
+        else CHECK(match::player(id).roundPoints == 12 + 6);  // full survival + win
     }
     advance(13'000);
     CHECK(match::get().round == 2);
@@ -532,6 +536,7 @@ static void test_late_join_and_leave() {
     g_fake.sent.clear();
     match::on_joined(3);
     CHECK(match::player(3).role == Role::Hunter);
+    CHECK(match::player(3).startingRole == Role::None);
     bool gotRound = false, gotPhase = false, gotSettings = false;
     for (const auto& m : g_fake.sent) {
         if (m.to != 3) continue;
@@ -568,13 +573,15 @@ static void test_client_and_host_migration() {
         roster.u8(id);
         roster.u8(static_cast<uint8_t>(roles[id]));
         roster.u8(id);
-        roster.u16(0);
-        roster.u16(0);
-        roster.u8(0);
+        roster.u16(id == 1 ? 0 : 9);
+        roster.u16(id == 1 ? 0 : 6); // three objective + six bonus, with three spent
+        roster.u8(id == 1 ? 4 : 8);
         roster.u8(id == 1 ? 1 : 0);
         roster.u8(0);
         roster.u8(0); // rupees
         roster.u8(0); // finds
+        roster.u8(id == 1 ? 0 : 6); // gross bonus
+        roster.u8(id == 1 ? 0 : 3); // survival objective already awarded at 30 seconds
     }
     deliver(1, roster.bytes());
     Writer round(MSG_ROUND);
@@ -583,6 +590,7 @@ static void test_client_and_host_migration() {
     round.u8(2);
     round.u16(30);
     round.u16(120);
+    round.u8(2); round.u8(0);
     deliver(1, round.bytes());
     Writer phase(MSG_PHASE);
     phase.u32(7);
@@ -620,6 +628,7 @@ static void test_client_and_host_migration() {
     // No hunters remain (the only one left), so the props win right away.
     CHECK(match::get().phase == Phase::Results);
     CHECK(match::get().winner == 0);
+    CHECK(match::player(2).roundPoints == 12 && match::player(2).bonusEarned == 6);
     // ...and the new host carries on with the next round by itself.
     advance(13'000);
     CHECK(match::get().round == 8);
@@ -744,7 +753,7 @@ static void test_balanced_rules() {
     std::printf("balanced rules and saved-rule migration\n");
     const auto fresh = settings::parse_rules("");
     CHECK(fresh.hideSecs == 30 && fresh.seekSecs == 180 && fresh.autoTaunt);
-    CHECK(fresh.trackingPulse && fresh.idleTauntSecs == 20);
+    CHECK(fresh.trackingPulse && fresh.idleTauntSecs == 30);
     const auto upgraded = settings::parse_rules(settings::upgrade_rules("0,14,45,240,0,27,60,10"));
     CHECK(upgraded.hideSecs == 30 && upgraded.seekSecs == 180);
     CHECK(upgraded.autoTaunt && upgraded.trackingPulse && upgraded.idleTauntSecs == 20);
@@ -759,6 +768,10 @@ static void test_balanced_rules() {
     changed.trackingPulse = false;
     CHECK(!settings::parse_rules(settings::format_rules(changed)).trackingPulse);
     CHECK(settings::format_rules(settings::parse_rules(settings::format_rules(custom))) == settings::format_rules(custom));
+    const auto stock = settings::parse_rules(settings::upgrade_balance_rules("0,14,30,180,0,111,20,3"));
+    CHECK(stock.idleTauntSecs == 30 && stock.map == 14);
+    const auto kept = settings::parse_rules(settings::upgrade_balance_rules("1,9,75,360,3,16,20,7"));
+    CHECK(kept.idleTauntSecs == 20 && kept.seekSecs == 360 && !kept.autoTaunt && kept.freeDecoys == 7);
     CHECK(life_after_miss(20) == 19 && life_after_miss(2) == 1 && life_after_miss(1) == 1);
     CHECK(life_after_miss(0) == 0 && kArenaHeartPieces / 5 * 4 == kArenaLife);
     CHECK(kTauntRevealMs == 3000 && kTauntCooldownMs == 4000);
@@ -766,7 +779,7 @@ static void test_balanced_rules() {
         for (int map = 0; map < map_count(); ++map) {
             const int hunters = recommended_hunters(n, map);
             CHECK(hunters >= 1 && hunters < n);
-            CHECK(clue_interval_ms(map, 60000) == 10000);
+            CHECK(clue_interval_ms(map, 60000) == 15000);
             CHECK(clue_interval_ms(map, 180000) == (map_info(map).large ? 20000 : 30000));
         }
     }
@@ -847,51 +860,191 @@ static void test_treasure_and_clues() {
     };
     fresh(hider); fresh(hunter);
     CHECK(!match::spawn_rupee(NAN, 0, 0));
-    CHECK(!match::spawn_rupee(10000, 0, 0));
+    CHECK(!match::spawn_rupee(1000001, 0, 0));
+    CHECK(match::spawn_rupee(10000, 0, 0)); // collision-validated host placements need no nearby player
     CHECK(match::spawn_rupee(700, 0, 0));
-    auto item = match::get().rupees[0].id;
+    CHECK(!match::spawn_rupee(1700, 0, 0)); // wider spacing, including different heights
+    CHECK(!match::spawn_rupee(700, 10000, 0));
+    auto item = match::get().rupees[1].id;
     request(hider, MSG_COLLECT_RUPEE, item); // too far
-    CHECK(match::get().rupeeCount == 1 && match::player(hider).rupeesCollected == 0);
+    CHECK(match::get().rupeeCount == 2 && match::player(hider).rupeesCollected == 0);
     fresh(hunter, 700); request(hunter, MSG_COLLECT_RUPEE, item);
-    CHECK(match::get().rupeeCount == 1); // hunters cannot collect
+    CHECK(match::get().rupeeCount == 2); // hunters cannot collect
     fresh(hider, 700); request(hider, MSG_COLLECT_RUPEE, item);
-    CHECK(match::get().rupeeCount == 0 && match::player(hider).rupeesCollected == 1);
-    CHECK(match::player(hider).roundPoints == 3);
+    CHECK(match::get().rupeeCount == 1 && match::player(hider).rupeesCollected == 1);
+    CHECK(match::player(hider).roundPoints == 1);
     CHECK(match::player(hider).revealedUntil > s_now);
     request(hider, MSG_COLLECT_RUPEE, item);
-    CHECK(match::player(hider).roundPoints == 3); // consumed, no duplicate reward
+    CHECK(match::player(hider).roundPoints == 1); // consumed, no duplicate reward
     for (int n = 0; n < 2; ++n) {
         const float x = 1400 + n * 700;
         fresh(hider, x - 700);
         CHECK(match::spawn_rupee(x, 0, 0));
-        item = match::get().rupees[0].id;
+        item = match::get().rupees[1].id;
         fresh(hider, x); request(hider, MSG_COLLECT_RUPEE, item);
     }
     CHECK(match::player(hider).rupeesCollected == 3);
-    CHECK(match::player(hider).roundPoints == 14); // 3*3 + one collection bonus
+    CHECK(match::player(hider).roundPoints == 5); // three pickups and the challenge bonus
     advance(5000); fresh(hider, 2100);
     const auto points = match::player(hider).roundPoints;
     request(hider, MSG_TAUNT);
-    CHECK(match::player(hider).roundPoints == points + 1);
+    CHECK(match::player(hider).roundPoints == points + 1); // manual taunts share the same bonus budget
     const auto reveal = match::player(hider).revealedUntil;
     request(hider, MSG_TAUNT);
     CHECK(match::player(hider).roundPoints == points + 1 && match::player(hider).revealedUntil == reveal);
     Writer forged(MSG_CLUE); forged.u32(match::get().round); forged.u8(hunter); forged.u8(0); forged.u8(0);
     deliver(static_cast<uint8_t>(hider == g_fake.host ? hunter : hider), forged.bytes());
     CHECK(match::player(hunter).revealedUntil == 0);
-    advance(21000); fresh(hider, 2100); match::update();
+    advance(31000); fresh(hider, 2100); match::update();
     CHECK(match::player(hider).revealedUntil > s_now); // host, rather than hider, enforces automatic clue
     const auto before = match::player(hider).roundPoints;
-    CHECK(before == points + 3); // survival awards only, automatic taunts give no points
+    CHECK(before == points + 3); // manual bonus + two objective points, no automatic-taunt points
     CHECK(match::spawn_rupee(2800, 0, 0));
-    item = match::get().rupees[0].id;
+    item = match::get().rupees[1].id;
     Writer stale(MSG_COLLECT_RUPEE); stale.u32(match::get().round - 1); stale.u16(item);
     fresh(hider, 2800); deliver(static_cast<uint8_t>(hider), stale.bytes());
-    CHECK(match::get().rupeeCount == 1);
+    CHECK(match::get().rupeeCount == 2);
     advance(match::kRupeeLifetimeMs + 100);
     CHECK(match::get().rupeeCount == 0);
+    for (int n = 0; n < match::kMaxRupees; ++n) CHECK(match::spawn_rupee(n * 2000.0f, 0, 0));
+    CHECK(match::get().rupeeCount == 24); // the host also decodes each full wire snapshot
+    CHECK(!match::spawn_rupee(100000, 0, 0));
     match::end_round();
     CHECK(match::get().rupeeCount == 0);
+}
+
+static void test_map_wide_treasure_layout() {
+    std::printf("treasure covers distant ground and follows connected routes\n");
+    using namespace hs::treasure;
+    ReachableArea area(400);
+    const auto openMap = [](Point, Point& at) {
+        if (std::fabs(at.x) > 10000 || std::fabs(at.z) > 10000) return false;
+        at.y = 0; return true;
+    };
+    area.seed({0,0,0}, openMap);
+    CHECK(area.points().size() == 1);
+    area.expand(2, openMap);
+    CHECK(!area.complete() && area.points().size() < 100);
+    while (!area.complete()) area.expand(32, openMap);
+    CHECK(area.points().size() == 51 * 51);
+    std::vector<Point> occupied;
+    for (int n = 0; n < match::kMaxRupees; ++n) {
+        const size_t index = spread_candidate(area.points(), occupied, 137 * n, match::kRupeeSpacing);
+        CHECK(index < area.points().size());
+        if (index == area.points().size()) break;
+        const auto at = area.points()[index];
+        CHECK(nearest_distance_sq(at, occupied) >= match::kRupeeSpacing * match::kRupeeSpacing);
+        occupied.push_back(at);
+    }
+    int quadrants[4] = {};
+    for (const auto& p : occupied) {
+        ++quadrants[(p.x >= 0 ? 1 : 0) + (p.z >= 0 ? 2 : 0)];
+    }
+    for (int count : quadrants) CHECK(count >= 3); // players can remain at the centre
+    CHECK(spread_candidate({}, occupied, 0, 1200) == 0);
+
+    area.clear(200);
+    // L-shaped ground turns behind a wall. The separate island has floor but no route.
+    const auto onFloor = [](Point p) {
+        return (p.x >= 0 && p.x <= 6000 && std::fabs(p.z) <= 400) ||
+               (p.x >= 5600 && p.x <= 6400 && p.z >= 0 && p.z <= 6000) ||
+               (p.x >= 0 && p.x <= 1000 && p.z >= 5000 && p.z <= 6000);
+    };
+    const auto path = [&](Point from, Point& at) {
+        for (int i = 1; i <= 8; ++i) {
+            const float t = i / 8.0f;
+            if (!onFloor({from.x + (at.x - from.x) * t, 0, from.z + (at.z - from.z) * t})) return false;
+        }
+        at.y = 0; return true;
+    };
+    area.seed({0,0,0}, path);
+    while (!area.complete()) area.expand(32, path);
+    bool farCorner = false;
+    for (const auto& p : area.points()) {
+        CHECK(onFloor(p));
+        CHECK(!(p.x < 1000 && p.z > 5000));
+        if (p.x >= 5600 && p.z >= 5600) farCorner = true;
+    }
+    CHECK(farCorner);
+    // A fresh player can seed a visited upper level without merging it with the floor below.
+    const size_t lowerCount = area.points().size();
+    area.seed({0,1000,0}, [](Point, Point&) { return true; });
+    CHECK(area.points().size() == lowerCount + 1);
+}
+
+static void test_fair_round_scores() {
+    std::printf("equal score budgets, shared finds, infection and bonus spending\n");
+    for (const uint16_t seconds : {30, 60, 180, 900, 1800}) {
+        CHECK(scoring::survival(seconds * 500u, seconds) == 6);
+        CHECK(scoring::survival(seconds * 1000u + 100000, seconds) == 12);
+    }
+    for (int n = 1; n < kMaxPlayers; ++n) {
+        CHECK(scoring::captures(n, n) == 12);
+        CHECK(scoring::captures(n + 1, n) == 12);
+    }
+    for (int n = 2; n <= kMaxPlayers; ++n) {
+        host_room(n);
+        auto rules = match::get().settings;
+        rules.hunters = std::min(2, n - 1);
+        match::set_settings(rules);
+        match::start_round();
+        const char* stage = map_info(match::get().map).stage;
+        everyone_ready(n, stage);
+        while (match::get().phase != Phase::Seek) advance(1000);
+        advance(5000);
+        std::vector<int> hunters, hiders;
+        for (int id = 1; id <= n; ++id) {
+            (match::player(id).role == Role::Hunter ? hunters : hiders).push_back(id);
+            deliver(static_cast<uint8_t>(id), state_msg(stage, 0, 0, 0, STATE_IN_WORLD | STATE_DISGUISED));
+        }
+        CHECK(match::get().startingHiders == hiders.size());
+        for (size_t i = 0; i < hiders.size(); ++i) {
+            // After the first find, an infected hider can help. Starting hunters still share
+            // progress, and the infected player only receives their capped personal bonus.
+            const int finder = i == 0 ? hunters[0] : hiders[0];
+            deliver(static_cast<uint8_t>(finder), hit_msg(match::get().round, hiders[i]));
+            CHECK(match::get().teamFinds == i + 1);
+            for (const int hunter : hunters) CHECK(match::player(hunter).objectiveAwarded ==
+                scoring::captures(i + 1, hiders.size()));
+            deliver(static_cast<uint8_t>(finder), hit_msg(match::get().round, hiders[i]));
+            CHECK(match::get().teamFinds == i + 1); // duplicate finds cannot earn more
+        }
+        advance(100);
+        CHECK(match::get().winner == 1 && match::get().phase == Phase::Results);
+        CHECK(match::player(hunters[0]).roundPoints == 18 + scoring::personal_find(hiders.size()));
+        for (size_t i = 1; i < hunters.size(); ++i) CHECK(match::player(hunters[i]).roundPoints == 18);
+        CHECK(match::player(hiders[0]).roundPoints <= 7); // no survival or win award for their new team
+        for (int id = 1; id <= n; ++id) CHECK(match::player(id).roundPoints <= 24);
+    }
+
+    host_room(2);
+    auto rules = match::get().settings;
+    rules.seekSecs = 180; rules.freeDecoys = 0;
+    match::set_settings(rules); match::start_round();
+    const char* stage = map_info(match::get().map).stage;
+    everyone_ready(2, stage); advance(21'000);
+    const int hider = hider_id();
+    const auto loot = [&] {
+        deliver(static_cast<uint8_t>(hider), state_msg(stage, 0, 0, 0, STATE_IN_WORLD | STATE_DISGUISED));
+        CHECK(match::spawn_rupee(0, 0, 0));
+        Writer pickup(MSG_COLLECT_RUPEE); pickup.u32(match::get().round); pickup.u16(match::get().rupees[0].id);
+        deliver(static_cast<uint8_t>(hider), pickup.bytes());
+    };
+    for (int n = 0; n < 5; ++n) loot();
+    CHECK(match::player(hider).bonusEarned == 6 && match::player(hider).roundPoints == 6);
+    deliver(static_cast<uint8_t>(hider), place_decoy_msg(match::get().round));
+    CHECK(match::player(hider).roundPoints == 3);
+    loot();
+    CHECK(match::player(hider).roundPoints == 3 && match::player(hider).bonusEarned == 6);
+    // A new host keeps the gross limit and the last survival award, even after spending.
+    g_fake.host = hider; g_fake.self = hider;
+    match::on_host_changed(hider);
+    loot();
+    CHECK(match::player(hider).roundPoints == 3 && match::player(hider).bonusEarned == 6);
+    advance(181'000);
+    CHECK(match::player(hider).roundPoints == 21); // 12 survival + 6 win + 3 unspent bonus
+    match::start_round();
+    CHECK(match::player(hider).bonusEarned == 0 && match::player(hider).objectiveAwarded == 0);
 }
 
 static void test_interpolation_and_compact_states() {
@@ -949,6 +1102,8 @@ static void test_mobile_hud_layout() {
 }
 
 int main() {
+    test_map_wide_treasure_layout();
+    test_fair_round_scores();
     test_treasure_and_clues();
     test_interpolation_and_compact_states();
     test_mobile_hud_layout();

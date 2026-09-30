@@ -58,7 +58,7 @@ int recommended_hunters(int players, int map) {
 }
 
 uint64_t clue_interval_ms(int map, uint32_t remainingMs) {
-    if (remainingMs <= 60000) return 10000;
+    if (remainingMs <= 60000) return 15000;
     return map_info(map).large ? 20000 : 30000;
 }
 

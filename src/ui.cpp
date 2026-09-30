@@ -207,14 +207,14 @@ ModResult build_rules(ModContext*, UiWindowHandle, UiElementHandle left, UiEleme
         F_IDLE_TAUNT, kIdleTaunts, std::size(kIdleTaunts));
     add_rule(left, UI_CONTROL_TOGGLE, "Automatic clues",
         "On by default: hiders reveal a three-second clue every 30 seconds (20 on large maps), "
-        "then every 10 seconds in the last minute (8 for the last hider). A manual or stationary taunt also satisfies "
+        "then every 15 seconds in the last minute (12 for the last hider). A manual or stationary taunt also satisfies "
         "the timer, so clues never stack.", F_TAUNT);
     add_rule(left, UI_CONTROL_TOGGLE, "Hunter tracking",
         "D-pad down gives a three-second direction and rough range to the nearest hider. "
         "25-second cooldown; no name or exact world marker.", F_TRACKING);
     add_rule(left, UI_CONTROL_TOGGLE, "Treasure rupees",
-        "Hiders collect rotating rupees for 3 points. Collect three in a round for a 5-point bonus. "
-        "Every third round is Treasure Rush: 5 points per rupee. Pickups publish a taunt clue.", F_TREASURE);
+        "Up to 24 rupees spread across reachable ground. Pickups give 1 point (2 in Treasure Rush); "
+        "the third adds up to 2. Loot and taunts share a 6-point round bonus limit. Each pickup reveals a clue.", F_TREASURE);
     svc_ui->pane_add_section(mod_ctx, left, "Lobby");
     add_rule(left, UI_CONTROL_TOGGLE, "Automatic rounds",
         "After the scoreboard, a new round starts with new hunters.", F_NEXT);
@@ -553,16 +553,20 @@ ModResult build_help(ModContext*, UiWindowHandle, UiElementHandle left, UiElemen
     svc_ui->pane_add_rml(mod_ctx, left,
         "<div class='hs-guide'><h3>Take a risk</h3><p>D-pad down taunts for a point. "
         "Manual and automatic taunts reveal your position to hunters for 3 seconds. "
-        "Watch the reveal alert and move afterwards. Rupees give 3 points and a clue; "
-        "your third pickup adds 5 bonus points. Every third round gives 5 points per rupee.</p></div>", nullptr);
+        "Watch the reveal alert and move afterwards. Rupees give 1 point and a clue; "
+        "your third pickup adds up to 2. Every third round gives 2 points per rupee. "
+        "Loot and taunts share a 6-point bonus limit each round.</p></div>", nullptr);
     svc_ui->pane_add_rml(mod_ctx, left,
         "<div class='hs-guide'><h3>Hunt</h3><p>Use B to hit disguised hiders or tag nearby "
         "props while swimming. Misses cost a quarter heart. At the last quarter, a miss "
         "adds 2 seconds of recovery; finding someone restores a heart. D-pad down tracks "
         "the nearest hider, with a 25-second cooldown.</p></div>", nullptr);
     svc_ui->pane_add_rml(mod_ctx, left,
-        "<div class='hs-guide'><h3>Play again</h3><p>Earn 1 point per 10 seconds hidden, "
-        "5 for surviving, or 5 per find. Hunters rotate each round. Hide &amp; Seek mode "
+        "<div class='hs-guide'><h3>Play again</h3><p>Hiders earn up to 12 points across the hunt "
+        "and 6 for surviving. Starting hunters share up to 12 capture-progress points and get "
+        "6 for finding every hider. Personal finds give 3 bonus points, up to 6 "
+        "(6 for the find when only one hider started). "
+        "Hunters rotate each round. Hide &amp; Seek mode "
         "keeps everyone as Link and uses touch tags. Start from the Hide &amp; Seek game "
         "mode for matching worlds. On mobile, use Dusklight's touch D-pad and B button.</p></div>", nullptr);
     return MOD_OK;
@@ -582,7 +586,7 @@ ModResult build_settings(ModContext*, UiWindowHandle, UiElementHandle left, UiEl
     UiControlDesc hints = UI_CONTROL_DESC_INIT;
     hints.kind = UI_CONTROL_TOGGLE;
     hints.label = "Control hints";
-    hints.help_rml = "Show a small reminder above your status card. Leave off for a cleaner view.";
+    hints.help_rml = "On by default: show a small reminder above your status card.";
     hints.binding = UI_BINDING_CONFIG_VAR;
     hints.config_var = settings::control_hints_var();
     svc_ui->pane_add_control(mod_ctx, left, &hints, nullptr);

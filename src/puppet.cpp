@@ -791,7 +791,7 @@ int Puppet::draw() {
     if (mDisguised || mLocal) {
         if (mPropModel == nullptr) return 1;
         g_env_light.setLightTevColorType_MAJI(mPropModel, &tevStr);
-        if (mRupeeColor != nullptr) mRupeeColor->entry(mPropModel->getModelData(), match::rupee_points() == 5 ? 4.0f : 0.0f);
+        if (mRupeeColor != nullptr) mRupeeColor->entry(mPropModel->getModelData(), match::rupee_points() == 2 ? 4.0f : 0.0f);
         // Keep shared resource callbacks away from our model. Its matrices were calculated in
         // execute(); EntryDL refreshes materials on presentation frames without re-entering the
         // packets that Dusklight retained from the last simulation tick.

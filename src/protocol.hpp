@@ -11,8 +11,8 @@
 
 namespace hs {
 
-// v7 adds host-confirmed clues, treasure pickups, round statistics and compact prop states.
-constexpr int kProtocolVersion = 7;
+// v8 carries starting roles, shared capture progress and gross score counters; up to 24 rupees.
+constexpr int kProtocolVersion = 8;
 
 enum MsgType : uint8_t {
     MSG_STATE = 1,     // everyone -> everyone, 10 Hz

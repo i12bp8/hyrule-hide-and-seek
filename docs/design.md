@@ -83,8 +83,8 @@ Prop Hunt is the main mode; classic Hide & Seek comes along for free.
   a quarter heart (never the last quarter-heart). Every round starts with five hearts.
 - D-pad down requests a host-confirmed taunt for a point (once per 10 seconds). Hunters hear a Link shout and get a direction, distance and
   through-scenery world marker for three seconds, with a four-second cooldown. Stationary hiders
-  taunt after 20 seconds by default. Regular clues run every 30 seconds (20 on large maps), then
-  every 10 seconds in the last minute. The last hider gets clues every eight seconds in the final minute. The hider sees a reveal banner and upcoming-clue countdown. Both systems work in either game mode and share a timer
+  taunt after 30 seconds by default. Regular clues run every 30 seconds (20 on large maps), then
+  every 15 seconds in the last minute. The last hider gets clues every 12 seconds in the final minute. The hider sees a reveal banner and upcoming-clue countdown. Both systems work in either game mode and share a timer
   with manual taunts. Hunters get a three-second direction/rough-range pulse every 25 seconds.
 - Hunters don't see props' name tags.
 
@@ -95,11 +95,19 @@ shows up for hunters only up close.
 
 ### Scoring
 
-- Props: 1 point per 10 s hidden during the hunt, awarded live; +5 for surviving; +1 per taunt (every
-  10 s at most). After the free allowance, an extra decoy spends 3 current-round points.
-- Treasure: +3 per pickup (+5 every third round), with a one-time +5 challenge bonus at three pickups. Each pickup publishes a clue; automatic taunts award no points.
-- Hunters: +5 per find and one heart restored. At the final quarter heart, misses impose two seconds of attack recovery.
+- Props: up to 12 live points in proportion to hunt time survived, +6 for surviving, and up to 6
+  bonus points from loot/manual taunts. Taunts give 1 at most every 10 seconds.
+- Treasure: +1 per pickup (+2 every third round), with up to +2 at the third pickup. Loot and
+  taunts share the same gross bonus limit; spending cannot reset it. Pickups publish clues.
+- Starting hunters: up to 12 shared points in proportion to confirmed captures of starting hiders,
+  +6 for winning; personal finds give 3 bonus points (6 if only one hider started), within the same
+  6-point bonus limit. Infection gives no second objective/win award. Finds restore one heart;
+  exhausted misses impose two seconds of recovery.
+- After the free allowance, an extra decoy spends 3 current-round points.
 - Totals are kept for the room until the host resets them.
+
+Both roles have a 24-point ceiling regardless of duration or lobby size. See
+[balance notes](balance.md) for the primary references, rationale and remaining playtests.
 
 ### Maps (spawn points verified against the disc files)
 
@@ -142,7 +150,7 @@ save profile.
 
 The original theme colours and font families are retained. Menus use scoped RCSS, 46 dp minimum control targets, and a single-column layout below 640 dp.
 The game HUD uses the middle lane so the native touch controls can occupy the sides. Timer and
-role cards replace long persistent instructions. Control hints are optional. World labels reserve
+role cards replace long persistent instructions. Control hints start on and can be disabled. World labels reserve
 screen rectangles: at most four nearby names, two treasure labels and three compact clue markers
 are drawn; intersecting labels are skipped. One clue summary replaces stacked paragraphs. Reveal
 feedback names its cause and shows remaining time, with a restrained amber pulse. Results compute
@@ -151,17 +159,19 @@ still be used to verify touch dispatch and device safe areas.
 
 ### Treasure implementation
 
-Only the host samples spawn candidates. Candidates are 650–1,800 units from a fresh player state
-on the current map. Native ground, line and intermediate floor probes reject missing floors,
-large height changes, walls and loading exits. Host placement enforces spacing and proximity to
-an active player. This is collision-based sampling across all maps; it is not a verified list of
-hand-placed coordinates. Tight spaces may have fewer valid candidates.
+Only the host explores connected ground, starting during Hide at the safe spawn and visited
+player positions. Ground, slope, body-height line, intermediate-floor and footprint probes reject
+missing floors, height changes, walls, deep water and loading exits. Exploration retains distant candidates
+after players move away and is bounded per frame. Spawning favors the farthest candidates from
+existing pickups, checks them again against native collision and enforces 1,200-unit horizontal
+spacing. This is collision-based exploration, not verified hand-placed coordinates. Tight spaces
+can have fewer candidates; unloaded rooms need their collision to load before exploration.
 
 The host accepts pickup requests only from live hiders in Hunt with a fresh state on the round's
 stage, the current round id, an unexpired pickup and a nearby position. It consumes the pickup
-before announcing points, preventing duplicate awards. Clients draw at most eight lightweight,
+before announcing points, preventing duplicate awards. Clients draw at most 24 lightweight,
 non-solid rupee actors using the native rupee model and colour animation. New rounds/results clear
-them. Late joiners and a migrated host receive the remaining snapshot.
+them. Pickups live 90 seconds. Late joiners and a migrated host receive the remaining snapshot.
 
 ### Limits and further evaluation
 
@@ -214,18 +224,18 @@ Game payloads start with a `u8` type; all numbers little-endian (`src/protocol.h
 | --- | --- | --- |
 | `STATE` | all, adaptive 1–10 Hz | full animated Link state (70 bytes) or compact prop/loading state (28 bytes), including type |
 | `SETTINGS` | host → all | mode, map, times, options |
-| `ROSTER` | host → all | per player: role, colour, scores, decoy allowance, found flag, loot and find counts |
-| `ROUND` | host → all | round id, map, seekers |
+| `ROSTER` | host → all | per player: current/starting role, colour, scores, decoy allowance, found flag, loot/find counts, gross bonus and objective counters |
+| `ROUND` | host → all | round id, map, times, starting hider count and capture progress |
 | `PHASE` | host → all | phase + milliseconds left |
 | `HELLO` | → host | wanted tunic colour |
 | `READY` | → host | "I've loaded into round N" |
 | `HIT` | → host | "my sword hit / I touched player N" |
-| `FOUND` | host → all | target, hunter |
+| `FOUND` | host → all | round, target, hunter and capture progress |
 | `RESULTS` | host → all | winner |
 | `DECOYS` | host → all | complete active-decoy snapshot (maximum 160) |
 | `TAUNT` | → host | round id, sound request |
 | `CLUE` | host → all | round id, hider, sound, manual/regular/stationary/treasure reason |
-| `RUPEES` | host → all | round id, up to 8 pickups with id, position, remaining lifetime |
+| `RUPEES` | host → all | round id, up to 24 pickups with id, position, remaining lifetime |
 | `COLLECT_RUPEE` | → host | round id and pickup id; no client coordinates or score |
 | `PICKUP` | host → all | collector, points and challenge-completion feedback |
 | `PLACE_DECOY` | → host | placement request for the current round |

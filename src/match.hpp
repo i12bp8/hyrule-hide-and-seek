@@ -17,8 +17,9 @@ namespace hs::match {
 constexpr int kMaxDecoysPerPlayer = 10;
 constexpr int kMaxActiveDecoys = kMaxPlayers * kMaxDecoysPerPlayer;
 constexpr int kExtraDecoyCost = 3;
-constexpr int kMaxRupees = 8;
-constexpr uint64_t kRupeeLifetimeMs = 30000;
+constexpr int kMaxRupees = 24;
+constexpr uint64_t kRupeeLifetimeMs = 90000;
+constexpr float kRupeeSpacing = 1200.0f;
 constexpr float kRupeeCollectRadius = 180.0f; // 100-unit local pickup plus one moving-state interval
 
 struct Settings {
@@ -32,7 +33,7 @@ struct Settings {
     bool autoTaunt = true;
     bool trackingPulse = true;
     bool treasure = true;
-    uint16_t idleTauntSecs = 20;  // 0 disables stationary-hider auto-taunts
+    uint16_t idleTauntSecs = 30;  // 0 disables stationary-hider auto-taunts
     bool autoNext = true;
     bool isPublic = false;
     uint8_t freeDecoys = 3;  // free placements per hider, available from the Hide phase
@@ -65,8 +66,10 @@ struct Player {
     float idleX = 0, idleY = 0, idleZ = 0;
     uint8_t rupeesCollected = 0;
     uint8_t finds = 0;
+    Role startingRole = Role::None; // unchanged by infection; late joiners have no win/progress award
+    uint8_t bonusEarned = 0;    // gross bonuses, so spending cannot reopen the farming allowance
     uint64_t lastDecoyAt = 0;
-    uint16_t survivalAwarded = 0;  // host bookkeeping for live 10-second awards
+    uint16_t objectiveAwarded = 0;  // host bookkeeping for survival/capture progress
     uint8_t decoysUsed = 0;
 };
 
@@ -94,6 +97,8 @@ struct Match {
         uint64_t expiresAt = 0;
     } rupees[kMaxRupees];
     uint8_t rupeeCount = 0;
+    uint8_t startingHiders = 0;
+    uint8_t teamFinds = 0;
 };
 
 // Short messages for the HUD feed and big centre banners.
@@ -117,7 +122,7 @@ int my_decoys_left();  // remaining free placements; extra placements cost kExtr
 bool can_place_decoy();
 uint32_t next_clue_ms();
 int rupee_points();
-bool spawn_rupee(float x, float y, float z); // host: position checked against game collision
+bool spawn_rupee(float x, float y, float z); // host: reachable position checked by treasure module
 void collect_rupee(uint16_t id);
 
 // Presentation reads these; each Notice is shown for a few seconds.

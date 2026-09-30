@@ -150,6 +150,11 @@ void warp(const MapInfo& map) {
     s_haveSafe = false;
 }
 
+bool overlaps_loading_exit(Point position, float radius) {
+    for (const auto& exit : s_exits) if (overlaps_exit(exit, position, radius)) return true;
+    return false;
+}
+
 void init() {
     bool ok = true;
     ok &= mods::hook::add_pre<ArenaLinkExecute>(link_pre) == MOD_OK;

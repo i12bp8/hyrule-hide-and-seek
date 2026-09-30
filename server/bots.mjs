@@ -18,7 +18,7 @@ const args = Object.fromEntries(
 const server = String(args.server || "ws://127.0.0.1:8787").replace(/\/$/, "");
 const room = String(args.room || "").toUpperCase();
 const count = Number(args.count || 3);
-const PROTOCOL = 7;
+const PROTOCOL = 8;
 if (!room) {
   console.error("usage: node bots.mjs --room ABCDE [--count 3] [--server ws://127.0.0.1:8787]");
   process.exit(2);
@@ -163,6 +163,7 @@ class Bot {
         const n = r.u8();
         for (let i = 0; i < n; ++i) {
           const id = r.u8(); const role = r.u8(); r.u8(); r.u16(); r.u16(); r.u8(); r.u8(); r.u8(); r.u8(); r.u8();
+          r.u8(); r.u8(); // gross bonus and objective progress
           this.roles.set(id, role);
         }
         break;

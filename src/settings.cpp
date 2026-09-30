@@ -65,7 +65,7 @@ void init() {
     s_server = reg("server", CONFIG_VAR_STRING, 0, false, HS_DEFAULT_SERVER);
     s_room = reg("room_code", CONFIG_VAR_STRING);
     s_tags = reg("name_tags", CONFIG_VAR_BOOL, 0, true);
-    s_hints = reg("control_hints", CONFIG_VAR_BOOL, 0, false);
+    s_hints = reg("control_hints", CONFIG_VAR_BOOL, 0, true);
     s_rules = reg("host_rules", CONFIG_VAR_STRING);
     s_rulesVersion = reg("host_rules_version", CONFIG_VAR_INT);
 
@@ -79,6 +79,14 @@ void init() {
         const auto text = upgrade_treasure_rules(get_str(s_rules));
         if (s_rules != 0) svc_config->set_string(mod_ctx, s_rules, text.c_str());
         svc_config->set_int(mod_ctx, s_rulesVersion, 3);
+    }
+    if (s_rulesVersion != 0 && get_int(s_rulesVersion, 0) < 4) {
+        const auto text = upgrade_balance_rules(get_str(s_rules));
+        if (s_rules != 0) svc_config->set_string(mod_ctx, s_rules, text.c_str());
+        // Make the new default visible for existing installations as well. Subsequent choices
+        // of Off persist; this upgrade runs only once.
+        if (s_hints != 0) svc_config->set_bool(mod_ctx, s_hints, true);
+        svc_config->set_int(mod_ctx, s_rulesVersion, 4);
     }
 
     // v0.1.0/v0.1.1 shipped before the public relay was provisioned. Upgrade only that exact
@@ -132,7 +140,7 @@ bool name_tags() {
 }
 
 bool control_hints() {
-    bool value = false;
+    bool value = true;
     if (s_hints != 0) svc_config->get_bool(mod_ctx, s_hints, &value);
     return value;
 }

@@ -4,6 +4,7 @@
 #include "net.hpp"
 #include "props.hpp"
 #include "gameplay.hpp"
+#include "scoring.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -22,9 +23,6 @@ constexpr float kMaxHitDistance = 450.0f;  // sword reach plus network lag
 constexpr uint64_t kDecoyCooldownMs = 750;
 constexpr uint64_t kFreshStateMs = 2000;
 constexpr float kMinDecoySpacing = 100.0f;
-constexpr int kFindPoints = 5;
-constexpr int kSurvivePoints = 5;
-constexpr int kSecondsPerPoint = 10;
 constexpr uint64_t kTauntPointEveryMs = 10000;
 constexpr size_t kMaxNotices = 6;
 
@@ -117,11 +115,14 @@ Writer roster_msg() {
         w.u8(p.color);
         w.u16(p.score);
         w.u16(p.roundPoints);
-        w.u8(static_cast<uint8_t>((p.found ? 1 : 0) | (p.ready ? 2 : 0)));
+        w.u8(static_cast<uint8_t>((p.found ? 1 : 0) | (p.ready ? 2 : 0) |
+            (p.startingRole == Role::Hunter ? 4 : 0) | (p.startingRole == Role::Hider ? 8 : 0)));
         w.u8(p.hunterRounds);
         w.u8(p.decoysUsed);
         w.u8(p.rupeesCollected);
         w.u8(p.finds);
+        w.u8(p.bonusEarned);
+        w.u8(static_cast<uint8_t>(p.objectiveAwarded));
     }
     return w;
 }
@@ -150,6 +151,8 @@ Writer round_msg() {
     w.u8(s_match.map);
     w.u16(s_match.settings.hideSecs);
     w.u16(s_match.settings.seekSecs);
+    w.u8(s_match.startingHiders);
+    w.u8(s_match.teamFinds);
     return w;
 }
 
@@ -218,13 +221,29 @@ void assign_color(int id) {
 
 int survival_points(uint64_t until) {
     if (s_seekStartedAt == 0 || until <= s_seekStartedAt) return 0;
-    return static_cast<int>((until - s_seekStartedAt) / 1000 / kSecondsPerPoint);
+    return scoring::survival(until - s_seekStartedAt, s_match.settings.seekSecs);
 }
 
 void give(int id, int points) {
     Player& p = P(id);
     p.roundPoints = static_cast<uint16_t>(std::min(65535, p.roundPoints + points));
     p.score = static_cast<uint16_t>(std::min(65535, p.score + points));
+}
+
+int give_bonus(int id, int requested) {
+    Player& p = P(id);
+    const int points = scoring::bonus(p.bonusEarned, requested);
+    p.bonusEarned += points;
+    give(id, points);
+    return points;
+}
+
+bool award_objective(int id, int earned) {
+    Player& p = P(id);
+    if (earned <= p.objectiveAwarded) return false;
+    give(id, earned - p.objectiveAwarded);
+    p.objectiveAwarded = earned;
+    return true;
 }
 
 bool fresh_on_map(const Player& p) {
@@ -241,7 +260,7 @@ void host_clue(int id, uint8_t sound, ClueKind kind) {
     // Only deliberate taunts earn a point. Automatic clues cannot farm a hiding spot.
     const bool award = kind == ClueKind::Manual &&
                        (p.lastTauntAt == 0 || now - p.lastTauntAt >= kTauntPointEveryMs);
-    if (award) { p.lastTauntAt = now; give(id, 1); }
+    if (award) { p.lastTauntAt = now; give_bonus(id, 1); }
     Writer w(MSG_CLUE);
     w.u32(s_match.round); w.u8(static_cast<uint8_t>(id)); w.u8(sound); w.u8(static_cast<uint8_t>(kind));
     announce(w);
@@ -270,8 +289,7 @@ void host_collect(int id, uint16_t pickupId) {
         erase_rupee(i); // consume before announcing; simultaneous requests can only award once
         p.rupeesCollected = static_cast<uint8_t>(std::min(255, p.rupeesCollected + 1));
         const bool bonus = p.rupeesCollected == 3;
-        const int points = rupee_points() + (bonus ? 5 : 0);
-        give(id, points);
+        const int points = give_bonus(id, rupee_points() + (bonus ? 2 : 0));
         announce(rupees_msg());
         announce(roster_msg());
         Writer w(MSG_PICKUP);
@@ -283,12 +301,7 @@ void host_collect(int id, uint16_t pickupId) {
 }
 
 bool award_survival(int id, uint64_t until) {
-    Player& p = P(id);
-    const uint16_t earned = static_cast<uint16_t>(std::min(65535, survival_points(until)));
-    if (earned <= p.survivalAwarded) return false;
-    give(id, earned - p.survivalAwarded);
-    p.survivalAwarded = earned;
-    return true;
+    return award_objective(id, survival_points(until));
 }
 
 void clear_decoys() {
@@ -398,7 +411,9 @@ void finish(int winner) {
         Player& p = P(id);
         if (p.present && p.role == Role::Hider && !p.found) {
             award_survival(id, now);
-            if (winner == 0) give(id, kSurvivePoints);
+            if (winner == 0) give(id, scoring::kWinPoints);
+        } else if (p.present && p.startingRole == Role::Hunter && winner == 1) {
+            give(id, scoring::kWinPoints);
         }
     }
     clear_decoys();
@@ -418,12 +433,18 @@ void found(int target, int by) {
     t.found = true;
     t.role = s_match.settings.foundJoinHunters ? Role::Hunter : Role::Spectator;
     award_survival(target, now_ms());
-    give(by, kFindPoints);
+    give_bonus(by, scoring::personal_find(s_match.startingHiders));
     P(by).finds = static_cast<uint8_t>(std::min(255, P(by).finds + 1));
+    ++s_match.teamFinds;
+    const int progress = scoring::captures(s_match.teamFinds, s_match.startingHiders);
+    for (int id = 1; id <= kMaxPlayers; ++id) {
+        if (P(id).present && P(id).startingRole == Role::Hunter) award_objective(id, progress);
+    }
     Writer w(MSG_FOUND);
     w.u32(s_match.round);
     w.u8(static_cast<uint8_t>(target));
     w.u8(static_cast<uint8_t>(by));
+    w.u8(s_match.teamFinds);
     announce(w);
     announce(roster_msg());
 }
@@ -477,7 +498,7 @@ void host_update() {
                 if (p.present && p.role == Role::Hider && !p.found) {
                     changed = award_survival(id, now) || changed;
                     uint64_t interval = clue_interval_ms(s_match.map, ms_left());
-                    if (hiders_left() == 1 && ms_left() <= 60000) interval = 8000;
+                    if (hiders_left() == 1 && ms_left() <= 60000) interval = 12000;
                     if (s_match.settings.autoTaunt && now - p.lastClueAt >= interval) {
                         host_clue(id, static_cast<uint8_t>(s_rng() % 6), ClueKind::Regular);
                     } else if (s_match.settings.idleTauntSecs != 0 &&
@@ -535,6 +556,8 @@ void handle_roster(Reader& r) {
         const uint8_t decoysUsed = r.u8();
         const uint8_t rupeesCollected = r.u8();
         const uint8_t finds = r.u8();
+        const uint8_t bonusEarned = r.u8();
+        const uint8_t objectiveAwarded = r.u8();
         if (!r.ok() || id < 1 || id > kMaxPlayers) break;
         Player& p = P(id);
         listed[id] = true;
@@ -549,6 +572,9 @@ void handle_roster(Reader& r) {
         p.decoysUsed = decoysUsed;
         p.rupeesCollected = rupeesCollected;
         p.finds = finds;
+        p.startingRole = (flags & 4) ? Role::Hunter : (flags & 8) ? Role::Hider : Role::None;
+        p.bonusEarned = std::min<uint8_t>(bonusEarned, scoring::kBonusPoints);
+        p.objectiveAwarded = std::min<uint8_t>(objectiveAwarded, scoring::kObjectivePoints);
     }
     (void)listed;
 }
@@ -700,7 +726,7 @@ uint32_t next_clue_ms() {
     uint64_t next = UINT64_MAX;
     if (s_match.settings.autoTaunt) {
         uint64_t interval = clue_interval_ms(s_match.map, ms_left());
-        if (hiders_left() == 1 && ms_left() <= 60000) interval = 8000;
+        if (hiders_left() == 1 && ms_left() <= 60000) interval = 12000;
         next = p.lastClueAt + interval;
     }
     if (s_match.settings.idleTauntSecs != 0) next = std::min(next,
@@ -709,23 +735,17 @@ uint32_t next_clue_ms() {
     return static_cast<uint32_t>(next > now_ms() ? next - now_ms() : 0);
 }
 
-int rupee_points() { return s_match.round % 3 == 0 ? 5 : 3; }
+int rupee_points() { return s_match.round % 3 == 0 ? 2 : 1; }
 
 bool spawn_rupee(float x, float y, float z) {
     if (!host() || !s_match.settings.treasure || s_match.phase != Phase::Seek ||
         s_match.rupeeCount >= kMaxRupees || !std::isfinite(x) || !std::isfinite(y) || !std::isfinite(z)) return false;
     for (int i = 0; i < s_match.rupeeCount; ++i) {
         const auto& r = s_match.rupees[i];
-        const float dx = x - r.x, dy = y - r.y, dz = z - r.z;
-        if (dx * dx + dy * dy + dz * dz < 500.0f * 500.0f) return false;
+        const float dx = x - r.x, dz = z - r.z;
+        if (dx * dx + dz * dz < kRupeeSpacing * kRupeeSpacing) return false;
     }
-    bool nearArena = false;
-    for (const auto& p : s_match.players) {
-        if (!fresh_on_map(p)) continue;
-        const float dx = p.state.x - x, dy = p.state.y - y, dz = p.state.z - z;
-        if (dx * dx + dy * dy + dz * dz <= 2500.0f * 2500.0f) nearArena = true;
-    }
-    if (!nearArena) return false;
+    if (std::fabs(x) > 1000000 || std::fabs(y) > 1000000 || std::fabs(z) > 1000000) return false;
     auto& r = s_match.rupees[s_match.rupeeCount++];
     r = {s_nextRupeeId++, x, y, z, now_ms() + kRupeeLifetimeMs};
     if (s_nextRupeeId == 0) s_nextRupeeId = 1;
@@ -795,12 +815,14 @@ void start_round() {
     for (int i = 0; i < n; ++i) {
         Player& p = P(ids[i]);
         p.role = i < hunters ? Role::Hunter : Role::Hider;
+        p.startingRole = p.role;
         if (p.role == Role::Hunter) ++p.hunterRounds;
         p.found = false;
         p.ready = false;
         p.roundPoints = 0;
         p.lastDecoyAt = 0;
-        p.survivalAwarded = 0;
+        p.objectiveAwarded = 0;
+        p.bonusEarned = 0;
         p.decoysUsed = 0;
         p.rupeesCollected = 0;
         p.finds = 0;
@@ -809,6 +831,8 @@ void start_round() {
 
     s_match.round += 1;
     s_match.winner = -1;
+    s_match.startingHiders = static_cast<uint8_t>(n - hunters);
+    s_match.teamFinds = 0;
     s_seekStartedAt = 0;
     s_nextDecoyId = 1;
     s_nextRupeeId = 1;
@@ -1001,10 +1025,8 @@ void on_host_changed(uint8_t id) {
         for (int i = 0; i < s_match.rupeeCount; ++i)
             s_nextRupeeId = std::max<uint16_t>(s_nextRupeeId, s_match.rupees[i].id + 1);
         if (s_nextRupeeId == 0) s_nextRupeeId = 1;
-        const uint16_t survived = static_cast<uint16_t>(std::max(0, survival_points(now_ms())));
-        for (int player = 1; player <= kMaxPlayers; ++player) {
-            P(player).survivalAwarded = survived;
-        }
+        // Objective and gross bonus counters arrive in the roster, including points already
+        // spent on decoys. Carry them across host changes without granting duplicate awards.
         announce(roster_msg());
         announce(decoys_msg());
         announce(rupees_msg());
@@ -1111,7 +1133,8 @@ void on_message(uint8_t from, const uint8_t* data, size_t size) {
         const uint8_t points = r.u8(); const bool bonus = r.u8() != 0;
         if (!r.ok() || round != s_match.round || id < 1 || id > kMaxPlayers) break;
         if (id == self()) {
-            big("+" + std::to_string(points) + (bonus ? "! Treasure challenge complete!" : " treasure points!"), 120, 255, 145);
+            big(points == 0 ? "Treasure collected! Bonus limit reached." :
+                "+" + std::to_string(points) + (bonus ? "! Treasure challenge complete!" : " treasure points!"), 120, 255, 145);
         } else if (bonus) notice(std::string(name_of(id)) + " completed the treasure challenge", P(id).color);
         break;
     }
@@ -1123,7 +1146,10 @@ void on_message(uint8_t from, const uint8_t* data, size_t size) {
         const uint8_t map = r.u8();
         const uint16_t hide = r.u16();
         const uint16_t seek = r.u16();
-        if (!r.ok() || map >= map_count() || mode >= static_cast<uint8_t>(Mode::Count)) break;
+        const uint8_t startingHiders = r.u8();
+        const uint8_t teamFinds = r.u8();
+        if (!r.ok() || map >= map_count() || mode >= static_cast<uint8_t>(Mode::Count) ||
+            startingHiders >= kMaxPlayers || teamFinds > startingHiders) break;
         s_match.round = round;
         s_match.settings.mode = mode < static_cast<uint8_t>(Mode::Count) ? static_cast<Mode>(mode)
                                                                         : Mode::PropHunt;
@@ -1131,6 +1157,9 @@ void on_message(uint8_t from, const uint8_t* data, size_t size) {
         s_match.settings.hideSecs = hide;
         s_match.settings.seekSecs = seek;
         s_match.winner = -1;
+        s_match.startingHiders = startingHiders;
+        s_match.teamFinds = teamFinds;
+        s_seekStartedAt = 0;
         const char* role = my_role() == Role::Hunter ? "You are a HUNTER" : "You are a PROP";
         if (s_match.settings.mode == Mode::HideAndSeek && my_role() == Role::Hider) {
             role = "You are HIDING";
@@ -1151,10 +1180,14 @@ void on_message(uint8_t from, const uint8_t* data, size_t size) {
         s_match.round = round;
         s_match.phase = phase;
         s_match.phaseEnd = now_ms() + left;
+        if (phase == Phase::Seek && s_seekStartedAt == 0) {
+            const uint32_t duration = s_match.settings.seekSecs * 1000u;
+            s_seekStartedAt = now_ms() - (duration - std::min(left, duration));
+        }
         if (phase == before) break;
         if (phase == Phase::Seek) {
             for (auto& p : s_match.players) p.lastClueAt = p.lastMovedAt = now_ms();
-            if (s_match.settings.treasure && s_match.round % 3 == 0) notice("TREASURE RUSH: rupees are worth 5 points!", -1);
+            if (s_match.settings.treasure && s_match.round % 3 == 0) notice("TREASURE RUSH: rupees are worth 2 points!", -1);
         }
         if (phase == Phase::Hide) {
             if (my_role() == Role::Hunter) {
@@ -1170,10 +1203,13 @@ void on_message(uint8_t from, const uint8_t* data, size_t size) {
 
     case MSG_FOUND: {
         if (!fromHost) break;
-        r.u32();
+        const uint32_t round = r.u32();
         const uint8_t target = r.u8();
         const uint8_t by = r.u8();
-        if (!r.ok()) break;
+        const uint8_t teamFinds = r.u8();
+        if (!r.ok() || round != s_match.round || target < 1 || target > kMaxPlayers ||
+            by < 1 || by > kMaxPlayers || teamFinds > s_match.startingHiders) break;
+        s_match.teamFinds = teamFinds;
         Player& t = P(target);
         t.found = true;
         std::string what = s_match.settings.mode == Mode::PropHunt && t.hasState

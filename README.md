@@ -24,7 +24,7 @@ Use **Dusklight 2.0.3 or newer**. Its official Linux AppImage fixes the missing 
 and HTTPS certificate issue ([release notes](https://github.com/TwilitRealm/dusklight/releases/tag/v2.0.3)).
 Linux, Windows and macOS now use the same WebSocket transport. The default public relay requires it;
 old Linux builds can still use a private Node relay's HTTPS fallback.
-Everyone in a room needs **mod v0.3.0 (protocol 7)**.
+Everyone in a room needs **mod v0.3.1 (protocol 8)**.
 
 ### A round
 
@@ -63,12 +63,12 @@ no hunter points and deliberately count as a missed swing.
 
 Mode (Prop Hunt / Hide & Seek), map (or a random one every round), hiding and round time, number of
 hunters, whether found props join the hunters, the miss penalty, how long a prop may stay still
-before automatically taunting (20 seconds by default, or Off), free decoys per hider, regular
+before automatically taunting (30 seconds by default, or Off), free decoys per hider, regular
 taunt clues, hunter tracking pulses, starting rounds automatically, and whether the room is listed
 publicly, and collectible treasure. Rules are locked during a round.
 
 The default rules keep the hunt moving: automatic clues every 30 seconds (20 on large maps),
-then every 10 seconds in the last minute (8 seconds for the last hider). Each clue lasts three seconds. Manual and stationary
+then every 15 seconds in the last minute (12 seconds for the last hider). Each clue lasts three seconds. Manual and stationary
 taunts satisfy the same timer, so clues don't stack. These work in both game modes.
 
 Hunters can press D-pad down for a three-second direction and rough range to the nearest hider,
@@ -85,10 +85,15 @@ are retained. Old stock decoy allowances migrate from five to three.
 
 ### Treasure and clues
 
-During Hunt, up to eight spinning rupees spawn on reachable ground around active players. Hiders
-walk over them for **3 round points**, and their third pickup adds **5 bonus points** once per round.
-Every third round is **Treasure Rush**, with **5 points per rupee**. Spend loot on decoys or keep it
-for the session scoreboard. Pickups expire after 30 seconds and respawn in new places.
+During Hunt, up to **24 spinning rupees** spread across connected, reachable ground, with at least
+1,200 units between pickups. The host explores routes during hiding time, so empty areas can get
+treasure too. Narrow maps can have fewer pickups. Rupees last 90 seconds, and replacements favor
+areas far from other rupees.
+
+Hiders earn **1 point per pickup**, with up to **2 extra points** for their third pickup. Every
+third round is **Treasure Rush**, with **2 points per rupee**. Treasure and manual taunts share a
+**6-point bonus limit per round**. Spending on decoys does not reset that limit; further pickups
+still reveal a clue but give no points once it is reached.
 
 Each pickup gives hunters a three-second clue. Hiders see a pulsing **REVEALED** alert
 with the reason and remaining reveal time. The same feedback appears for manual, regular and
@@ -103,7 +108,8 @@ from overlapping. Only two nearby rupees get a short point label. Taunts use one
 with a reveal countdown, rather than several lines over the scene.
 
 The menu uses large touch targets and stacks on narrow screens. Results fit all 16 players without
-running off-screen. Settings has an optional **Control hints** toggle; it is off by default.
+running off-screen. **Control hints** start on, including after upgrading; the Settings toggle
+can turn them off, and that choice is saved.
 Use the **Guide** tab for the controls, including the touch D-pad on mobile.
 
 ### Maps
@@ -117,9 +123,23 @@ third-person field camera, without authored fixed camera zones or story cutscene
 
 ### Scoring
 
-Props earn 1 point live for every 10 seconds hidden, 5 for surviving the round, and 1 per manual taunt at
-most once every 10 seconds. Automatic taunts award no points. Treasure awards points as above. Hunters get 5 per find. Paid decoys subtract 3 current-round points and
-3 from the room total, so they are a real tactical tradeoff. Scores otherwise add up for the session.
+Both starting roles have the same **24-point round ceiling**:
+
+| Points | Hiders | Starting hunters |
+| --- | --- | --- |
+| Objective: up to 12 | Awarded live in proportion to the hunt survived (1 per 15 s in a default round). | Every confirmed find advances shared points: 12 × found / starting hiders, rounded down. |
+| Bonus: up to 6 | Treasure and manual taunts; taunts give 1 at most every 10 s. | 3 per personal find, or 6 when the round started with only one hider. |
+| Win: 6 | Survive until the hiders win. | Find every hider before time runs out. |
+
+Automatic clues give no points. Found hiders retain their survival points and can earn personal
+find bonuses from their remaining allowance after becoming hunters; they receive no hunter
+progress or win award. Late joiners can help hunt and earn personal bonuses, then participate
+fully next round. Longer custom rounds keep the same score ceiling. Paid decoys subtract 3
+current-round points and 3 from the session total. Totals otherwise add up for the session.
+
+These limits prevent loot farming or room size alone from inflating one role's score. Map routes,
+player skill and the chosen rules still affect which side wins; equal score ceilings do not prove
+equal win rates. The [balance notes](docs/balance.md) explain the references and playtest checks.
 
 ## Not compatible with
 
@@ -160,7 +180,7 @@ free indefinitely. See [capacity and quota estimates](server/README.md#free-tier
 ### Tests
 
 ```sh
-tests/run.sh                    # rules, balance, saved settings, interpolation and layout (2,900+ checks)
+tests/run.sh                    # rules, balance, saved settings, interpolation and layout (4,300+ checks)
 cd server && npm install && npm test   # the relay and the bots
 ```
 

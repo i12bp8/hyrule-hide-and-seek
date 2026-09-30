@@ -9,6 +9,7 @@
 #include "props.hpp"
 #include "puppet.hpp"
 #include "settings.hpp"
+#include "scoring.hpp"
 #include "ui.hpp"
 
 #include "JSystem/J2DGraph/J2DOrthoGraph.h"
@@ -220,7 +221,9 @@ void draw_role(Painter& p, const Screen& s) {
     p.text(score, card.x + card.w - scoreWidth - 12, card.y + 6, 11, rgba(255, 230, 140));
     p.centred_fit(detail, card.x + card.w * 0.5f, card.y + 25, 10, card.w - 20, rgba(225, 225, 225));
     if (settings::control_hints()) {
-        const char* hint = me.role == Role::Hunter ? (m.settings.mode == Mode::PropHunt ? "B: sword / swim tag  |  Down: track" : "Touch hiders  |  Down: track") : "D-pad: < > prop, up decoy, down taunt";
+        const char* hint = me.role == Role::Hunter
+            ? (m.settings.mode == Mode::PropHunt ? "B: sword / swim tag  |  Down: track" : "Touch hiders  |  Down: track")
+            : (m.settings.mode == Mode::PropHunt ? "D-pad: < > prop, up decoy, down taunt" : "Hide and relocate  |  D-pad down: taunt");
         p.centred_fit(hint, s.x + s.w * 0.5f, card.y - 16, 10, std::min(s.w - 24, 320.0f), rgba(225, 225, 225));
     }
 }
@@ -270,8 +273,9 @@ void draw_treasure(Painter& p, const Screen& s) {
         cXyz at(r.x, r.y + 80, r.z);
         Vec camera; mDoLib_pos2camera(&at, &camera); if (camera.z > -1) continue;
         Vec out; mDoLib_project(&at, &out);
-        const std::string text = "+" + std::to_string(match::rupee_points());
-        const Rect label{out.x - 13, out.y - 12, 26, 18};
+        const int points = scoring::bonus(match::player(net::self_id()).bonusEarned, match::rupee_points());
+        const std::string text = points > 0 ? "+" + std::to_string(points) : "Loot";
+        const Rect label{out.x - 17, out.y - 12, 34, 18};
         if (!reserve_label(label, s)) continue;
         p.card(label, rgba(0, 0, 0, 150));
         p.centered(text, out.x, label.y + 3, 10, rgba(110, 255, 155));

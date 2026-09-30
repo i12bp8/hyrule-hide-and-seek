@@ -67,4 +67,12 @@ inline std::string upgrade_treasure_rules(const std::string& text) {
         s.idleTauntSecs == 20 && s.autoTaunt && s.trackingPulse) s.freeDecoys = 3;
     return format_rules(s);
 }
+
+inline std::string upgrade_balance_rules(const std::string& text) {
+    if (text.empty()) return text;
+    auto s = parse_rules(text);
+    if (s.hideSecs == 30 && s.seekSecs == 180 && s.hunters == 0 && s.idleTauntSecs == 20 &&
+        s.autoTaunt && s.trackingPulse && s.freeDecoys == 3) s.idleTauntSecs = 30;
+    return format_rules(s);
+}
 }  // namespace hs::settings

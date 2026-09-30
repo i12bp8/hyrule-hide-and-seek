@@ -29,10 +29,10 @@ async function connect(path, roomIndex) {
 try {
   for (let n = 0; n < count;) {
     const index = rooms.length;
-    const host = await connect(`/host?name=Load${n++}&v=7`, index);
+    const host = await connect(`/host?name=Load${n++}&v=8`, index);
     const room = [host.ws]; rooms.push(room);
     while (room.length < 8 && n < count) {
-      const peer = await connect(`/join/${host.code}?name=Load${n++}&v=7`, index); room.push(peer.ws);
+      const peer = await connect(`/join/${host.code}?name=Load${n++}&v=8`, index); room.push(peer.ws);
     }
   }
   const iterations = seconds * 10;

@@ -2,7 +2,7 @@
 
 What's been verified without the game:
 
-- v0.3.0 compiles for Linux with GCC against Dusklight v2.0.3; other platforms require CI builds and runtime checks.
+- v0.3.1 compiles for Linux with GCC against Dusklight v2.0.3; other platforms require CI builds and runtime checks.
 - The rules (`tests/run.sh`): rounds, hunter rotation, gather timeout, hit validation, tag immunity,
   live scoring, bounded/paid decoys, late joiners, host leaving mid-round, unique colours.
 - The relay (`server/`, `npm test`): on Node and on the actual Cloudflare Worker via `wrangler dev`.
@@ -14,22 +14,46 @@ Everything below needs the game running. Go in order: later steps depend on earl
 Dusklight's log open (`~/.local/share/TwilitRealm/Dusklight/logs/`); the mod logs as
 `com.i12bp8.hyrule_hide_and_seek`.
 
-## v0.3.0 gameplay checks
+## v0.3.1 balance and distribution checks
+
+- [ ] On each of the 15 maps, leave players near spawn during Hide, then explore the map during
+      Hunt. Rupees appear well beyond spawn, including routes around corners. No dense clusters,
+      unreachable cliffs, steep surfaces, walls, deep underwater floors or loading exits.
+- [ ] On broad maps, up to 24 rupees appear, 1,200 units apart. Tight maps support fewer. Rupees
+      expire at 90 seconds and refill in separated areas. Check frame time during exploration.
+- [ ] Walk between rooms and up stairs/ladders: visited reachable ground expands the candidate
+      area; unloaded floors do not get pickups. Verify narrow routes do not leave a region empty.
+- [ ] Control hints start on in a fresh installation and once after upgrading. Switch Off and
+      restart; the choice persists. Test both modes on desktop and mobile.
+- [ ] Both roles: up to 12 objective, 6 gross bonus, 6 win points. Test 1v1 and 4/8/16-player
+      rounds. Captures advance every starting hunter's progress, including finds by infected hiders.
+- [ ] Found hiders keep survival points and can help hunt, with no second objective/win award.
+      Late joiners get no starting-team progress/win bonus until the next round.
+- [ ] Normal loot gives 1, third pickup adds up to 2; Treasure Rush gives 2. Loot and manual taunts
+      stop scoring at 6 bonus points. Spend 3 on a decoy, collect again: the cap stays exhausted.
+- [ ] Change host mid-hunt after a find and after spending points. Shared progress, gross bonus
+      limits and already awarded survival survive without duplicate points.
+- [ ] Stock stationary clues use 30 seconds, final-minute clues use 15 or 12 for the last hider.
+      Custom Off and custom timings survive the stock-rule upgrade.
+- [ ] Run paired sessions with role swaps and record per-map wins, duration, finds and per-player
+      points before spending. Assess actual balance using [the playtest notes](balance.md).
+
+## Other gameplay checks
 
 - [ ] In Ordon Ranch, goat disguises idle and walk. In Hidden Village, cats idle and walk.
 - [ ] Castle Town citizens and shoppers animate with the shared Mgeneral/Wgeneral archives.
 - [ ] Milk jars, baskets and bags match the nearby scenery in scale and placement.
 - [ ] Friendly native animals and townspeople remain present; no unwanted scripted dialogue begins.
 - [ ] Rupees appear on reachable ground, with no wall/cliff/exit placements, in each of the 15 maps.
-- [ ] Hiders collect once, receive 3 points, and complete the three-pickup challenge for +5.
-- [ ] Round 3 gives 5 points per pickup; a new round resets loot counts. Treasure Off spawns none.
+- [ ] Hiders collect once, receive 1 point, and complete the three-pickup challenge for up to +2.
+- [ ] Round 3 gives 2 points per pickup within the bonus cap; a new round resets loot counts. Treasure Off spawns none.
 - [ ] A pickup triggers the local cue and a three-second clue for hunters. The hider sees the reason.
 - [ ] Manual and both automatic taunts show the pulsing reveal strip and correct countdown.
 - [ ] Spinning in place does not reset the stationary timer; moving far enough does.
 - [ ] Two hiders reaching the same rupee cannot both receive its points. Expired pickups disappear.
 - [ ] With the miss penalty on, repeated misses at the last quarter heart require two seconds between
       counted attacks; finding a hider restores one heart.
-- [ ] Rules cannot change until Results. The last hider in the final minute gets an eight-second clue.
+- [ ] Rules cannot change until Results. The last hider in the final minute gets a 12-second clue.
 - [ ] Compare real clients at 50, 100 and 200 ms latency: walking, corners, teleports, hiding and finding.
       Movement should interpolate smoothly and stop extrapolating after 100 ms of missing updates.
 - [ ] Leave the host during Hunt: remaining loot and scores survive the authority change.
@@ -142,9 +166,9 @@ Start round. With 4 players (you + 3 bots) there is one hunter; restart until yo
       "You were found!", you become Link again (and a hunter).
 - [ ] D-pad down taunts: a Link shout plays, the taunt bar fills for four seconds, and the hunter gets a three-second
       direction/distance clue plus a marker at your position.
-- [ ] Regular taunts start enabled: every 30 seconds (20 on large maps), then every 10 seconds
+- [ ] Regular taunts start enabled: every 30 seconds (20 on large maps), then every 15 seconds
       in the last minute. Turning the rule off leaves manual and stationary taunts only.
-- [ ] The stationary auto-taunt defaults to 20 seconds. Moving more than 120 units horizontally or 80 vertically resets its
+- [ ] The stationary auto-taunt defaults to 30 seconds. Moving more than 120 units horizontally or 80 vertically resets its
       timer; Off disables it, and a shorter setting fires at the selected delay.
 - [ ] Cucco, pumpkin and oil jar have one clean circular shadow with a sensible footprint. Static
       rocks/furniture, targets and flat/translucent plants have no added black blob or duplicate mesh.
@@ -265,7 +289,7 @@ original, unmodified Dusklight with `--user-dir <isolated-dir> --mods <isolated-
 (or disable pause-on-focus-loss in the isolated profile).
 
 The driver populates 16 player states, starts a round, cycles all 57 selectable props with 160
-decoy snapshots and eight treasure actors, then leaves and checks cleanup. It checks the actual material/shape lists for
+decoy snapshots and 24 treasure actors, then leaves and checks cleanup. It checks the actual material/shape lists for
 cycles before rendering and exits successfully only after logging `STOCK_RENDER_TEST PASS`.
 Injected states exercise the real actors and rendering, not 16 independent network clients.
 
