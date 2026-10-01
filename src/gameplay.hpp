@@ -10,11 +10,9 @@ constexpr uint64_t kTrackingCooldownMs = 25000;
 constexpr uint64_t kTrackingRevealMs = 3000;
 constexpr uint64_t kTauntRevealMs = 3000;
 constexpr uint64_t kTauntCooldownMs = 4000;
+constexpr uint64_t kSwingWindowMs = 650;
 constexpr uint16_t life_after_miss(uint16_t life, uint8_t quarters = 2) {
-    return life > 1 ? static_cast<uint16_t>(life - std::min<uint16_t>(quarters, life - 1)) : life;
-}
-constexpr bool exhausted_after_miss(uint16_t life, uint8_t quarters) {
-    return quarters != 0 && life_after_miss(life, quarters) == 1;
+    return static_cast<uint16_t>(life - std::min<uint16_t>(quarters, life));
 }
 
 // Capture a broad sector and range once. Keeping only these categories prevents camera turns

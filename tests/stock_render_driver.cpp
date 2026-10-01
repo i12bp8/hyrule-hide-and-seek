@@ -232,6 +232,7 @@ void roster() {
         w.u8(id - 1);
         w.u16(0); w.u16(0);
         w.u8(id == 2 ? 6 : 10); w.u8(0); w.u8(0); w.u8(0); w.u8(0); w.u8(0); w.u8(0);
+        w.u8(id == 2 ? kArenaLife : 0); w.u16(0);
     }
     apply(net::self_id(), w);
 }

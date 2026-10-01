@@ -594,6 +594,8 @@ static void test_client_and_host_migration() {
         roster.u8(0); // finds
         roster.u8(id == 1 ? 0 : 6); // gross bonus
         roster.u8(id == 1 ? 0 : 3); // survival objective already awarded at 30 seconds
+        roster.u8(id == 1 ? kArenaLife : 0);
+        roster.u16(0);
     }
     deliver(1, roster.bytes());
     Writer round(MSG_ROUND);
@@ -798,18 +800,17 @@ static void test_balanced_rules() {
     CHECK(settings::parse_rules(explicitRules).missPenaltyQuarters == 4);
     CHECK(settings::parse_rules("0,255,30,180,0,111,0,3,99,999").missPenaltyQuarters == 4);
     CHECK(settings::parse_rules("0,255,30,180,0,111,0,3,-1,-1").finalClueSecs == 0);
-    CHECK(life_after_miss(20) == 18 && life_after_miss(2) == 1 && life_after_miss(1) == 1);
+    CHECK(life_after_miss(20) == 18 && life_after_miss(2) == 0 && life_after_miss(1) == 0);
     CHECK(life_after_miss(0) == 0 && kArenaHeartPieces / 5 * 4 == kArenaLife);
     for (uint8_t penalty = 0; penalty <= 4; ++penalty) {
         uint16_t life = kArenaLife;
         for (int miss = 0; miss < 30; ++miss) {
             const auto next = life_after_miss(life, penalty);
-            CHECK(next >= 1 && next <= life);
-            CHECK(penalty == 0 ? next == life : (life == 1 || next < life));
-            CHECK(exhausted_after_miss(life, penalty) == (penalty != 0 && next == 1));
+            CHECK(next <= life);
+            CHECK(penalty == 0 ? next == life : (life == 0 || next < life));
             life = next;
         }
-        CHECK(life == (penalty == 0 ? kArenaLife : 1));
+        CHECK(life == (penalty == 0 ? kArenaLife : 0));
     }
     CHECK(kTauntRevealMs == 3000 && kTauntCooldownMs == 4000);
     for (int n = 2; n <= kMaxPlayers; ++n) {
@@ -836,6 +837,167 @@ static void test_balanced_rules() {
     match::set_settings(rules);
     match::start_round();
     CHECK(match::count_role(Role::Hunter) == 1);
+}
+
+static std::vector<uint8_t> miss_msg(uint32_t round, uint16_t sequence) {
+    Writer w(MSG_MISS); w.u32(round); w.u16(sequence);
+    return w.bytes();
+}
+
+static void test_hunter_elimination() {
+    std::printf("hunter hearts reach zero, and the last hunter out gives hiders the win\n");
+    for (uint8_t penalty = 0; penalty <= 4; ++penalty) {
+        host_room(4);
+        auto rules = match::get().settings;
+        rules.hunters = 2; rules.missPenaltyQuarters = penalty;
+        match::set_settings(rules); match::start_round();
+        everyone_ready(4, map_info(match::get().map).stage);
+        advance(21'000);
+        const int hunter = hunter_id();
+        const int hider = hider_id();
+        int other = 0;
+        for (int id = 1; id <= 4; ++id)
+            if (id != hunter && match::player(id).role == Role::Hunter) other = id;
+        CHECK(match::player(hunter).hunterLife == 20 && match::player(other).hunterLife == 20);
+        deliver(hider, miss_msg(match::get().round, 10)); // props cannot report hunter damage
+        CHECK(match::player(hider).missSequence == 0);
+        deliver(hunter, miss_msg(match::get().round - 1, 1));
+        deliver(hunter, miss_msg(match::get().round, 4097));
+        Writer truncated(MSG_MISS); truncated.u32(match::get().round); deliver(hunter, truncated.bytes());
+        CHECK(match::player(hunter).hunterLife == 20 && match::player(hunter).missSequence == 0);
+        const unsigned misses = penalty ? (20 + penalty - 1) / penalty : 20;
+        for (unsigned n = 1; n <= misses; ++n) {
+            deliver(hunter, miss_msg(match::get().round, n));
+            CHECK(match::player(hunter).hunterLife == std::max(0, 20 - int(n * penalty)));
+            CHECK(match::get().phase == Phase::Seek); // the other hunter is still alive
+            deliver(hunter, miss_msg(match::get().round, n)); // duplicate, never charged twice
+            CHECK(match::player(hunter).hunterLife == std::max(0, 20 - int(n * penalty)));
+        }
+        if (penalty == 0) {
+            CHECK(match::count_role(Role::Hunter) == 2 && count_sent(MSG_HUNTER_OUT) == 0);
+            continue;
+        }
+        CHECK(match::player(hunter).eliminated && match::player(hunter).role == Role::Spectator);
+        CHECK(match::count_role(Role::Hunter) == 1 && count_sent(MSG_HUNTER_OUT) == 1);
+        // Elimination cannot be reversed by replaying a tag, a state packet or a miss.
+        deliver(hunter, state_msg(map_info(match::get().map).stage, 0, 0, 0));
+        deliver(hider, state_msg(map_info(match::get().map).stage, 0, 0, 0));
+        deliver(hunter, hit_msg(match::get().round, hider));
+        deliver(hunter, miss_msg(match::get().round, misses + 1));
+        CHECK(!match::player(hider).found && match::player(hunter).hunterLife == 0);
+        deliver(other, miss_msg(match::get().round, misses)); // cumulative report, including pending misses
+        CHECK(match::player(other).eliminated && match::count_role(Role::Hunter) == 0);
+        CHECK(match::get().phase == Phase::Results && match::get().winner == 0);
+        CHECK(count_sent(MSG_RESULTS) == 1 && count_sent(MSG_HUNTER_OUT) == 2);
+        CHECK(match::player(hider).roundPoints >= scoring::kWinPoints);
+        deliver(other, miss_msg(match::get().round, misses));
+        CHECK(count_sent(MSG_RESULTS) == 1); // no second victory/score award
+        match::start_round();
+        for (int id = 1; id <= 4; ++id) {
+            const auto& p = match::player(id);
+            CHECK(!p.eliminated && p.missSequence == 0);
+            CHECK(p.hunterLife == (p.role == Role::Hunter ? kArenaLife : 0));
+        }
+    }
+    // The usual two-player lobby also ends immediately on the one hunter's final miss.
+    host_room(2); match::start_round();
+    everyone_ready(2, map_info(match::get().map).stage); advance(21'000);
+    deliver(hunter_id(), miss_msg(match::get().round, 10));
+    CHECK(match::get().phase == Phase::Results && match::get().winner == 0);
+}
+
+static void test_find_healing() {
+    std::printf("only host-confirmed finds restore hunter life, with a five-heart cap\n");
+    for (bool infection : {false, true}) {
+        host_room(4);
+        auto rules = match::get().settings; rules.hunters = 1; rules.foundJoinHunters = infection;
+        match::set_settings(rules); match::start_round();
+        const char* stage = map_info(match::get().map).stage;
+        everyone_ready(4, stage); advance(21'000);
+        const int hunter = hunter_id();
+        deliver(hunter, miss_msg(match::get().round, 3));
+        CHECK(match::player(hunter).hunterLife == 14);
+        int target = hider_id();
+        deliver(hunter, hit_msg(match::get().round, target)); // invalid/stale/out of reach
+        CHECK(match::player(hunter).hunterLife == 14);
+        for (int id = 1; id <= 4; ++id) deliver(id, state_msg(stage, 0, 0, 0));
+        CHECK(match::player(hunter).hunterLife == 14); // STATE is never a healing authority
+        deliver(hunter, hit_msg(match::get().round, target));
+        CHECK(match::player(target).found && match::player(hunter).hunterLife == 18);
+        CHECK(match::player(target).hunterLife == (infection ? kArenaLife : 0));
+        deliver(hunter, hit_msg(match::get().round, target));
+        CHECK(match::player(hunter).hunterLife == 18); // repeated find cannot heal again
+        deliver(hunter, hit_msg(match::get().round, hider_id()));
+        CHECK(match::player(hunter).hunterLife == 20);
+        deliver(hunter, miss_msg(match::get().round, 2)); // older sequence cannot undo damage
+        CHECK(match::player(hunter).hunterLife == 20 && match::player(hunter).missSequence == 3);
+    }
+    host_room(2);
+    auto rules = match::get().settings; rules.mode = Mode::HideAndSeek;
+    match::set_settings(rules); match::start_round();
+    everyone_ready(2, map_info(match::get().map).stage); advance(21'000);
+    deliver(hunter_id(), miss_msg(match::get().round, 10));
+    CHECK(match::player(hunter_id()).hunterLife == kArenaLife && match::get().phase == Phase::Seek);
+}
+
+static void test_hunter_health_migration() {
+    std::printf("hunter life, elimination and pending misses survive host migration\n");
+    host_room(4);
+    auto rules = match::get().settings; rules.hunters = 2;
+    match::set_settings(rules); match::start_round();
+    everyone_ready(4, map_info(match::get().map).stage); advance(21'000);
+    const int dead = hunter_id();
+    deliver(dead, miss_msg(match::get().round, 10));
+    const int living = hunter_id();
+    deliver(living, miss_msg(match::get().round, 8));
+    std::vector<uint8_t> roster, round;
+    for (const auto& sent : g_fake.sent) {
+        if (sent.bytes[0] == MSG_ROSTER) roster = sent.bytes;
+        if (sent.bytes[0] == MSG_ROUND) round = sent.bytes;
+    }
+    CHECK(roster.size() == 2 + 4 * 17);
+    reset_net(4); g_fake.self = living; g_fake.host = living == 1 ? 2 : 1;
+    match::on_welcome();
+    deliver(g_fake.host, roster); deliver(g_fake.host, round);
+    Writer phase(MSG_PHASE); phase.u32(match::get().round);
+    phase.u8(static_cast<uint8_t>(Phase::Seek)); phase.u32(45'000); deliver(g_fake.host, phase.bytes());
+    CHECK(match::player(dead).eliminated && match::player(dead).hunterLife == 0);
+    CHECK(match::my_hunter_life() == 4 && match::player(living).missSequence == 8);
+    g_fake.sent.clear();
+    match::report_miss();
+    CHECK(match::my_hunter_life() == 2 && match::player(living).hunterLife == 4);
+    match::report_miss();
+    CHECK(match::my_hunter_life() == 0 && count_sent(MSG_MISS) == 2);
+    match::report_miss(); match::report_hit(hider_id()); match::report_decoy_hit(1);
+    CHECK(count_sent(MSG_MISS) == 2 && count_sent(MSG_HIT) == 0 && count_sent(MSG_HIT_DECOY) == 0);
+    // A partial acknowledgement leaves the last miss predicted, without double charging.
+    const auto offset = 2 + (living - 1) * 17;
+    roster[offset + 14] = 2; roster[offset + 15] = 9;
+    deliver(g_fake.host, roster);
+    CHECK(match::my_hunter_life() == 0 && match::player(living).missSequence == 9);
+    auto forged = roster; forged[offset + 14] = 20;
+    deliver(living, forged); // another player cannot publish life/role updates
+    CHECK(match::player(living).hunterLife == 2);
+    Writer out(MSG_HUNTER_OUT); out.u32(match::get().round); out.u8(living);
+    deliver(living, out.bytes());
+    CHECK(!match::player(living).eliminated);
+    int next = 1;
+    while (next == living || next == g_fake.host) ++next;
+    g_fake.host = next; match::on_host_changed(next);
+    CHECK(count_sent(MSG_MISS) == 3); // resend the unacknowledged cumulative count
+    Reader pending(g_fake.sent.back().bytes.data() + 1, g_fake.sent.back().bytes.size() - 1);
+    CHECK(pending.u32() == match::get().round && pending.u16() == 10);
+    g_fake.host = living; match::on_host_changed(living);
+    CHECK(match::player(living).eliminated && match::player(living).missSequence == 10);
+    CHECK(match::get().phase == Phase::Results && match::get().winner == 0);
+    match::start_round();
+    CHECK(match::get().round == 2 && !match::player(living).eliminated);
+    // The host's own misses use the same authority and acknowledgements.
+    const int ownHunter = hunter_id();
+    g_fake.self = ownHunter; g_fake.host = ownHunter; match::on_host_changed(ownHunter);
+    everyone_ready(4, map_info(match::get().map).stage); advance(21'000);
+    match::report_miss();
+    CHECK(match::my_hunter_life() == 18 && match::player(ownHunter).missSequence == 1);
 }
 
 static void test_search_clues() {
@@ -1356,6 +1518,9 @@ int main() {
     test_maps();
     test_props();
     test_balanced_rules();
+    test_hunter_elimination();
+    test_find_healing();
+    test_hunter_health_migration();
     test_search_clues();
     test_exit_collision();
     std::printf("%d checks, %d failed\n", s_checks, s_failed);

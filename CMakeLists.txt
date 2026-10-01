@@ -6,7 +6,7 @@ endif ()
 
 # The version shown in the mod manager. Players need the same protocol version (src/protocol.hpp)
 # to play together; the mod version itself may differ.
-project(hyrule_hide_and_seek VERSION 0.3.4 LANGUAGES CXX)
+project(hyrule_hide_and_seek VERSION 0.3.5 LANGUAGES CXX)
 
 # The Dusklight version to build against: a release tag or a commit SHA.
 if (NOT DUSKLIGHT_VERSION)

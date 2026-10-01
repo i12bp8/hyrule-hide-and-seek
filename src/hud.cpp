@@ -215,7 +215,7 @@ void draw_role(Painter& p, const Screen& s) {
     std::string title, detail;
     if (me.role == Role::Hunter) {
         title = "HUNTER";
-        if (local::attack_recovery_ms() > 0) detail = "Recovering  " + std::to_string((local::attack_recovery_ms() + 999) / 1000) + "s";
+        if (match::my_hunter_life() == 0) { title = "OUT OF HEARTS"; detail = "Watching until next round"; }
         else if (m.phase == Phase::Seek && m.settings.trackingPulse) {
             const auto seconds = local::tracking_cooldown_secs();
             detail = seconds == 0 ? "Tracking ready" : "Tracking  " + std::to_string(seconds) + "s";
@@ -228,7 +228,7 @@ void draw_role(Painter& p, const Screen& s) {
             detail += me.rupeesCollected < 3 ? "Loot " + std::to_string(me.rupeesCollected) + "/3" : "Loot complete";
         }
         if (detail.empty()) detail = m.phase == Phase::Hide ? "Find your spot" : "Stay alert";
-    } else { title = "WATCHING"; detail = "Next round soon"; }
+    } else { title = me.eliminated ? "OUT OF HEARTS" : "WATCHING"; detail = "Next round soon"; }
     const auto card = centre_card(s.x, s.y, s.w, s.h - 56, 40, 300);
     p.card(card, rgba(0, 0, 0, 150));
     const std::string score = std::to_string(me.roundPoints) + " pts";
@@ -237,7 +237,7 @@ void draw_role(Painter& p, const Screen& s) {
     p.text(score, card.x + card.w - scoreWidth - 12, card.y + 6, 11, rgba(255, 230, 140));
     p.centred_fit(detail, card.x + card.w * 0.5f, card.y + 25, 10, card.w - 20, rgba(225, 225, 225));
     if (settings::control_hints()) {
-        const char* hint = me.role == Role::Hunter
+        const char* hint = me.role == Role::Spectator ? "Watching until next round" : me.role == Role::Hunter
             ? (m.settings.mode == Mode::PropHunt ? "B: sword / swim tag  |  Down: track" : "Touch hiders  |  Down: track")
             : (m.settings.mode == Mode::PropHunt ? "D-pad: < > prop, up decoy, down taunt" : "Hide and relocate  |  D-pad down: taunt");
         p.centred_fit(hint, s.x + s.w * 0.5f, card.y - 16, 10, std::min(s.w - 24, 320.0f), rgba(225, 225, 225));
@@ -251,9 +251,9 @@ void draw_hider_feedback(Painter& p, const Screen& s) {
     const f32 cx = s.x + s.w * 0.5f;
     const auto now = now_ms();
     if (me.revealedUntil > now || me.finalRevealedUntil > now) {
-        const bool final = me.finalRevealedUntil > now;
-        const auto kind = final ? ClueKind::Final : local::taunt_kind();
-        const auto until = final ? me.finalRevealedUntil : me.revealedUntil;
+        const bool finalActive = me.finalRevealedUntil > now;
+        const auto kind = finalActive ? ClueKind::Final : local::taunt_kind();
+        const auto until = finalActive ? me.finalRevealedUntil : me.revealedUntil;
         const char* reason = kind == ClueKind::Manual ? "Manual taunt" : kind == ClueKind::Stationary ?
             "Stayed still too long" : kind == ClueKind::Treasure ? "Treasure pickup" : "Final location reveal";
         const auto card = centre_card(s.x, s.y, s.w, 55, 39, 284);

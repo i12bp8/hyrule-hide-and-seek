@@ -25,7 +25,6 @@ float taunt_cooldown();    // 0..1, for the HUD
 bool has_sword();
 uint32_t tracking_cooldown_secs();
 bool tracking_clue(SearchClue& clue);
-uint32_t attack_recovery_ms();
 ClueKind taunt_kind();
 
 // A recent hider taunt as seen by a hunter. Returns its remaining 0..1 reveal strength.

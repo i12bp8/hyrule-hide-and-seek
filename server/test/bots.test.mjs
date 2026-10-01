@@ -41,7 +41,7 @@ function stateBytes({ stage, x, y, z, flags = 1 }) {
 }
 
 test("bots follow the host, get ready and turn into props", async () => {
-  const host = new WebSocket(`${base}/host?name=Human&v=9`);
+  const host = new WebSocket(`${base}/host?name=Human&v=10`);
   host.binaryType = "arraybuffer";
   const states = new Map(); // bot id -> latest decoded state
   const readies = new Set();
@@ -81,9 +81,9 @@ test("bots follow the host, get ready and turn into props", async () => {
     // Round 1: both bots are props (roster: host hunter, bots 2 and 3 hiders).
     const roster = new Uint8Array([
       0, 11, 3,
-      1, 2, 0, 0, 0, 0, 0, 4, 1, 0, 0, 0, 0, 0,
-      2, 1, 1, 0, 0, 0, 0, 8, 0, 0, 0, 0, 0, 0,
-      3, 1, 2, 0, 0, 0, 0, 8, 0, 0, 0, 0, 0, 0,
+      1, 2, 0, 0, 0, 0, 0, 4, 1, 0, 0, 0, 0, 0, 20, 0, 0,
+      2, 1, 1, 0, 0, 0, 0, 8, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+      3, 1, 2, 0, 0, 0, 0, 8, 0, 0, 0, 0, 0, 0, 0, 0, 0,
     ]);
     send(roster);
     send(new Uint8Array([0, 12, 1, 0, 0, 0, 0, 4, 45, 0, 240, 0, 2, 0])); // ROUND 1, prop hunt, map 4

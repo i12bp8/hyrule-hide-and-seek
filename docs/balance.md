@@ -1,4 +1,4 @@
-# Balance and search rules in v0.3.4
+# Balance and search rules in v0.3.5
 
 Before v0.3.1, the default round awarded a survivor 18 passive points plus 5 for surviving, before
 manual taunts, 3-point treasure, the 5-point pickup challenge and 5-point Treasure Rush pickups.
@@ -67,9 +67,13 @@ useful nearby cue. This makes a pickup a choice between score/decoy funding and 
 search area; a good stationary disguise can simply choose safety.
 
 Misses, including decoys, cost half a heart by default; the host can choose Off or quarter-heart
-steps up to one heart. Five starting hearts, one-heart recovery for a find and two-second attack
-recovery at the final quarter remain. The protected last quarter prevents a game over while
-still slowing indiscriminate searching. Hunters can sheathe their sword normally so Horse Grass
+steps up to one heart. Hunters start with five hearts and only a confirmed find restores one,
+capped at five. At zero they spectate until the next round; the remaining hiders win immediately
+when no hunters remain. Spring water, pickups and other vanilla healing cannot change room life.
+The room host owns life and acknowledges cumulative misses, so repeats cannot charge twice and
+pending misses survive a host change. The native meter displays the real life, including zero;
+Link retains one internal quarter outside the meter update to keep eliminated players in the
+match instead of triggering a story game over. Hunters can sheathe their sword normally so Horse Grass
 and other interactions remain available.
 
 Treasure capacity rises from 8 to 24 with 1,200-unit horizontal spacing. Connected ground is
@@ -87,7 +91,8 @@ corner, rejection of an unreachable island, pickup spacing, shared progress for 
 short and long round durations, duplicate claims, infection, spending and host migration.
 New checks cover quiet hiding until the finale, one final clue in both modes on compact/large
 maps, firing on time despite recent taunts, separate exact-reveal feedback, voluntary-only and optional stationary rules, rule migration and every
-miss-cost choice down to the protected last quarter.
+miss-cost choice down to elimination, multiple hunters, find-only healing, client prediction and
+health/acknowledgement migration. Native meter and world-healing behavior still need game playtests.
 These tests do not validate the real maps' collision or prove a 50% win rate.
 
 For each map, play paired sessions where the same players swap starting roles. Record the

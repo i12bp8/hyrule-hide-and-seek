@@ -11,8 +11,8 @@
 
 namespace hs {
 
-// v9 adds adjustable miss cost, one final clue and its roster flag.
-constexpr int kProtocolVersion = 9;
+// v10 adds host-owned hunter life, acknowledged misses and elimination.
+constexpr int kProtocolVersion = 10;
 
 enum MsgType : uint8_t {
     MSG_STATE = 1,     // everyone -> everyone, 10 Hz
@@ -29,10 +29,12 @@ enum MsgType : uint8_t {
     MSG_PICKUP = 19,   // host -> all: round, hider, points, completed collection bonus
     MSG_READY = 20,    // -> host: loaded into the round's map
     MSG_HIT = 21,      // -> host: I hit / touched this hider
+    MSG_HUNTER_OUT = 22, // host -> all: round, eliminated hunter
     MSG_TAUNT = 23,    // hider -> host: round, sound
     MSG_PLACE_DECOY = 24, // hider -> host
     MSG_HIT_DECOY = 25,   // hunter -> host: remove the struck decoy
     MSG_COLLECT_RUPEE = 26, // hider -> host: round, pickup id
+    MSG_MISS = 27,     // hunter -> host: round, cumulative missed swings (u16)
 };
 
 enum class ClueKind : uint8_t { Manual, Final, Stationary, Treasure };

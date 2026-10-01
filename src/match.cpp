@@ -39,6 +39,7 @@ uint64_t s_lastDecoyHitSent[kMaxActiveDecoys + 1] = {};
 uint8_t s_nextDecoyId = 1;
 uint16_t s_nextRupeeId = 1;
 uint64_t s_lastPickupSent = 0;
+uint16_t s_missSequence = 0;
 struct RupeeCooldown { float x, z; uint64_t until; };
 std::vector<RupeeCooldown> s_rupeeCooldowns;
 std::mt19937 s_rng{std::random_device{}()};
@@ -119,13 +120,15 @@ Writer roster_msg() {
         w.u16(p.roundPoints);
         w.u8(static_cast<uint8_t>((p.found ? 1 : 0) | (p.ready ? 2 : 0) |
             (p.startingRole == Role::Hunter ? 4 : 0) | (p.startingRole == Role::Hider ? 8 : 0) |
-            (p.finalClueGiven ? 16 : 0)));
+            (p.finalClueGiven ? 16 : 0) | (p.eliminated ? 32 : 0)));
         w.u8(p.hunterRounds);
         w.u8(p.decoysUsed);
         w.u8(p.rupeesCollected);
         w.u8(p.finds);
         w.u8(p.bonusEarned);
         w.u8(static_cast<uint8_t>(p.objectiveAwarded));
+        w.u8(p.hunterLife);
+        w.u16(p.missSequence);
     }
     return w;
 }
@@ -443,9 +446,11 @@ void found(int target, int by) {
     Player& t = P(target);
     t.found = true;
     t.role = s_match.settings.foundJoinHunters ? Role::Hunter : Role::Spectator;
+    t.hunterLife = t.role == Role::Hunter ? kArenaLife : 0;
     award_survival(target, now_ms());
     give_bonus(by, scoring::personal_find(s_match.startingHiders));
     P(by).finds = static_cast<uint8_t>(std::min(255, P(by).finds + 1));
+    P(by).hunterLife = static_cast<uint8_t>(std::min<int>(kArenaLife, P(by).hunterLife + 4));
     ++s_match.teamFinds;
     const int progress = scoring::captures(s_match.teamFinds, s_match.startingHiders);
     for (int id = 1; id <= kMaxPlayers; ++id) {
@@ -458,6 +463,26 @@ void found(int target, int by) {
     w.u8(s_match.teamFinds);
     announce(w);
     announce(roster_msg());
+}
+
+void host_miss(int id, uint16_t sequence) {
+    if (s_match.phase != Phase::Seek || s_match.settings.mode != Mode::PropHunt) return;
+    Player& p = P(id);
+    if (!p.present || p.role != Role::Hunter || sequence <= p.missSequence || sequence > 4096) return;
+    // A cumulative counter makes duplicate reports harmless and preserves pending misses when
+    // the host changes. A player can only report their own misses, never a life/healing value.
+    const unsigned misses = sequence - p.missSequence;
+    p.missSequence = sequence;
+    p.hunterLife = static_cast<uint8_t>(life_after_miss(p.hunterLife,
+        static_cast<uint8_t>(std::min<unsigned>(kArenaLife, misses * s_match.settings.missPenaltyQuarters))));
+    if (p.hunterLife == 0) {
+        p.eliminated = true;
+        p.role = Role::Spectator;
+        Writer w(MSG_HUNTER_OUT); w.u32(s_match.round); w.u8(static_cast<uint8_t>(id));
+        announce(w);
+    }
+    announce(roster_msg());
+    if (count_role(Role::Hunter) == 0 && count_role(Role::Hider) != 0) finish(0);
 }
 
 float distance(const PlayerState& a, const PlayerState& b) {
@@ -570,6 +595,8 @@ void handle_roster(Reader& r) {
         const uint8_t finds = r.u8();
         const uint8_t bonusEarned = r.u8();
         const uint8_t objectiveAwarded = r.u8();
+        const uint8_t hunterLife = r.u8();
+        const uint16_t missSequence = r.u16();
         if (!r.ok() || id < 1 || id > kMaxPlayers) break;
         Player& p = P(id);
         listed[id] = true;
@@ -581,6 +608,9 @@ void handle_roster(Reader& r) {
         p.found = (flags & 1) != 0;
         p.ready = (flags & 2) != 0;
         p.finalClueGiven = (flags & 16) != 0;
+        p.eliminated = (flags & 32) != 0;
+        p.hunterLife = std::min<uint8_t>(hunterLife, kArenaLife);
+        p.missSequence = missSequence;
         p.hunterRounds = hunterRounds;
         p.decoysUsed = decoysUsed;
         p.rupeesCollected = rupeesCollected;
@@ -855,12 +885,16 @@ void start_round() {
         p.decoysUsed = 0;
         p.rupeesCollected = 0;
         p.finds = 0;
+        p.hunterLife = p.role == Role::Hunter ? kArenaLife : 0;
+        p.eliminated = false;
+        p.missSequence = 0;
         p.finalClueGiven = false;
         p.finalRevealedUntil = 0;
         p.lastTauntAt = p.lastClueAt = p.lastMovedAt = p.revealedUntil = 0;
     }
 
     s_match.round += 1;
+    s_missSequence = 0;
     s_match.winner = -1;
     s_match.startingHiders = static_cast<uint8_t>(n - hunters);
     s_match.teamFinds = 0;
@@ -931,6 +965,7 @@ void report_ready() {
 }
 
 void report_hit(uint8_t target) {
+    if (my_role() != Role::Hunter || my_hunter_life() == 0) return;
     if (target < 1 || target > kMaxPlayers) return;
     const uint64_t now = now_ms();
     if (now - s_lastHitSent[target] < 500) return;
@@ -945,6 +980,25 @@ void report_hit(uint8_t target) {
     net::send(net::kToHost, w.bytes());
 }
 
+uint16_t my_hunter_life() {
+    const Player& me = P(self());
+    const unsigned pending = s_missSequence > me.missSequence ? s_missSequence - me.missSequence : 0;
+    return life_after_miss(me.hunterLife, static_cast<uint8_t>(std::min<unsigned>(kArenaLife,
+        pending * s_match.settings.missPenaltyQuarters)));
+}
+
+void report_miss() {
+    if (net::status() != net::Status::Online || s_match.phase != Phase::Seek ||
+        s_match.settings.mode != Mode::PropHunt || my_role() != Role::Hunter ||
+        my_hunter_life() == 0 || s_match.settings.missPenaltyQuarters == 0) return;
+    s_missSequence = static_cast<uint16_t>(std::max(s_missSequence, P(self()).missSequence) + 1);
+    if (host()) host_miss(self(), s_missSequence);
+    else {
+        Writer w(MSG_MISS); w.u32(s_match.round); w.u16(s_missSequence);
+        net::send(net::kToHost, w.bytes());
+    }
+}
+
 void place_decoy() {
     if (!can_place_decoy()) return;
     if (host()) {
@@ -957,7 +1011,7 @@ void place_decoy() {
 }
 
 void report_decoy_hit(uint8_t decoyId) {
-    if (decoyId == 0) return;
+    if (decoyId == 0 || my_role() != Role::Hunter || my_hunter_life() == 0) return;
     const uint64_t now = now_ms();
     const int throttle = decoyId % (kMaxActiveDecoys + 1);
     if (now - s_lastDecoyHitSent[throttle] < 500) return;
@@ -986,6 +1040,7 @@ void on_welcome() {
     s_rupeeCooldowns.clear();
     s_haveWireState = false;
     s_lastStateSent = s_lastPickupSent = 0;
+    s_missSequence = 0;
     s_notices.clear();
     for (int id = 1; id <= kMaxPlayers; ++id) {
         P(id).present = net::member(id).present;
@@ -1011,6 +1066,7 @@ void on_joined(uint8_t id) {
     if (!host()) return;
     assign_color(id);
     if (in_round()) p.role = s_match.settings.foundJoinHunters ? Role::Hunter : Role::Spectator;
+    p.hunterLife = p.role == Role::Hunter ? kArenaLife : 0;
     const Writer settings = settings_msg();
     net::send(id, settings.bytes());
     announce(roster_msg());
@@ -1065,10 +1121,19 @@ void on_host_changed(uint8_t id) {
         announce(rupees_msg());
         send_meta();
     }
+    if (s_match.phase == Phase::Seek && my_role() == Role::Hunter &&
+        s_missSequence > P(self()).missSequence) {
+        if (host()) host_miss(self(), s_missSequence);
+        else {
+            Writer w(MSG_MISS); w.u32(s_match.round); w.u16(s_missSequence);
+            net::send(net::kToHost, w.bytes());
+        }
+    }
 }
 
 void on_disconnected() {
     s_match = Match{};
+    s_missSequence = 0;
     s_rupeeCooldowns.clear();
 }
 
@@ -1202,6 +1267,7 @@ void on_message(uint8_t from, const uint8_t* data, size_t size) {
         if (!r.ok() || map >= map_count() || mode >= static_cast<uint8_t>(Mode::Count) ||
             startingHiders >= kMaxPlayers || teamFinds > startingHiders) break;
         if (round != s_match.round) {
+            s_missSequence = P(self()).missSequence;
             s_rupeeCooldowns.clear();
             clear_rupees();
         }
@@ -1306,6 +1372,23 @@ void on_message(uint8_t from, const uint8_t* data, size_t size) {
         const uint8_t target = r.u8();
         if (!r.ok() || !host() || round != s_match.round) break;
         host_hit(from, target);
+        break;
+    }
+
+    case MSG_MISS: {
+        const uint32_t round = r.u32(); const uint16_t sequence = r.u16();
+        if (r.ok() && host() && round == s_match.round) host_miss(from, sequence);
+        break;
+    }
+
+    case MSG_HUNTER_OUT: {
+        const uint32_t round = r.u32(); const uint8_t id = r.u8();
+        if (!r.ok() || !fromHost || round != s_match.round || id < 1 || id > kMaxPlayers) break;
+        P(id).eliminated = true;
+        P(id).hunterLife = 0;
+        P(id).role = Role::Spectator;
+        notice(std::string(name_of(id)) + " ran out of hearts", P(id).color);
+        if (id == self()) big("OUT OF HEARTS!", 255, 120, 90);
         break;
     }
 

@@ -201,8 +201,8 @@ ModResult build_rules(ModContext*, UiWindowHandle, UiElementHandle left, UiEleme
     add_rule(left, UI_CONTROL_TOGGLE, "Found hiders become hunters",
         "On: a found prop becomes a hunter. Off: they watch until the next round.", F_JOIN);
     add_rule(left, UI_CONTROL_DROPDOWN, "Miss penalty",
-        "Half a heart by default, including hits on decoys. When a miss leaves the final quarter, "
-        "it adds two seconds of recovery. A confirmed find restores one heart.",
+        "Half a heart by default, including hits on decoys. Zero hearts eliminates the hunter; "
+        "hiders win when all hunters are out. Only a confirmed find restores one heart.",
         F_PENALTY, kMissPenalties, std::size(kMissPenalties));
     add_rule(left, UI_CONTROL_DROPDOWN, "Stationary clue",
         "A hider that has not moved this long automatically taunts. Moving resets the timer. "
@@ -567,7 +567,8 @@ ModResult build_help(ModContext*, UiWindowHandle, UiElementHandle left, UiElemen
     svc_ui->pane_add_rml(mod_ctx, left,
         "<div class='hs-guide'><h3>Hunt</h3><p>Use B to hit disguised hiders or tag nearby "
         "props while swimming. Misses cost half a heart by default; the host can adjust it. "
-        "A miss that leaves the last quarter adds 2 seconds of recovery; finding someone restores a heart. "
+        "At zero hearts you watch until the next round; hiders win if every hunter is out. "
+        "Only finding someone restores a heart. Springs and heart pickups do not heal hunters. "
         "Sheathe your sword to use Horse Grass and other interactions. D-pad down tracks "
         "the nearest hider, with a 25-second cooldown. Clue directions are relative to your view "
         "when the clue arrives; turning does not update them.</p></div>", nullptr);

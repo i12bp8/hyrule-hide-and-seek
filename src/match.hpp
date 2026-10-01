@@ -70,6 +70,9 @@ struct Player {
     float idleX = 0, idleY = 0, idleZ = 0;
     uint8_t rupeesCollected = 0;
     uint8_t finds = 0;
+    uint8_t hunterLife = 0;   // quarters, owned by the host; only confirmed finds restore life
+    bool eliminated = false;
+    uint16_t missSequence = 0; // cumulative misses processed by the host, carried across migration
     Role startingRole = Role::None; // unchanged by infection; late joiners have no win/progress award
     uint8_t bonusEarned = 0;    // gross bonuses, so spending cannot reopen the farming allowance
     uint64_t lastDecoyAt = 0;
@@ -145,6 +148,8 @@ void set_wanted_color(uint8_t color);  // anyone
 void set_local_state(const PlayerState& s);  // every frame; sent at 10 Hz
 void report_ready();
 void report_hit(uint8_t target);
+void report_miss();
+uint16_t my_hunter_life();  // includes unacknowledged local misses for immediate feedback
 void place_decoy();
 void report_decoy_hit(uint8_t decoyId);
 void send_taunt(uint8_t sound);

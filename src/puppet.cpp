@@ -557,7 +557,7 @@ void Puppet::updateGround() {
 void Puppet::armHitbox(const match::Player& p, bool disguised, int kind) {
     const match::Match& m = match::get();
     mCylArmed = m.phase == Phase::Seek && match::my_role() == Role::Hunter && p.role == Role::Hider &&
-                !p.found && local::attack_recovery_ms() == 0;
+                !p.found && match::my_hunter_life() != 0;
     if (!mCylArmed) return;
     const float r = disguised ? prop_info(kind).radius : kLinkRadius;
     const float h = disguised ? prop_info(kind).height : kLinkHeight;
@@ -572,7 +572,7 @@ void Puppet::armHitbox(const match::Player& p, bool disguised, int kind) {
 
 void Puppet::armDecoyHitbox(int kind) {
     const match::Match& m = match::get();
-    mCylArmed = m.phase == Phase::Seek && match::my_role() == Role::Hunter && local::attack_recovery_ms() == 0;
+    mCylArmed = m.phase == Phase::Seek && match::my_role() == Role::Hunter && match::my_hunter_life() != 0;
     if (!mCylArmed) return;
     mCyl.SetCoSPrm(0);
     mCyl.SetC(current.pos);
@@ -949,6 +949,7 @@ void update() {
     for (int id = 1; id <= kMaxPlayers; ++id) {
         const match::Player& p = match::player(id);
         const bool want = online && settled && id != me && p.present && p.hasState &&
+                          !p.eliminated &&
                           same_stage_as_me(p.state) && now - p.stateAt < kStaleMs;
         manage(s_slots[id], want, id, false, cXyz(p.state.x, p.state.y, p.state.z));
     }

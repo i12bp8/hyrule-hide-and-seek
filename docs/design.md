@@ -80,8 +80,10 @@ Prop Hunt is the main mode; classic Hide & Seek comes along for free.
   walk-through. A mesh only becomes solid once the local Link is clear of it, so a decoy never traps
   the hider who placed it. Your own disguise never blocks you. While swimming, where the game
   prevents sword use, B performs a close-range prop tag. A sword swing that hits no real hider costs
-  half a heart by default (host-adjustable from Off to one heart in quarter-heart steps; never
-  the last quarter). Every round starts with five hearts. Hunters can sheathe their sword normally.
+  half a heart by default (host-adjustable from Off to one heart in quarter-heart steps).
+  Hunters start with five hearts; zero eliminates them until the next round. Hiders win when all
+  hunters are out. Only confirmed finds restore a heart; vanilla healing is discarded. Hunters
+  can sheathe their sword normally.
 - D-pad down requests a host-confirmed taunt for a point (once per 10 seconds). Hunters hear a
   Link shout and get a broad direction sector and range band for three seconds, with a four-second
   cooldown. There is no exact distance or world marker. Clue categories are captured relative to
@@ -108,8 +110,8 @@ visible at the same range as the player models, including hider names seen by hu
   taunts share the same gross bonus limit; spending cannot reset it. Pickups publish clues.
 - Starting hunters: up to 12 shared points in proportion to confirmed captures of starting hiders,
   +6 for winning; personal finds give 3 bonus points (6 if only one hider started), within the same
-  6-point bonus limit. Infection gives no second objective/win award. Finds restore one heart;
-  exhausted misses impose two seconds of recovery.
+  6-point bonus limit. Infection gives no second objective/win award. Finds restore one heart,
+  capped at five; infected hunters start with five. Eliminated hunters cannot make finds.
 - After the free allowance, an extra decoy spends 3 current-round points.
 - Totals are kept for the room until the host resets them.
 
@@ -146,7 +148,7 @@ save profile.
 | Staying hidden is usually better than moving. | Reachable random treasure, eight at most, expires after 30 seconds; collecting publishes a three-second clue. | Gives hiders a choice between safety, score and decoy funding. |
 | Five free decoys postpone the point economy. | Recommended allowance reduced to three; extras remain three points. | Early placements still matter, then loot and manual taunts fund more. |
 | Automatic taunts were client scheduled and hard to notice locally. | Host schedules and confirms them; hider banner names the reason and counts down the reveal. | Everyone agrees a clue occurred; tiny movement cannot avoid stationary clues. |
-| Hunters can spam forever at the final quarter heart. | Two-second recovery after exhausted misses; confirmed finds restore one heart. | Makes misses matter while retaining the native five-heart round setup. |
+| Hunters can spam forever at the final quarter heart. | Zero hearts eliminates a hunter; all hunters out gives hiders the win. Only confirmed finds heal. | Gives missed swings a real consequence and rewards careful hunting. |
 | Final moments with one hider can drag. | Eight-second clues for the last hider in the final minute. | Adds a readable endgame without continuously exposing a position. |
 | Repeated rounds have no optional side objective. | Three-pickup challenge each round and Treasure Rush every third round. | Introduces a score objective and periodic rule variation without persistent grinding. |
 | Regional prop pools lack recognisable friendly characters. | Ordon goat, village cat, Castle Town citizen/shopper and settlement containers. | New disguises use the disc's native models and idle/walk animations. |

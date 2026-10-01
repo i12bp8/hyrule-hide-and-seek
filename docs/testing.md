@@ -57,8 +57,13 @@ Dusklight's log open (`~/.local/share/TwilitRealm/Dusklight/logs/`); the mod log
       Move away: its 1,200-unit area stays excluded for 30 seconds; other areas still refill.
       Expired pickups have the same cooldown. A host change preserves recently removed locations.
 - [ ] Miss penalty defaults to half a heart. Test Off, quarter, half, three quarters and one heart;
-      decoys use the same cost. Misses that leave the last quarter require two seconds between
-      counted attacks; finding a hider restores one heart. Save/restart preserves the choice.
+      decoys use the same cost. At zero the hunter sees empty hearts and OUT OF HEARTS, cannot tag,
+      and disappears from other clients until the next round. With two hunters, the first death
+      keeps the hunt running; the last immediately awards PROPS WIN. Next round resets life.
+      Finding a hider restores one heart up to five. Save/restart preserves the penalty choice.
+- [ ] As a hurt hunter, try Ordon spring water, heart drops, fairies and potions: no life is gained.
+      Check host/client meters, rapid sword combos and host migration with pending misses.
+      Outside an online round/Results, normal story healing and life restoration still work.
 - [ ] Rules cannot change until Results. Final clue fires once per remaining hider, including
       after a host change. A recent manual/loot clue does not delay the exact marker.
 - [ ] Sheathe the hunter sword and use Horse Grass on South Faron to call Epona. No forced sword
@@ -71,7 +76,8 @@ Dusklight's log open (`~/.local/share/TwilitRealm/Dusklight/logs/`); the mod log
 
 ### Recorded automated checks (2026-09-30)
 
-- Rules/protocol/interpolation/layout: over 2,900 assertions passed.
+- Rules/protocol/interpolation/layout: 4,720 assertions passed, including hunter elimination,
+  find-only healing, client prediction and health migration (v0.3.5).
 - Node server suite: 16 tests passed. Worker runtime suite: 14 passed, two Node-specific tests skipped.
 - Live Cloudflare: health, host/join, sender framing, public listing and host migration passed.
 - Official Linux Dusklight 2.0.3 also joined the deployed relay over WSS; a temporary guest
@@ -211,8 +217,8 @@ Restart until you're the hunter (1 in 4).
 - [ ] Castle Town still allows drawing and swinging the sword during the hunt.
 - [ ] From a hider's client, the hunter's complete Link body remains visible while idle, running and
       swinging throughout Hide, Hunt and Results—never only a face/sword, a T-pose or a name tag.
-- [ ] Swinging at nothing costs half a heart by default (never the last quarter). Hitting a real
-      map pot or a player decoy also costs a quarter; hitting the actual hider does not.
+- [ ] Swinging at nothing costs half a heart by default, including the last quarter. Hitting a real
+      map pot or a player decoy uses the configured penalty; hitting the actual hider does not.
 - [ ] D-pad down gives a three-second tracking direction/rough range, then shows a 25-second
       cooldown. It never shows the hider's name or an exact marker. The host can disable it.
 - [ ] After surviving 30 seconds, the hider HUD shows 3 live round points. With all free placements
@@ -248,7 +254,7 @@ With a friend (or two copies of Dusklight with different `--mods` folders and pr
 - [ ] No enemies or bosses remain, including ones spawned by another mod; no encounter-complete
       cutscene or timer starts when they disappear.
 - [ ] Damage does not remove hearts and underwater air stays full. A hunter's missed sword swing
-      still removes the configured penalty (without taking the last quarter) when that rule is enabled.
+      still removes the configured penalty and eliminates at zero when that rule is enabled.
 - [ ] Walk/roll/jump toward loading zones in Hide and Hunt, as hider and hunter: movement stops
       before loading. No fade, respawn, lost disguise or change to the countdown occurs.
 - [ ] Cross camera-tag areas and room boundaries: the third-person camera remains freely movable.

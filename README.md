@@ -24,7 +24,7 @@ Use **Dusklight 2.0.3 or newer**. Its official Linux AppImage fixes the missing 
 and HTTPS certificate issue ([release notes](https://github.com/TwilitRealm/dusklight/releases/tag/v2.0.3)).
 Linux, Windows and macOS now use the same WebSocket transport. The default public relay requires it;
 old Linux builds can still use a private Node relay's HTTPS fallback.
-Use **mod v0.3.4 (protocol 9)** for the clue arrows and precise final reveal.
+Everyone in a room needs **mod v0.3.5 (protocol 10)** for hunter elimination, clue arrows and the precise final reveal.
 It shares rooms with v0.3.3, but older hunters will see the older clue display.
 
 ### A round
@@ -44,7 +44,7 @@ It shares rooms with v0.3.3, but older hunters will see the older clue display.
 | **D-pad left** | Props: previous prop |
 | **D-pad up** | Props: place a decoy during Hide or Hunt |
 | **D-pad down** | Hiders: taunt (3 s reveal, 4 s cooldown; +1 point every 10 s at most). Hunters: tracking pulse. |
-| **B** | Hunters: swing; while swimming, tag a nearby prop. A miss costs half a heart by default; exhaustion adds a 2 s attack recovery. |
+| **B** | Hunters: swing; while swimming, tag a nearby prop. A missed swing costs half a heart by default; zero hearts eliminates you. |
 
 There are 57 selectable props drawn from across Hyrule: pots, crates, furniture, village signs and
 targets, forest plants, mountain rocks, Zora water props, plus a walking cucco, Ordon Ranch goats, Hidden Village/Ordon/Castle Town cats,
@@ -81,9 +81,10 @@ with a 25-second cooldown. It gives no name or exact marker. Auto hunter counts 
 per four players on compact maps and one per three on large maps, leaving at least one hider.
 Random uses compact maps with fewer than six players; any large map can still be selected.
 Everyone starts each round with five hearts. Misses and hits on decoys cost **half a heart** by
-default. The host can choose Off, a quarter, half, three quarters, or one heart. A miss preserves
-the final quarter; when it leaves that quarter, it imposes two seconds before another hit can
-count. A confirmed find restores one heart. Hunters can sheathe their sword normally to use
+default. The host can choose Off, a quarter, half, three quarters, or one heart. At zero hearts,
+a hunter watches until the next round. Hiders win immediately when every hunter is out.
+Only a confirmed find restores one heart, up to five: spring water, found hearts, potions and
+other world healing cannot refill a hunter. Hunters can sheathe their sword normally to use
 Horse Grass, call Epona, and interact with the map.
 The Rules tab's **Use recommended rules** button restores this balance while keeping your mode,
 chosen map and public-room preference. Existing stock rules upgrade automatically; custom rules

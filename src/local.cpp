@@ -19,6 +19,7 @@
 #include "d/actor/d_a_alink.h"
 #include "d/actor/d_a_obj_carry.h"
 #include "d/d_com_inf_game.h"
+#include "d/d_meter2.h"
 #include "f_op/f_op_actor_iter.h"
 #include "f_op/f_op_actor_mng.h"
 #include "m_Do/m_Do_audio.h"
@@ -34,13 +35,14 @@ DEFINE_HOOK(&daAlink_c::draw, HsLinkDraw);
 DEFINE_HOOK(&daAlink_c::setCutType, HsLinkSetCutType);
 DEFINE_HOOK(&daAlink_c::setDamagePoint, HsLinkDamage);
 DEFINE_HOOK(&daAlink_c::checkNotBattleStage, HsCheckNotBattleStage);
+DEFINE_HOOK(&dComIfGp_setItemLifeCount, HsItemLife);
+DEFINE_HOOK(&dMeter2_c::moveLife, HsMeterLife);
 
 namespace hs::local {
 
 namespace {
 
 constexpr uint64_t kDecoyCooldownMs = 750;
-constexpr uint64_t kSwingWindowMs = 650;
 constexpr uint64_t kSettleMs = 1500;
 constexpr uint64_t kWarpRetryMs = 12000;
 constexpr float kTouchDistance = 90.0f;
@@ -74,8 +76,6 @@ bool s_disguised = false;
 int s_prop = 0;
 uint64_t s_lastTaunt = 0;
 ClueKind s_myClueKind = ClueKind::Manual;
-uint64_t s_attackReadyAt = 0;
-uint8_t s_confirmedFinds = 0;
 uint64_t s_lastDecoy = 0;
 
 struct TauntPing {
@@ -132,7 +132,33 @@ const MapInfo& round_map() {
 
 // ---- hooks -----------------------------------------------------------------------------------
 
+bool s_meterHooked = false;
+bool s_meterOverride = false;
+
+bool hunter_health_active() {
+    return net::status() == net::Status::Online &&
+        (match::in_round() || match::get().phase == Phase::Results) &&
+        (match::my_role() == Role::Hunter || match::player(net::self_id()).eliminated);
+}
+
+void sync_hunter_life() {
+    if (!hunter_health_active()) return;
+    // Life belongs to the room. Discard spring/pickup/fairy queues as well as any direct vanilla
+    // refill. The actor retains one internal quarter at zero to avoid the story game-over flow;
+    // the meter hook below displays the real zero and the host makes the hunter a spectator.
+    dComIfGp_clearItemLifeCount();
+    dComIfGp_clearItemMaxLifeCount();
+    dComIfGs_setMaxLife(kArenaHeartPieces);
+    dComIfGs_setLife(std::max<uint16_t>(1, match::my_hunter_life()));
+}
+
+HookAction on_link_execute_pre(ModContext*, void*, void*, void*) {
+    sync_hunter_life();
+    return HOOK_CONTINUE;
+}
+
 void on_link_execute_post(ModContext*, void* args, void*, void*) {
+    sync_hunter_life();
     if (!s_frozen) return;
     auto* self = mods::arg<daAlink_c*>(args, 0);
     self->current.pos = s_holdPos;
@@ -156,16 +182,39 @@ void on_link_draw_post(ModContext*, void*, void*, void*) {
 
 void on_set_cut_type_post(ModContext*, void* args, void*, void*) {
     const u8 type = mods::arg<u8>(args, 1);
-    if (type == 0 || now_ms() < s_attackReadyAt) return;
-    // A new swing: settle the previous one first.
+    if (type == 0 || s_swinging || match::my_role() != Role::Hunter ||
+        match::get().phase != Phase::Seek || match::my_hunter_life() == 0) return;
+    // Combo cuts must not restart an unsettled window and postpone its penalty forever.
     s_swinging = true;
     s_swingHit = false;
     s_swingAt = now_ms();
 }
 
+HookAction on_item_life_pre(ModContext*, void* args, void*, void*) {
+    return hunter_health_active() && mods::arg<f32>(args, 0) > 0.0f ?
+        HOOK_SKIP_ORIGINAL : HOOK_CONTINUE;
+}
+
+HookAction on_meter_life_pre(ModContext*, void*, void*, void*) {
+    s_meterOverride = s_meterHooked && hunter_health_active();
+    if (s_meterOverride) {
+        dComIfGp_clearItemLifeCount();
+        dComIfGp_clearItemMaxLifeCount();
+        dComIfGs_setMaxLife(kArenaHeartPieces);
+        dComIfGs_setLife(match::my_hunter_life());
+    }
+    return HOOK_CONTINUE;
+}
+
+void on_meter_life_post(ModContext*, void*, void*, void*) {
+    if (!s_meterOverride) return;
+    s_meterOverride = false;
+    sync_hunter_life();
+}
+
 HookAction on_link_damage_pre(ModContext*, void* args, void* retval, void*) {
     // Enemy and environmental damage can otherwise kill a player while the network round keeps
-    // going. The miss penalty writes hearts directly, so it still works.
+    // going. The room applies missed-swing damage independently.
     const int amount = mods::arg<int>(args, 1);
     const bool protectedPlay = game_mode::active() ||
                                (net::status() == net::Status::Online && match::in_round());
@@ -308,8 +357,7 @@ void on_phase_change(Phase from, Phase to) {
     s_swinging = false;
     s_swingHit = false;
     s_lastCutType = 0;
-    s_attackReadyAt = 0;
-    s_confirmedFinds = 0;
+    if (to == Phase::Gather && s_roundHealth) dComIfGs_setLife(kArenaLife);
     if (to != Phase::Seek) {
         for (TauntPing& ping : s_tauntPings) ping = TauntPing{};
         for (FinalMarker& marker : s_finalMarkers) marker = FinalMarker{};
@@ -342,32 +390,23 @@ void hunter_controls(daAlink_c* l) {
         // Keep the sword available, but let the player draw and sheathe it normally. Forcing it
         // out every half second interrupted Horse Grass, climbing and other map interactions.
     }
-    // Backup for the setCutType hook, in case the game inlined that call: a new cut type is a
-    // new swing.
+    if (s_swinging && now - s_swingAt > kSwingWindowMs) {
+        s_swinging = false;
+        if (!s_swingHit && m.settings.missPenaltyQuarters != 0 && playing_prop_hunt() && m.phase == Phase::Seek) {
+            match::report_miss();
+            sync_hunter_life();
+            play_at(Z2SE_SY_CURSOR_CANCEL, &l->current.pos);
+        }
+    }
+    if (m.phase != Phase::Seek || match::my_role() != Role::Hunter || match::my_hunter_life() == 0) return;
+    // Backup for the setCutType hook when the game inlines that call.
     const u8 cut = l->getCutType();
-    if (cut != 0 && cut != s_lastCutType && now >= s_attackReadyAt && (!s_swinging || now - s_swingAt > 100)) {
+    if (cut != 0 && cut != s_lastCutType && !s_swinging) {
         s_swinging = true;
         s_swingHit = false;
         s_swingAt = now;
     }
     s_lastCutType = cut;
-    if (s_swinging && now - s_swingAt > kSwingWindowMs) {
-        s_swinging = false;
-        if (!s_swingHit && m.settings.missPenaltyQuarters != 0 && playing_prop_hunt() && m.phase == Phase::Seek) {
-            // Current life is measured in quarters. Keep the final quarter to avoid a game over.
-            const u16 life = dComIfGs_getLife();
-            dComIfGs_setLife(life_after_miss(life, m.settings.missPenaltyQuarters));
-            if (exhausted_after_miss(life, m.settings.missPenaltyQuarters)) s_attackReadyAt = now + 2000;
-            play_at(Z2SE_SY_CURSOR_CANCEL, &l->current.pos);
-        }
-    }
-    if (m.phase != Phase::Seek) return;
-    const uint8_t finds = match::player(net::self_id()).finds;
-    if (finds > s_confirmedFinds) {
-        dComIfGs_setLife(std::min<u16>(kArenaLife, dComIfGs_getLife() + 4));
-        s_attackReadyAt = 0;
-    }
-    s_confirmedFinds = finds;
     if (m.settings.trackingPulse && mDoCPd_c::getTrigDown(PAD_1) &&
         (s_lastTracking == 0 || now - s_lastTracking >= kTrackingCooldownMs)) {
         float nearest = -1.0f;
@@ -390,7 +429,6 @@ void hunter_controls(daAlink_c* l) {
         } else play_at(Z2SE_SY_CURSOR_CANCEL, nullptr);
     }
     if (playing_prop_hunt()) {
-        if (now < s_attackReadyAt) return;
         // Link cannot draw a sword while swimming. In that one state B becomes a short-range tag,
         // using the same authoritative distance check as sword hits. It is deliberately not
         // consumed, so normal swimming controls continue to work.
@@ -469,11 +507,12 @@ void hider_controls(daAlink_c* l) {
 }  // namespace
 
 bool init() {
-    s_hooked = mods::hook::add_post<HsLinkExecute>(on_link_execute_post) == MOD_OK;
+    s_hooked = mods::hook::add_pre<HsLinkExecute>(on_link_execute_pre) == MOD_OK;
+    s_hooked = mods::hook::add_post<HsLinkExecute>(on_link_execute_post) == MOD_OK && s_hooked;
     s_hooked = mods::hook::add_pre<HsLinkDraw>(on_link_draw_pre) == MOD_OK && s_hooked;
     s_hooked = mods::hook::add_post<HsLinkDraw>(on_link_draw_post) == MOD_OK && s_hooked;
     if (mods::hook::add_post<HsLinkSetCutType>(on_set_cut_type_post) != MOD_OK) {
-        mods::log::warn("sword swing hook unavailable: no miss penalty");
+        mods::log::warn("sword swing hook unavailable: using cut-state miss detection");
     }
     if (mods::hook::add_pre<HsLinkDamage>(on_link_damage_pre) != MOD_OK) {
         mods::log::warn("damage hook unavailable: world hazards can hurt players");
@@ -481,6 +520,13 @@ bool init() {
     if (mods::hook::add_pre<HsCheckNotBattleStage>(on_not_battle_stage_pre) != MOD_OK) {
         mods::log::warn("battle-stage hook unavailable: swords may be blocked in Castle Town");
     }
+    if (mods::hook::add_pre<HsItemLife>(on_item_life_pre) != MOD_OK) {
+        mods::log::warn("item-life hook unavailable: enforcing hunter life each frame");
+    }
+    const bool meterPre = mods::hook::add_pre<HsMeterLife>(on_meter_life_pre) == MOD_OK;
+    const bool meterPost = mods::hook::add_post<HsMeterLife>(on_meter_life_post) == MOD_OK;
+    s_meterHooked = meterPre && meterPost;
+    if (!s_meterHooked) mods::log::warn("life-meter hook unavailable: zero-life hunters still spectate");
     if (!s_hooked) mods::log::warn("Link hooks unavailable: hunters won't be held and props stay visible");
     match::set_hooks({.taunt = play_taunt, .roundStarted = nullptr, .foundMe = nullptr});
     return true;
@@ -527,6 +573,7 @@ void update() {
         on_phase_change(s_lastPhase, m.phase);
         s_lastPhase = m.phase;
     }
+    sync_hunter_life();
 
     if (online) follow_round(l);
 
@@ -644,10 +691,6 @@ float final_clue_marker(int id, cXyz& position) {
         std::strncmp(p.state.stage, stage(), 8) != 0) return 0;
     position = marker.position;
     return 1.0f - static_cast<float>(now - marker.at) / static_cast<float>(kTauntRevealMs);
-}
-
-uint32_t attack_recovery_ms() {
-    return s_attackReadyAt > now_ms() ? static_cast<uint32_t>(s_attackReadyAt - now_ms()) : 0;
 }
 
 ClueKind taunt_kind() { return s_myClueKind; }
