@@ -68,15 +68,22 @@ inline float nearest_distance_sq(Point at, const std::vector<Point>& occupied) {
 
 // Examine all explored ground, rather than a few candidates around a player. A random starting
 // index breaks ties and changes the layout between rounds; distance spreads every refill out.
-inline size_t spread_candidate(const std::vector<Point>& points, const std::vector<Point>& occupied,
-                              size_t start, float spacing) {
+// Skip blocked locations during the search so a recent pickup cannot monopolize the best score.
+template<class Allowed>
+size_t spread_candidate(const std::vector<Point>& points, const std::vector<Point>& occupied,
+                        size_t start, float spacing, Allowed allowed) {
     size_t best = points.size();
     float farthest = spacing * spacing;
     for (size_t n = 0; n < points.size(); ++n) {
         const size_t i = (start + n) % points.size();
         const float distance = nearest_distance_sq(points[i], occupied);
-        if (distance >= farthest) { best = i; farthest = distance; }
+        if (distance >= farthest && allowed(points[i])) { best = i; farthest = distance; }
     }
     return best;
+}
+
+inline size_t spread_candidate(const std::vector<Point>& points, const std::vector<Point>& occupied,
+                              size_t start, float spacing) {
+    return spread_candidate(points, occupied, start, spacing, [](Point) { return true; });
 }
 }  // namespace hs::treasure

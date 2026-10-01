@@ -88,7 +88,9 @@ are retained. Old stock decoy allowances migrate from five to three.
 During Hunt, up to **24 spinning rupees** spread across connected, reachable ground, with at least
 1,200 units between pickups. The host explores routes during hiding time, so empty areas can get
 treasure too. Narrow maps can have fewer pickups. Rupees last 90 seconds, and replacements favor
-areas far from other rupees.
+areas far from other rupees. Collected or expired locations keep a 1,200-unit exclusion for
+30 seconds. New pickups stay at least 600 units from active hiders, so standing on a pickup
+cannot farm its replacements.
 
 Hiders earn **1 point per pickup**, with up to **2 extra points** for their third pickup. Every
 third round is **Treasure Rush**, with **2 points per rupee**. Treasure and manual taunts share a
@@ -103,8 +105,9 @@ clues for everyone; spinning in place or taking tiny steps does not reset the st
 ### Clean HUD and mobile menus
 
 The original Dusklight colours and fonts are retained. Compact status cards keep your role, score and timer readable while leaving the sides free for
-Dusklight's touch controls. Names and clue markers are small, limited to nearby players, and kept
-from overlapping. Only two nearby rupees get a short point label. Taunts use one temporary alert
+Dusklight's touch controls. Names stay visible at any distance where the player model is visible;
+labels are kept from overlapping. Hunters still cannot see hider names in Prop Hunt.
+Only two nearby rupees get a short point label. Taunts use one temporary alert
 with a reveal countdown, rather than several lines over the scene.
 
 The menu uses large touch targets and stacks on narrow screens. Results fit all 16 players without

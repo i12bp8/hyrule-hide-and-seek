@@ -90,8 +90,8 @@ Prop Hunt is the main mode; classic Hide & Seek comes along for free.
 
 ### Hide & Seek
 
-Everyone stays Link; hunters tag hiders by touching them (SMO Online rules). A hider's name tag
-shows up for hunters only up close.
+Everyone stays Link; hunters tag hiders by touching them (SMO Online rules). Name tags remain
+visible at the same range as the player models, including hider names seen by hunters in this mode.
 
 ### Scoring
 
@@ -151,8 +151,9 @@ save profile.
 The original theme colours and font families are retained. Menus use scoped RCSS, 46 dp minimum control targets, and a single-column layout below 640 dp.
 The game HUD uses the middle lane so the native touch controls can occupy the sides. Timer and
 role cards replace long persistent instructions. Control hints start on and can be disabled. World labels reserve
-screen rectangles: at most four nearby names, two treasure labels and three compact clue markers
-are drawn; intersecting labels are skipped. One clue summary replaces stacked paragraphs. Reveal
+screen rectangles: all visible players can have name tags, alongside at most two treasure labels
+and three compact clue markers; intersecting labels are skipped. Name tags have no separate
+distance cutoff and require a loaded, visible puppet. One clue summary replaces stacked paragraphs. Reveal
 feedback names its cause and shows remaining time, with a restrained amber pulse. Results compute
 row height from available space and keep all 16 rows inside the viewport. Mobile hardware must
 still be used to verify touch dispatch and device safe areas.
@@ -164,7 +165,11 @@ player positions. Ground, slope, body-height line, intermediate-floor and footpr
 missing floors, height changes, walls, deep water and loading exits. Exploration retains distant candidates
 after players move away and is bounded per frame. Spawning favors the farthest candidates from
 existing pickups, checks them again against native collision and enforces 1,200-unit horizontal
-spacing. This is collision-based exploration, not verified hand-placed coordinates. Tight spaces
+spacing. Collected and expired locations retain that spacing exclusion for 30 seconds; new
+pickups also stay 600 units from fresh, active hider positions. The candidate search skips these
+blocked locations rather than repeatedly choosing the same empty spot. Every client records
+snapshot removals, preserving cooldowns across host changes without changing the protocol.
+Cooldowns reset for a new round or room. This is collision-based exploration, not verified hand-placed coordinates. Tight spaces
 can have fewer candidates; unloaded rooms need their collision to load before exploration.
 
 The host accepts pickup requests only from live hiders in Hunt with a fresh state on the round's

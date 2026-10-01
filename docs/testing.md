@@ -51,6 +51,9 @@ Dusklight's log open (`~/.local/share/TwilitRealm/Dusklight/logs/`); the mod log
 - [ ] Manual and both automatic taunts show the pulsing reveal strip and correct countdown.
 - [ ] Spinning in place does not reset the stationary timer; moving far enough does.
 - [ ] Two hiders reaching the same rupee cannot both receive its points. Expired pickups disappear.
+- [ ] Stand on a collected rupee: no replacement appears under the hider, including after 30 seconds.
+      Move away: its 1,200-unit area stays excluded for 30 seconds; other areas still refill.
+      Expired pickups have the same cooldown. A host change preserves recently removed locations.
 - [ ] With the miss penalty on, repeated misses at the last quarter heart require two seconds between
       counted attacks; finding a hider restores one heart.
 - [ ] Rules cannot change until Results. The last hider in the final minute gets a 12-second clue.
@@ -125,6 +128,8 @@ on this computer**.
 - [ ] Walk away: they walk after you, feet on the ground, shadows under them. Their body never
       flickers, disappears, T-poses, or leaves only a face/sword visible.
 - [ ] Name tags above them in their colours.
+- [ ] Walk beyond 2,500 units: visible player models still have readable name tags. More than four
+      separated visible players can have tags; labels still avoid overlaps and status cards.
 - [ ] Your own Link keeps animating normally (the puppets must not disturb it).
 - [ ] Log: `linkkit: Link's files ready`, `linkkit: <colour> tunic loaded`, heap size message.
 - [ ] Walk through a door: the bots follow a moment later in the new area.
@@ -209,7 +214,7 @@ Restart until you're the hunter (1 in 4).
 Rules → Mode → Hide & Seek.
 
 - [ ] Hiders stay Link. As the hunter, touching a hider finds them.
-- [ ] Hider name tags only show up when you're close.
+- [ ] Hider name tags remain visible wherever their Link models are visible, including at long range.
 
 ## 7. Two real players
 

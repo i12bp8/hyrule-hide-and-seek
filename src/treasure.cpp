@@ -114,7 +114,8 @@ void update() {
             // A stale candidate can lose its floor when a room unloads or a decoy blocks it.
             // Check again and try the next well-spaced candidate rather than placing blindly.
             for (int attempt = 0; attempt < 12 && !points.empty(); ++attempt) {
-                const size_t index = spread_candidate(points, occupied, s_rng() % points.size(), match::kRupeeSpacing);
+                const size_t index = spread_candidate(points, occupied, s_rng() % points.size(), match::kRupeeSpacing,
+                    [](Point p) { return !match::rupee_spawn_blocked(p.x, p.z); });
                 if (index == points.size()) break;
                 Point at = points[index];
                 if (ground_position(at, at) && match::spawn_rupee(at.x, at.y, at.z)) break;

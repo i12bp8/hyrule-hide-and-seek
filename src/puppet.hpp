@@ -22,7 +22,7 @@ void update();
 // until this becomes true, so a slow or failed resource load can never make the player invisible.
 bool local_prop_visible();
 
-// Where a player's puppet is drawn right now (interpolated), for name tags.
+// Where a visible, loaded player's puppet is drawn right now (interpolated), for name tags.
 bool anchor(int id, cXyz& feet, float& height);
 
 }  // namespace hs::puppet

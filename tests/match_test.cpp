@@ -877,7 +877,7 @@ static void test_treasure_and_clues() {
     request(hider, MSG_COLLECT_RUPEE, item);
     CHECK(match::player(hider).roundPoints == 1); // consumed, no duplicate reward
     for (int n = 0; n < 2; ++n) {
-        const float x = 1400 + n * 700;
+        const float x = 2100 + n * 1400;
         fresh(hider, x - 700);
         CHECK(match::spawn_rupee(x, 0, 0));
         item = match::get().rupees[1].id;
@@ -904,13 +904,99 @@ static void test_treasure_and_clues() {
     Writer stale(MSG_COLLECT_RUPEE); stale.u32(match::get().round - 1); stale.u16(item);
     fresh(hider, 2800); deliver(static_cast<uint8_t>(hider), stale.bytes());
     CHECK(match::get().rupeeCount == 2);
-    advance(match::kRupeeLifetimeMs + 100);
+    advance(match::kRupeeLifetimeMs + match::kRupeeRespawnCooldownMs + 100);
     CHECK(match::get().rupeeCount == 0);
     for (int n = 0; n < match::kMaxRupees; ++n) CHECK(match::spawn_rupee(n * 2000.0f, 0, 0));
     CHECK(match::get().rupeeCount == 24); // the host also decodes each full wire snapshot
     CHECK(!match::spawn_rupee(100000, 0, 0));
     match::end_round();
     CHECK(match::get().rupeeCount == 0);
+}
+
+static void test_treasure_respawn() {
+    std::printf("treasure refills avoid recent pickups and stationary hiders\n");
+    host_room(2);
+    auto rules = match::get().settings;
+    rules.seekSecs = 180;
+    match::set_settings(rules);
+    match::start_round();
+    const char* stage = map_info(match::get().map).stage;
+    everyone_ready(2, stage);
+    advance(21'000);
+    const int hider = hider_id(), hunter = hunter_id();
+    const auto move = [&](float x) {
+        deliver(static_cast<uint8_t>(hider), state_msg(stage, x, 0, 0));
+    };
+    move(0);
+    CHECK(!match::spawn_rupee(0, 0, 0));
+    CHECK(!match::spawn_rupee(match::kRupeePlayerClearance - 1, 0, 0));
+    CHECK(match::spawn_rupee(1200, 0, 0));
+    move(1200);
+    Writer pickup(MSG_COLLECT_RUPEE);
+    pickup.u32(match::get().round); pickup.u16(match::get().rupees[0].id);
+    deliver(static_cast<uint8_t>(hider), pickup.bytes());
+    CHECK(match::get().rupeeCount == 0 && match::player(hider).rupeesCollected == 1);
+    const auto collectedAt = s_now;
+    move(-5000); // moving away must not instantly reopen the old location
+    CHECK(!match::spawn_rupee(1200, 0, 0));
+    CHECK(!match::spawn_rupee(1900, 0, 0));
+    CHECK(!match::spawn_rupee(1200, 10000, 0));
+    CHECK(match::spawn_rupee(5000, 0, 0)); // the rest of the map still refills
+
+    // The farthest hole used to be selected on every refill, even with other valid ground.
+    const std::vector<treasure::Point> points = {{1200,0,0}, {2400,0,0}, {5000,0,0}};
+    const std::vector<treasure::Point> occupied = {{5000,0,0}};
+    const auto allowed = [](treasure::Point p) { return !match::rupee_spawn_blocked(p.x, p.z); };
+    CHECK(treasure::spread_candidate(points, occupied, 0, match::kRupeeSpacing, allowed) == 1);
+    CHECK(treasure::spread_candidate({{1200,0,0}}, {}, 0, match::kRupeeSpacing, allowed) == 1);
+    advance(5000);
+    CHECK(!match::spawn_rupee(1200, 0, 0));
+    s_now = collectedAt + match::kRupeeRespawnCooldownMs - 1;
+    CHECK(!match::spawn_rupee(1200, 0, 0));
+    ++s_now;
+    move(1200);
+    CHECK(!match::spawn_rupee(1200, 0, 0)); // waiting on the pickup cannot farm it
+    CHECK(!match::spawn_rupee(1799, 0, 0));
+    move(-5000);
+    CHECK(match::spawn_rupee(1200, 0, 0)); // reusable once the cooldown ends and the hider leaves
+
+    // A client records removals from snapshots and retains them when taking authority.
+    g_fake.self = hider; g_fake.host = hunter;
+    Writer empty(MSG_RUPEES); empty.u32(match::get().round); empty.u8(0);
+    deliver(static_cast<uint8_t>(hider), empty.bytes());
+    CHECK(match::get().rupeeCount == 2); // a non-host cannot consume loot or add cooldowns
+    Writer malformed(MSG_RUPEES); malformed.u32(match::get().round); malformed.u8(1);
+    deliver(static_cast<uint8_t>(hunter), malformed.bytes());
+    CHECK(match::get().rupeeCount == 2);
+    deliver(static_cast<uint8_t>(hunter), empty.bytes());
+    CHECK(match::get().rupeeCount == 0);
+    g_fake.host = hider;
+    match::on_host_changed(static_cast<uint8_t>(hider));
+    CHECK(!match::spawn_rupee(1200, 0, 0));
+    CHECK(!match::spawn_rupee(5000, 0, 0));
+    CHECK(match::spawn_rupee(8000, 0, 0));
+
+    advance(match::kRupeeLifetimeMs + 100);
+    CHECK(match::get().phase == Phase::Seek && match::get().rupeeCount == 0);
+    CHECK(!match::spawn_rupee(8000, 0, 0)); // expiration also retires the location briefly
+    CHECK(match::spawn_rupee(1200, 0, 0));
+
+    // A new round announcement clears the client's old snapshot and cooldowns together.
+    g_fake.host = hunter;
+    Writer nextRound(MSG_ROUND);
+    nextRound.u32(match::get().round + 1); nextRound.u8(static_cast<uint8_t>(rules.mode));
+    nextRound.u8(match::get().map); nextRound.u16(rules.hideSecs); nextRound.u16(rules.seekSecs);
+    nextRound.u8(1); nextRound.u8(0);
+    deliver(static_cast<uint8_t>(hunter), nextRound.bytes());
+    CHECK(match::get().rupeeCount == 0);
+    deliver(static_cast<uint8_t>(hunter), empty.bytes()); // a previous-round removal is ignored
+    g_fake.host = hider;
+    match::on_host_changed(static_cast<uint8_t>(hider));
+    CHECK(match::spawn_rupee(8000, 0, 0));
+
+    match::end_round(); match::start_round();
+    everyone_ready(2, stage); advance(21'000);
+    CHECK(match::spawn_rupee(1200, 0, 0)); // cooldowns belong to their round
 }
 
 static void test_map_wide_treasure_layout() {
@@ -1024,9 +1110,12 @@ static void test_fair_round_scores() {
     const char* stage = map_info(match::get().map).stage;
     everyone_ready(2, stage); advance(21'000);
     const int hider = hider_id();
+    float lootX = 0;
     const auto loot = [&] {
-        deliver(static_cast<uint8_t>(hider), state_msg(stage, 0, 0, 0, STATE_IN_WORLD | STATE_DISGUISED));
-        CHECK(match::spawn_rupee(0, 0, 0));
+        lootX += 2000;
+        deliver(static_cast<uint8_t>(hider), state_msg(stage, lootX - 700, 0, 0, STATE_IN_WORLD | STATE_DISGUISED));
+        CHECK(match::spawn_rupee(lootX, 0, 0));
+        deliver(static_cast<uint8_t>(hider), state_msg(stage, lootX, 0, 0, STATE_IN_WORLD | STATE_DISGUISED));
         Writer pickup(MSG_COLLECT_RUPEE); pickup.u32(match::get().round); pickup.u16(match::get().rupees[0].id);
         deliver(static_cast<uint8_t>(hider), pickup.bytes());
     };
@@ -1105,6 +1194,7 @@ int main() {
     test_map_wide_treasure_layout();
     test_fair_round_scores();
     test_treasure_and_clues();
+    test_treasure_respawn();
     test_interpolation_and_compact_states();
     test_mobile_hud_layout();
     test_protocol_roundtrip();

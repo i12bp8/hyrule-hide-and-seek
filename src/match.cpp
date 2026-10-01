@@ -39,6 +39,8 @@ uint64_t s_lastDecoyHitSent[kMaxActiveDecoys + 1] = {};
 uint8_t s_nextDecoyId = 1;
 uint16_t s_nextRupeeId = 1;
 uint64_t s_lastPickupSent = 0;
+struct RupeeCooldown { float x, z; uint64_t until; };
+std::vector<RupeeCooldown> s_rupeeCooldowns;
 std::mt19937 s_rng{std::random_device{}()};
 
 Player& P(int id) {
@@ -272,7 +274,14 @@ void clear_rupees() {
     for (auto& r : s_match.rupees) r = {};
 }
 
+void remember_rupee(const Match::Rupee& r) {
+    const auto now = now_ms();
+    std::erase_if(s_rupeeCooldowns, [now](const RupeeCooldown& c) { return c.until <= now; });
+    s_rupeeCooldowns.push_back({r.x, r.z, now + kRupeeRespawnCooldownMs});
+}
+
 void erase_rupee(int index) {
+    remember_rupee(s_match.rupees[index]);
     for (int i = index + 1; i < s_match.rupeeCount; ++i) s_match.rupees[i - 1] = s_match.rupees[i];
     s_match.rupees[--s_match.rupeeCount] = {};
 }
@@ -737,6 +746,21 @@ uint32_t next_clue_ms() {
 
 int rupee_points() { return s_match.round % 3 == 0 ? 2 : 1; }
 
+bool rupee_spawn_blocked(float x, float z) {
+    const auto now = now_ms();
+    for (const auto& c : s_rupeeCooldowns) {
+        const float dx = x - c.x, dz = z - c.z;
+        if (c.until > now && dx * dx + dz * dz < kRupeeSpacing * kRupeeSpacing) return true;
+    }
+    // Even after a cooldown ends, a stationary hider must move to reach the next pickup.
+    for (const auto& p : s_match.players) {
+        if (p.role != Role::Hider || p.found || !fresh_on_map(p)) continue;
+        const float dx = x - p.state.x, dz = z - p.state.z;
+        if (dx * dx + dz * dz < kRupeePlayerClearance * kRupeePlayerClearance) return true;
+    }
+    return false;
+}
+
 bool spawn_rupee(float x, float y, float z) {
     if (!host() || !s_match.settings.treasure || s_match.phase != Phase::Seek ||
         s_match.rupeeCount >= kMaxRupees || !std::isfinite(x) || !std::isfinite(y) || !std::isfinite(z)) return false;
@@ -746,6 +770,7 @@ bool spawn_rupee(float x, float y, float z) {
         if (dx * dx + dz * dz < kRupeeSpacing * kRupeeSpacing) return false;
     }
     if (std::fabs(x) > 1000000 || std::fabs(y) > 1000000 || std::fabs(z) > 1000000) return false;
+    if (rupee_spawn_blocked(x, z)) return false;
     auto& r = s_match.rupees[s_match.rupeeCount++];
     r = {s_nextRupeeId++, x, y, z, now_ms() + kRupeeLifetimeMs};
     if (s_nextRupeeId == 0) s_nextRupeeId = 1;
@@ -836,6 +861,7 @@ void start_round() {
     s_seekStartedAt = 0;
     s_nextDecoyId = 1;
     s_nextRupeeId = 1;
+    s_rupeeCooldowns.clear();
     clear_decoys();
     clear_rupees();
     announce(roster_msg());
@@ -951,6 +977,7 @@ void send_taunt(uint8_t sound) {
 
 void on_welcome() {
     s_match = Match{};
+    s_rupeeCooldowns.clear();
     s_haveWireState = false;
     s_lastStateSent = s_lastPickupSent = 0;
     s_notices.clear();
@@ -1036,6 +1063,7 @@ void on_host_changed(uint8_t id) {
 
 void on_disconnected() {
     s_match = Match{};
+    s_rupeeCooldowns.clear();
 }
 
 void on_message(uint8_t from, const uint8_t* data, size_t size) {
@@ -1110,6 +1138,16 @@ void on_message(uint8_t from, const uint8_t* data, size_t size) {
             for (int j = 0; j < i; ++j) if (incoming[j].id == p.id) valid = false;
         }
         if (!r.ok() || !valid || round != s_match.round) break;
+        // Every client remembers removed locations, so becoming host cannot reopen a farm.
+        // The current protocol already supplies the old and new snapshots we need.
+        if (s_match.phase == Phase::Seek) {
+            for (int i = 0; i < s_match.rupeeCount; ++i) {
+                const auto& old = s_match.rupees[i];
+                bool remains = false;
+                for (int j = 0; j < count; ++j) if (incoming[j].id == old.id) remains = true;
+                if (!remains) remember_rupee(old);
+            }
+        }
         clear_rupees(); s_match.rupeeCount = count;
         for (int i = 0; i < count; ++i) s_match.rupees[i] = incoming[i];
         break;
@@ -1150,6 +1188,10 @@ void on_message(uint8_t from, const uint8_t* data, size_t size) {
         const uint8_t teamFinds = r.u8();
         if (!r.ok() || map >= map_count() || mode >= static_cast<uint8_t>(Mode::Count) ||
             startingHiders >= kMaxPlayers || teamFinds > startingHiders) break;
+        if (round != s_match.round) {
+            s_rupeeCooldowns.clear();
+            clear_rupees();
+        }
         s_match.round = round;
         s_match.settings.mode = mode < static_cast<uint8_t>(Mode::Count) ? static_cast<Mode>(mode)
                                                                         : Mode::PropHunt;

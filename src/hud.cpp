@@ -146,7 +146,7 @@ const char* name_of(int id) {
     return net::member(id).name;
 }
 
-std::array<Rect, 12> s_labels;
+std::array<Rect, kMaxPlayers + 5> s_labels; // room names, two treasure labels, three clue markers
 int s_labelCount = 0;
 
 bool reserve_label(const Rect& r, const Screen& s) {
@@ -326,25 +326,17 @@ void draw_name_tags(Painter& p, const Screen& s) {
         const bool hunter = match::in_round() && mine == Role::Hider && player.role == Role::Hunter;
         if (!settings::name_tags() && !hunter) continue;
         cXyz feet; float height;
-        if (!puppet::anchor(id, feet, height)) {
-            if (!player.hasState || !(player.state.flags & STATE_IN_WORLD) || now_ms() - player.stateAt >= 4000 ||
-                std::strncmp(player.state.stage, local::stage(), 8) != 0) continue;
-            feet.set(player.state.x, player.state.y, player.state.z);
-            height = (player.state.flags & STATE_DISGUISED) ? prop_info(player.state.prop).height : 150;
-        }
+        if (!puppet::anchor(id, feet, height)) continue;
         cXyz head = feet; head.y += height + 28;
         const float distance = (head - view->lookat.eye).abs();
         if (match::in_round() && player.role == Role::Hider && !player.found && mine != Role::Hider &&
-            (m.settings.mode == Mode::PropHunt || distance > 500)) continue;
-        if (distance > (hunter ? 2500 : match::in_round() ? 1200 : 2000)) continue;
+            m.settings.mode == Mode::PropHunt) continue;
         tags.push_back({id, head, distance, hunter});
     }
     std::sort(tags.begin(), tags.end(), [](const Tag& a, const Tag& b) {
         return a.hunter != b.hunter ? a.hunter : a.distance < b.distance;
     });
-    int drawn = 0;
     for (const auto& tag : tags) {
-        if (drawn == 4) break;
         cXyz head = tag.head;
         Vec camera; mDoLib_pos2camera(&head, &camera); if (camera.z > -1) continue;
         Vec out; mDoLib_project(&head, &out);
@@ -356,7 +348,6 @@ void draw_name_tags(Painter& p, const Screen& s) {
         if (!reserve_label(card, s)) continue;
         p.card(card, rgba(0, 0, 0, tag.hunter ? 160 : 130));
         p.centered(label, out.x, card.y + 4, size, tag.hunter ? rgba(255, 105, 75) : player_color(tag.id));
-        ++drawn;
     }
 }
 

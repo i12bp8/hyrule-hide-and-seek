@@ -21,6 +21,8 @@ constexpr int kMaxRupees = 24;
 constexpr uint64_t kRupeeLifetimeMs = 90000;
 constexpr float kRupeeSpacing = 1200.0f;
 constexpr float kRupeeCollectRadius = 180.0f; // 100-unit local pickup plus one moving-state interval
+constexpr uint64_t kRupeeRespawnCooldownMs = 30000;
+constexpr float kRupeePlayerClearance = 600.0f;
 
 struct Settings {
     Mode mode = Mode::PropHunt;
@@ -122,6 +124,7 @@ int my_decoys_left();  // remaining free placements; extra placements cost kExtr
 bool can_place_decoy();
 uint32_t next_clue_ms();
 int rupee_points();
+bool rupee_spawn_blocked(float x, float z); // recent pickups and fresh, active hiders
 bool spawn_rupee(float x, float y, float z); // host: reachable position checked by treasure module
 void collect_rupee(uint16_t id);
 

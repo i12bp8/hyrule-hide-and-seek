@@ -1005,7 +1005,7 @@ bool local_prop_visible() {
 }
 
 bool anchor(int id, cXyz& feet, float& height) {
-    if (id < 1 || id > kMaxPlayers || !s_slots[id].tracked) return false;
+    if (id < 1 || id > kMaxPlayers || !s_slots[id].tracked || !s_slots[id].visible) return false;
     feet = s_slots[id].feet;
     height = s_slots[id].height;
     return true;
