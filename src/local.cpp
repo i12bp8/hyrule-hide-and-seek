@@ -83,6 +83,12 @@ struct TauntPing {
     uint64_t at = 0;
 };
 TauntPing s_tauntPings[kSlots];
+struct FinalMarker {
+    cXyz position{0.0f, 0.0f, 0.0f};
+    uint64_t at = 0;
+    uint32_t round = 0;
+};
+FinalMarker s_finalMarkers[kSlots];
 
 // Hunters
 bool s_frozen = false;
@@ -306,6 +312,7 @@ void on_phase_change(Phase from, Phase to) {
     s_confirmedFinds = 0;
     if (to != Phase::Seek) {
         for (TauntPing& ping : s_tauntPings) ping = TauntPing{};
+        for (FinalMarker& marker : s_finalMarkers) marker = FinalMarker{};
     }
     if (to == Phase::Gather && playing_prop_hunt()) {
         // Choose during the gathering/warp phase so the replacement model is already loaded when
@@ -625,6 +632,20 @@ float taunt_ping(int id, SearchClue& clue) {
     return 1.0f - static_cast<float>(age) / static_cast<float>(kTauntRevealMs);
 }
 
+float final_clue_marker(int id, cXyz& position) {
+    if (id < 1 || id > kMaxPlayers || match::my_role() != Role::Hunter ||
+        match::get().phase != Phase::Seek) return 0;
+    const auto& p = match::player(id);
+    const auto& marker = s_finalMarkers[id];
+    const auto now = now_ms();
+    if (marker.at == 0 || marker.round != match::get().round || now - marker.at >= kTauntRevealMs ||
+        !p.present || p.role != Role::Hider || p.found || !p.hasState ||
+        !(p.state.flags & STATE_IN_WORLD) || now - p.stateAt > 2000 ||
+        std::strncmp(p.state.stage, stage(), 8) != 0) return 0;
+    position = marker.position;
+    return 1.0f - static_cast<float>(now - marker.at) / static_cast<float>(kTauntRevealMs);
+}
+
 uint32_t attack_recovery_ms() {
     return s_attackReadyAt > now_ms() ? static_cast<uint32_t>(s_attackReadyAt - now_ms()) : 0;
 }
@@ -645,7 +666,7 @@ void play_taunt(uint8_t from, uint8_t sound, ClueKind kind) {
     }
     if (from < 1 || from > kMaxPlayers) return;
     cXyz feet;
-    float height;
+    float height = 150.0f;
     if (!puppet::anchor(from, feet, height)) {
         const match::Player& p = match::player(from);
         if (!p.hasState || !(p.state.flags & STATE_IN_WORLD) ||
@@ -657,6 +678,11 @@ void play_taunt(uint8_t from, uint8_t sound, ClueKind kind) {
     play_at(kTaunts[sound % kTauntCount], &feet);
     if (match::my_role() == Role::Hunter && match::get().phase == Phase::Seek) {
         s_tauntPings[from] = {capture_clue(feet), now_ms()};
+        if (kind == ClueKind::Final) {
+            feet.y += std::clamp(height + 25.0f, 70.0f, 260.0f);
+            // Store separately: a later voluntary clue must not erase or extend the final pulse.
+            s_finalMarkers[from] = {feet, now_ms(), match::get().round};
+        }
         // The voice remains positional; this cue makes sure a distant taunt is not silently lost.
         play_at(Z2SE_SY_HINT_BUTTON_BLINK, nullptr);
     }

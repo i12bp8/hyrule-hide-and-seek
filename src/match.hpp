@@ -65,6 +65,7 @@ struct Player {
     uint64_t lastClueAt = 0;
     uint64_t lastMovedAt = 0;
     uint64_t revealedUntil = 0;
+    uint64_t finalRevealedUntil = 0; // separate so a pickup cannot hide or extend the exact reveal
     bool finalClueGiven = false;  // carried in the roster for late joins and host migration
     float idleX = 0, idleY = 0, idleZ = 0;
     uint8_t rupeesCollected = 0;

@@ -847,6 +847,10 @@ static void test_search_clues() {
     CHECK(std::string(search_clue(10, 100, 1199).range) == "Near");
     CHECK(std::string(search_clue(10, 100, 1200).range) == "In the area");
     CHECK(std::string(search_clue(10, 100, 3500).range) == "Distant");
+    CHECK(search_clue(10, 100, 0).arrowX == 0 && search_clue(10, 100, 0).arrowY == -1);
+    CHECK(search_clue(100, 10, 0).arrowX == 1 && search_clue(100, 10, 0).arrowY == 0);
+    CHECK(search_clue(-100, 10, 0).arrowX == -1 && search_clue(-100, 10, 0).arrowY == 0);
+    CHECK(search_clue(10, -100, 0).arrowX == 0 && search_clue(10, -100, 0).arrowY == 1);
     CHECK(final_clue_window_ms(20, 180) == 20000 && final_clue_window_ms(60, 30) == 15000);
     for (Mode mode : {Mode::PropHunt, Mode::HideAndSeek}) {
         for (int map : {0, 9}) {
@@ -874,7 +878,8 @@ static void test_search_clues() {
             CHECK(count_sent(MSG_CLUE) == hiders);
             for (int id = 1; id <= 4; ++id) {
                 if (match::player(id).role == Role::Hider)
-                    CHECK(match::player(id).finalClueGiven && match::player(id).revealedUntil == s_now + kTauntRevealMs);
+                    CHECK(match::player(id).finalClueGiven && match::player(id).revealedUntil == s_now + kTauntRevealMs &&
+                          match::player(id).finalRevealedUntil == s_now + kTauntRevealMs);
             }
             tick(end - 15000); tick(end - 10000);
             CHECK(count_sent(MSG_CLUE) == hiders);
@@ -884,11 +889,12 @@ static void test_search_clues() {
             tick(end - 5000);
             CHECK(count_sent(MSG_CLUE) == hiders);
             match::end_round(); match::start_round();
-            for (int id = 1; id <= 4; ++id) CHECK(!match::player(id).finalClueGiven);
+            for (int id = 1; id <= 4; ++id)
+                CHECK(!match::player(id).finalClueGiven && match::player(id).finalRevealedUntil == 0);
         }
     }
 
-    // A recent manual clue delays the final clue; it cannot suppress the finale forever.
+    // A recent manual clue cannot postpone the exact reveal past the configured time mark.
     host_room(2);
     auto rules = match::get().settings; rules.seekSecs = 180;
     match::set_settings(rules); match::start_round();
@@ -902,10 +908,19 @@ static void test_search_clues() {
     deliver(hider, manual.bytes());
     g_fake.sent.clear();
     s_now = end - 20000; fresh(); match::update();
-    CHECK(count_sent(MSG_CLUE) == 0 && !match::player(hider).finalClueGiven);
+    CHECK(count_sent(MSG_CLUE) == 1 && match::player(hider).finalClueGiven);
+    const auto finalUntil = match::player(hider).finalRevealedUntil;
+    CHECK(finalUntil == s_now + kTauntRevealMs);
     g_fake.self = hider;
-    CHECK(match::next_clue_ms() == 3000);
+    CHECK(match::next_clue_ms() == UINT32_MAX);
     g_fake.self = g_fake.host;
+    // Another pickup clue updates ordinary feedback without hiding or extending the exact pulse.
+    s_now += 1000;
+    Writer pickupClue(MSG_CLUE); pickupClue.u32(match::get().round); pickupClue.u8(hider);
+    pickupClue.u8(5); pickupClue.u8(static_cast<uint8_t>(ClueKind::Treasure));
+    deliver(g_fake.host, pickupClue.bytes());
+    CHECK(match::player(hider).finalRevealedUntil == finalUntil);
+    CHECK(match::player(hider).revealedUntil > finalUntil);
     s_now = end - 17000; fresh(); match::update();
     CHECK(count_sent(MSG_CLUE) == 1 && match::player(hider).finalClueGiven);
 

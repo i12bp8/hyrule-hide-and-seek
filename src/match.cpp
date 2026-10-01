@@ -259,7 +259,8 @@ void host_clue(int id, uint8_t sound, ClueKind kind) {
     Player& p = P(id);
     const uint64_t now = now_ms();
     if (s_match.phase != Phase::Seek || p.role != Role::Hider || p.found || !fresh_on_map(p) ||
-        (kind != ClueKind::Treasure && p.lastClueAt != 0 && now - p.lastClueAt < kTauntCooldownMs)) return;
+        (kind != ClueKind::Treasure && kind != ClueKind::Final && p.lastClueAt != 0 &&
+         now - p.lastClueAt < kTauntCooldownMs)) return;
     // Only deliberate taunts earn a point. Automatic clues cannot farm a hiding spot.
     const bool award = kind == ClueKind::Manual &&
                        (p.lastTauntAt == 0 || now - p.lastTauntAt >= kTauntPointEveryMs);
@@ -740,7 +741,6 @@ uint32_t next_clue_ms() {
     if (s_match.settings.finalClueSecs != 0 && !p.finalClueGiven) {
         next = s_match.phaseEnd - final_clue_window_ms(s_match.settings.finalClueSecs,
                                                       s_match.settings.seekSecs);
-        next = std::max(next, p.lastClueAt + kTauntCooldownMs);
     }
     if (s_match.settings.idleTauntSecs != 0) next = std::min(next,
         std::max(p.lastMovedAt, p.lastClueAt) + s_match.settings.idleTauntSecs * 1000u);
@@ -856,6 +856,7 @@ void start_round() {
         p.rupeesCollected = 0;
         p.finds = 0;
         p.finalClueGiven = false;
+        p.finalRevealedUntil = 0;
         p.lastTauntAt = p.lastClueAt = p.lastMovedAt = p.revealedUntil = 0;
     }
 
@@ -1169,7 +1170,10 @@ void on_message(uint8_t from, const uint8_t* data, size_t size) {
             id < 1 || id > kMaxPlayers || kind > static_cast<uint8_t>(ClueKind::Treasure) ||
             P(id).role != Role::Hider || P(id).found) break;
         P(id).lastClueAt = now_ms(); P(id).revealedUntil = now_ms() + kTauntRevealMs;
-        if (kind == static_cast<uint8_t>(ClueKind::Final)) P(id).finalClueGiven = true;
+        if (kind == static_cast<uint8_t>(ClueKind::Final)) {
+            P(id).finalClueGiven = true;
+            P(id).finalRevealedUntil = now_ms() + kTauntRevealMs;
+        }
         if (s_hooks.taunt) s_hooks.taunt(id, sound, static_cast<ClueKind>(kind));
         break;
     }

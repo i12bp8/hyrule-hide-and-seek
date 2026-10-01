@@ -31,6 +31,9 @@ ClueKind taunt_kind();
 // A recent hider taunt as seen by a hunter. Returns its remaining 0..1 reveal strength.
 float taunt_ping(int id, SearchClue& clue);
 
+// Only the one final reveal gets an exact world marker. Ordinary taunts stay directional.
+float final_clue_marker(int id, cXyz& position);
+
 // A hunter's sword connected with a hider this swing (no miss penalty).
 void note_hit();
 

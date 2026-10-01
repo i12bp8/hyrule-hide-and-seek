@@ -67,6 +67,22 @@ public:
         m_ortho.fillBox(JGeometry::TBox2<f32>(x0, y0, x1, y1));
     }
 
+    // Draw a filled arrow with the same native 2D primitives as the cards. The game font does
+    // not reliably contain Unicode arrow glyphs, so this works on every platform and language.
+    void arrow(f32 cx, f32 cy, const SearchClue& clue, JUtility::TColor color) {
+        const f32 dx = clue.arrowX, dy = clue.arrowY;
+        const auto strip = [&](f32 start, f32 end, f32 halfWidth) {
+            const f32 x0 = cx + dx * start + dy * halfWidth;
+            const f32 y0 = cy + dy * start - dx * halfWidth;
+            const f32 x1 = cx + dx * end - dy * halfWidth;
+            const f32 y1 = cy + dy * end + dx * halfWidth;
+            box(std::min(x0, x1), std::min(y0, y1), std::max(x0, x1), std::max(y0, y1), color);
+        };
+        strip(-7, 1, 1.5f);
+        for (int step = 0; step < 4; ++step)
+            strip(6 - step * 2, 8 - step * 2, 1.5f * (step + 1));
+    }
+
     f32 width(const std::string& text, f32 size) const {
         if (m_font == nullptr) return 0.0f;
         const f32 cell = static_cast<f32>(m_font->getCellWidth());
@@ -146,7 +162,7 @@ const char* name_of(int id) {
     return net::member(id).name;
 }
 
-std::array<Rect, kMaxPlayers + 5> s_labels; // room names, two treasure labels, three clue markers
+std::array<Rect, kMaxPlayers * 2 + 2> s_labels; // names, two treasure labels, all final markers
 int s_labelCount = 0;
 
 bool reserve_label(const Rect& r, const Screen& s) {
@@ -234,15 +250,18 @@ void draw_hider_feedback(Painter& p, const Screen& s) {
     if (m.phase != Phase::Seek || me.role != Role::Hider || me.found) return;
     const f32 cx = s.x + s.w * 0.5f;
     const auto now = now_ms();
-    if (me.revealedUntil > now) {
-        const auto kind = local::taunt_kind();
+    if (me.revealedUntil > now || me.finalRevealedUntil > now) {
+        const bool final = me.finalRevealedUntil > now;
+        const auto kind = final ? ClueKind::Final : local::taunt_kind();
+        const auto until = final ? me.finalRevealedUntil : me.revealedUntil;
         const char* reason = kind == ClueKind::Manual ? "Manual taunt" : kind == ClueKind::Stationary ?
-            "Stayed still too long" : kind == ClueKind::Treasure ? "Treasure pickup" : "Final clue";
+            "Stayed still too long" : kind == ClueKind::Treasure ? "Treasure pickup" : "Final location reveal";
         const auto card = centre_card(s.x, s.y, s.w, 55, 39, 284);
         const uint8_t opacity = static_cast<uint8_t>(195 + 15 * std::sin(now % 1200 * 0.005236f));
         p.card(card, rgba(120, 45, 15, opacity));
         p.box(card.x + 1, card.y + 6, card.x + 3, card.y + card.h - 6, rgba(255, 205, 65));
-        p.centred_fit("CLUE SENT  " + std::to_string((me.revealedUntil - now + 999) / 1000) + "s", cx, card.y + 5, 14, card.w - 22, rgba(255, 230, 140));
+        const char* alert = kind == ClueKind::Final ? "LOCATION REVEALED  " : "CLUE SENT  ";
+        p.centred_fit(alert + std::to_string((until - now + 999) / 1000) + "s", cx, card.y + 5, 14, card.w - 22, rgba(255, 230, 140));
         p.centred_fit(reason, cx, card.y + 25, 10, card.w - 22, rgba(255, 235, 195));
     } else {
         const auto next = match::next_clue_ms();
@@ -351,6 +370,24 @@ void draw_name_tags(Painter& p, const Screen& s) {
     }
 }
 
+void draw_final_markers(Painter& p, const Screen& s) {
+    if (match::my_role() != Role::Hunter || match::get().phase != Phase::Seek ||
+        dComIfGd_getView() == nullptr) return;
+    for (int id = 1; id <= kMaxPlayers; ++id) {
+        cXyz at;
+        const float strength = local::final_clue_marker(id, at);
+        if (strength <= 0) continue;
+        Vec camera; mDoLib_pos2camera(&at, &camera);
+        if (camera.z > -1) continue;
+        Vec out; mDoLib_project(&at, &out);
+        const Rect marker{out.x - 8, out.y - 16, 16, 20};
+        if (!reserve_label(marker, s)) continue;
+        const auto alpha = static_cast<uint8_t>(140 + strength * 100);
+        p.card(marker, rgba(0, 0, 0, alpha));
+        p.centered("!", out.x, marker.y + 4, 13, rgba(255, 150, 70, alpha));
+    }
+}
+
 void draw_taunt_pings(Painter& p, const Screen& s) {
     if (match::my_role() != Role::Hunter || match::get().phase != Phase::Seek) return;
     struct Ping { SearchClue clue; float strength; };
@@ -364,21 +401,25 @@ void draw_taunt_pings(Painter& p, const Screen& s) {
         return a.strength > b.strength;
     });
     std::string text;
+    SearchClue shown;
     bool tracking = false;
     if (!pings.empty()) {
         const auto& ping = pings.front();
+        shown = ping.clue;
         text = std::string("Clue  |  ") + ping.clue.direction + "  |  " + ping.clue.range;
         if (pings.size() > 1) text += "  +" + std::to_string(pings.size() - 1);
     } else {
         SearchClue clue;
         if (!local::tracking_clue(clue)) return;
+        shown = clue;
         text = std::string("Tracking  |  ") + clue.direction + "  |  " + clue.range;
         tracking = true;
     }
     const auto card = centre_card(s.x, s.y, s.w, 55, 25, 284);
     p.card(card, rgba(0, 0, 0, 160));
-    p.centred_fit(text, card.x + card.w * 0.5f, card.y + 6, 12, card.w - 20,
-        tracking ? rgba(120, 230, 255) : rgba(255, 205, 65));
+    const auto color = tracking ? rgba(120, 230, 255) : rgba(255, 205, 65);
+    p.arrow(card.x + 16, card.y + 12, shown, color);
+    p.centred_fit(text, card.x + card.w * 0.5f + 10, card.y + 6, 12, card.w - 44, color);
 }
 
 void draw_scoreboard(Painter& p, const Screen& s) {
@@ -431,6 +472,7 @@ public:
             draw_feed(p, s);
             return;
         }
+        draw_final_markers(p, s);
         draw_taunt_pings(p, s);
         draw_name_tags(p, s);
         draw_treasure(p, s);

@@ -85,10 +85,12 @@ Prop Hunt is the main mode; classic Hide & Seek comes along for free.
 - D-pad down requests a host-confirmed taunt for a point (once per 10 seconds). Hunters hear a
   Link shout and get a broad direction sector and range band for three seconds, with a four-second
   cooldown. There is no exact distance or world marker. Clue categories are captured relative to
-  the hunter's view when the clue arrives and stay fixed. Treasure uses the same rough clue.
-  Stationary clues default to Off. There is just one final clue per surviving hider at 20 seconds
+  the hunter's view when the clue arrives and stay fixed. The HUD draws a matching direction
+  arrow. Treasure uses the same rough clue. Stationary clues default to Off.
+  There is just one exact world marker per surviving hider for three seconds at 20 seconds
   remaining, adjustable from 0–60 (0 disables it), capped at half the hunt for short rounds.
-  A recent clue delays the finale through the cooldown. The roster carries whether the finale
+  The finale bypasses the ordinary clue cooldown to fire on time. Its exact location is captured
+  once; a later pickup cannot overwrite its marker or reveal alert. The roster carries whether the finale
   has fired, so host changes and late joins cannot repeat it. The hider sees a clue alert and
   upcoming-clue countdown. Hunters get a three-second direction/range pulse every 25 seconds.
 - Hunters don't see props' name tags.

@@ -49,7 +49,8 @@ Dusklight's log open (`~/.local/share/TwilitRealm/Dusklight/logs/`); the mod log
 - [ ] Hiders collect once, receive 1 point, and complete the three-pickup challenge for up to +2.
 - [ ] Round 3 gives 2 points per pickup within the bonus cap; a new round resets loot counts. Treasure Off spawns none.
 - [ ] A pickup triggers the local cue and a three-second clue for hunters. The hider sees the reason.
-- [ ] Manual, final and optional stationary clues show the pulsing CLUE SENT strip and countdown.
+- [ ] Manual and optional stationary clues show CLUE SENT. The final marker shows LOCATION REVEALED
+      for three seconds; a subsequent pickup cannot erase that alert or extend the exact reveal.
 - [ ] Spinning in place does not reset the stationary timer; moving far enough does.
 - [ ] Two hiders reaching the same rupee cannot both receive its points. Expired pickups disappear.
 - [ ] Stand on a collected rupee: no replacement appears under the hider, including after 30 seconds.
@@ -59,7 +60,7 @@ Dusklight's log open (`~/.local/share/TwilitRealm/Dusklight/logs/`); the mod log
       decoys use the same cost. Misses that leave the last quarter require two seconds between
       counted attacks; finding a hider restores one heart. Save/restart preserves the choice.
 - [ ] Rules cannot change until Results. Final clue fires once per remaining hider, including
-      after a host change. A recent manual/loot clue delays it through the four-second cooldown.
+      after a host change. A recent manual/loot clue does not delay the exact marker.
 - [ ] Sheathe the hunter sword and use Horse Grass on South Faron to call Epona. No forced sword
       draw interrupts it. Test normal B combat, including Castle Town, climbing and swimming.
 - [ ] Reproduce the reported two-client macOS start: both roles warp to the selected map. Capture
@@ -88,7 +89,9 @@ Dusklight's log open (`~/.local/share/TwilitRealm/Dusklight/logs/`); the mod log
 - [ ] Native touch controls remain available during play, clear of the mod's central status cards.
 - [ ] Nearby names do not overlap each other, alerts or the status cards. Hunters never see prop names.
 - [ ] At most two nearby treasure point labels appear; gems remain visible without a label.
-- [ ] Simultaneous clues show one summary with a count. No exact distance or world marker appears.
+- [ ] Ordinary clues show one summary with a direction arrow and count, without exact distances
+      or world markers. Final reveals alone show precise markers at the reveal locations for
+      three seconds; check 1/4/15 hiders, camera turns, moving away, found players and round resets.
       Turning the camera or moving while a clue is visible does not change its sector/range.
 - [ ] Results with 16 players stay within the screen; long names truncate before score columns.
 - [ ] Control hints default off; the Display toggle shows and hides them cleanly.
@@ -178,9 +181,9 @@ Start round. With 4 players (you + 3 bots) there is one hunter; restart until yo
 - [ ] The hunter bot waits at the spawn during Hide, then chases you during the hunt and tags you:
       "You were found!", you become Link again (and a hunter).
 - [ ] D-pad down taunts: a Link shout plays, the taunt bar fills for four seconds, and the hunter gets
-      a three-second broad direction/range clue, captured relative to their view when it arrives.
+      a three-second broad direction arrow/range clue, captured relative to their view when it arrives.
 - [ ] One final clue starts enabled at 20 seconds remaining. Turning it Off leaves manual,
-      treasure and explicitly enabled stationary clues only. No exact marker appears.
+      treasure and explicitly enabled stationary clues only. Only the final reveal shows an exact marker.
 - [ ] The stationary auto-taunt defaults to Off. Moving more than 120 units horizontally or 80 vertically resets its
       timer; Off disables it, and a shorter setting fires at the selected delay.
 - [ ] Cucco, pumpkin and oil jar have one clean circular shadow with a sensible footprint. Static

@@ -209,9 +209,9 @@ ModResult build_rules(ModContext*, UiWindowHandle, UiElementHandle left, UiEleme
         "Works in both modes. Off by default, so a convincing hiding spot is safe.",
         F_IDLE_TAUNT, kIdleTaunts, std::size(kIdleTaunts));
     add_rule(left, UI_CONTROL_NUMBER, "Final clue",
-        "One rough clue per remaining hider, this many seconds before the hunt ends. "
+        "One exact location marker per remaining hider for three seconds, this many seconds before the hunt ends. "
         "20 by default; 0 disables it for voluntary clues only. In short rounds it occurs no earlier "
-        "than halfway. Recent taunts or pickups delay it to avoid stacking.", F_TAUNT,
+        "than halfway. The marker fires on time even after a recent taunt or pickup.", F_TAUNT,
         nullptr, 0, 0, 60, 5, "seconds remaining (0 = Off)");
     add_rule(left, UI_CONTROL_TOGGLE, "Hunter tracking",
         "D-pad down gives a three-second direction and rough range to the nearest hider. "
@@ -558,8 +558,9 @@ ModResult build_help(ModContext*, UiWindowHandle, UiElementHandle left, UiElemen
         "D-pad up places a decoy. You start with three; extras cost 3 round points.</p></div>", nullptr);
     svc_ui->pane_add_rml(mod_ctx, left,
         "<div class='hs-guide'><h3>Take a risk</h3><p>D-pad down taunts for a point. "
-        "Taunts and rupees give hunters a rough direction and range for 3 seconds. "
-        "You can stay hidden safely; there is just one final clue with 20 seconds left by default. "
+        "Taunts and rupees give hunters a direction arrow and rough range for 3 seconds. "
+        "You can stay hidden safely until the final reveal: one exact location marker for 3 seconds, "
+        "with 20 seconds left by default. The host can adjust or disable it. "
         "Watch the clue alert and relocate afterwards. Rupees give 1 point and a clue; "
         "your third pickup adds up to 2. Every third round gives 2 points per rupee. "
         "Loot and taunts share a 6-point bonus limit each round.</p></div>", nullptr);

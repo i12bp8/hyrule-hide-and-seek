@@ -1,4 +1,4 @@
-# Balance and search rules in v0.3.3
+# Balance and search rules in v0.3.4
 
 Before v0.3.1, the default round awarded a survivor 18 passive points plus 5 for surviving, before
 manual taunts, 3-point treasure, the 5-point pickup challenge and 5-point Treasure Rush pickups.
@@ -50,16 +50,19 @@ Player feedback on v0.3.2 identified too much free, precise information for hunt
 clues, stationary clues, accelerated last-hider clues and tracking all operated together.
 An exact marker also made a risky treasure pickup nearly a guaranteed encounter. The new
 default has no recurring clues and no stationary timer. Each remaining hider gives one final
-clue at 20 seconds left, so the end still gives hunters a chance without repeatedly exposing
+exact location marker for three seconds at 20 seconds left, so the end still gives hunters a chance without repeatedly exposing
 the last survivor. The host can move this window from 0–60 seconds or turn it Off. In a short
-custom hunt the window is capped at half the hunt. A recent clue delays the finale through the
-four-second cooldown; a host change does not repeat it.
+custom hunt the window is capped at half the hunt. The finale bypasses the ordinary clue
+cooldown to fire on time; a host change does not repeat it. Its position stays where the hider
+was revealed, and a later pickup cannot erase or prolong the marker.
 
 Treasure and manual taunts keep their existing limited rewards and now give only a broad
 90-degree direction sector and one of three distance bands. Hunter tracking uses the same
-information. These categories are captured relative to the hunter's camera at the moment of
+information, now with an arrow showing the direction. These categories are captured relative to the hunter's camera at the moment of
 the clue and remain fixed for three seconds. No exact distance, height, name or world marker
-is displayed, and turning the camera does not refine the bearing. Positional audio remains a
+is displayed for ordinary clues, and turning the camera does not refine the bearing. The final
+marker is the only precise reveal, adding urgency while leaving a chance to relocate afterward.
+Positional audio remains a
 useful nearby cue. This makes a pickup a choice between score/decoy funding and giving away a
 search area; a good stationary disguise can simply choose safety.
 
@@ -83,7 +86,7 @@ Automated checks cover a large open area with players at the centre, distant rou
 corner, rejection of an unreachable island, pickup spacing, shared progress for 2–16 players,
 short and long round durations, duplicate claims, infection, spending and host migration.
 New checks cover quiet hiding until the finale, one final clue in both modes on compact/large
-maps, cooldown delays, voluntary-only and optional stationary rules, rule migration and every
+maps, firing on time despite recent taunts, separate exact-reveal feedback, voluntary-only and optional stationary rules, rule migration and every
 miss-cost choice down to the protected last quarter.
 These tests do not validate the real maps' collision or prove a 50% win rate.
 

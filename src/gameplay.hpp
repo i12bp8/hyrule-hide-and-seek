@@ -22,11 +22,16 @@ constexpr bool exhausted_after_miss(uint16_t life, uint8_t quarters) {
 struct SearchClue {
     const char* direction = "Ahead";
     const char* range = "Near";
+    int8_t arrowX = 0;
+    int8_t arrowY = -1; // screen-space up means ahead, down means behind
 };
 inline SearchClue search_clue(float right, float forward, float distance) {
-    return {std::fabs(right) > std::fabs(forward) ? (right > 0 ? "Right" : "Left") :
+    const bool sideways = std::fabs(right) > std::fabs(forward);
+    return {sideways ? (right > 0 ? "Right" : "Left") :
             (forward >= 0 ? "Ahead" : "Behind"),
-            distance < 1200 ? "Near" : distance < 3500 ? "In the area" : "Distant"};
+            distance < 1200 ? "Near" : distance < 3500 ? "In the area" : "Distant",
+            static_cast<int8_t>(sideways ? (right > 0 ? 1 : -1) : 0),
+            static_cast<int8_t>(sideways ? 0 : (forward >= 0 ? -1 : 1))};
 }
 constexpr uint32_t final_clue_window_ms(uint16_t seconds, uint16_t seekSeconds) {
     // A short custom hunt still gets a quiet first half.

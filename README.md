@@ -24,7 +24,8 @@ Use **Dusklight 2.0.3 or newer**. Its official Linux AppImage fixes the missing 
 and HTTPS certificate issue ([release notes](https://github.com/TwilitRealm/dusklight/releases/tag/v2.0.3)).
 Linux, Windows and macOS now use the same WebSocket transport. The default public relay requires it;
 old Linux builds can still use a private Node relay's HTTPS fallback.
-Everyone in a room needs **mod v0.3.3 (protocol 9)**.
+Use **mod v0.3.4 (protocol 9)** for the clue arrows and precise final reveal.
+It shares rooms with v0.3.3, but older hunters will see the older clue display.
 
 ### A round
 
@@ -68,10 +69,11 @@ hunter tracking pulses, starting rounds automatically, and whether the room is l
 publicly, and collectible treasure. Rules are locked during a round.
 
 The default rules give hiders a choice: stay hidden, or risk a clue to earn points from rupees
-and manual taunts. There are no recurring automatic clues. Each surviving hider gives **one final
-clue with 20 seconds remaining**. The host can set this from 0–60 seconds; 0 means voluntary
-clues only. Short custom hunts keep their first half quiet. A recent clue delays the final clue
-until the four-second clue cooldown ends. Stationary clues are optional and default to Off.
+and manual taunts. There are no recurring automatic clues. Each surviving hider gets **one exact
+location marker for three seconds, with 20 seconds remaining**. The host can set this from
+0–60 seconds; 0 means voluntary clues only. Short custom hunts keep their first half quiet.
+The final marker fires on time, even after a recent ordinary clue. It marks the reveal location;
+moving afterward leaves that spot behind. Stationary clues are optional and default to Off.
 These rules work in both game modes, including for the last hider.
 
 Hunters can press D-pad down for a three-second direction and rough range to the nearest hider,
@@ -104,13 +106,16 @@ third round is **Treasure Rush**, with **2 points per rupee**. Treasure and manu
 still reveal a clue but give no points once it is reached.
 
 Each pickup gives hunters a three-second clue: **Ahead / Behind / Left / Right** and
-**Near / In the area / Distant**. Manual taunts, optional stationary clues, the final clue and
-tracking use the same broad information. There are no exact distances, names or world markers.
+**Near / In the area / Distant**, with a visible arrow pointing up, down, left or right.
+Manual taunts, optional stationary clues and tracking use the same broad information, without
+exact distances, names or world markers. The final reveal alone adds a precise world marker.
 Direction is relative to the hunter's view when the clue arrives; direction and range stay fixed
 for its duration, so turning or moving cannot narrow it to an exact position. Hiders can relocate
 after taking a risk. Nearby hunters can still hear the positional taunt.
 
-Hiders see a pulsing **CLUE SENT** alert with the reason and remaining time. An upcoming-clue
+Hiders see a pulsing **CLUE SENT** alert, or **LOCATION REVEALED** for the exact final marker,
+with the reason and remaining time. Picking up another rupee cannot hide or extend that reveal.
+An upcoming-clue
 countdown warns you before the final or optional stationary clue. The host confirms clues for
 everyone; spinning in place or taking tiny steps does not reset an enabled stationary timer.
 
