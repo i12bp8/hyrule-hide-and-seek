@@ -49,6 +49,7 @@ const char* const kHunters[] = {"Auto (map-aware)", "1", "2", "3", "4", "5", "6"
 const char* const kIdleTaunts[] = {
     "Off", "15 seconds", "20 seconds", "30 seconds", "45 seconds", "60 seconds", "90 seconds", "120 seconds"};
 constexpr uint16_t kIdleTauntValues[] = {0, 15, 20, 30, 45, 60, 90, 120};
+const char* const kMissPenalties[] = {"Off", "Quarter heart", "Half heart (recommended)", "Three-quarter heart", "One heart"};
 
 std::vector<const char*>& map_options() {
     static std::vector<const char*> options;
@@ -115,8 +116,8 @@ void get_rule(ModContext*, void* user, UiControlValue* out) {
     case F_HUNTERS: out->int_value = s.hunters; break;
     case F_DECOYS: out->int_value = s.freeDecoys; break;
     case F_JOIN: out->bool_value = s.foundJoinHunters; break;
-    case F_PENALTY: out->bool_value = s.missPenalty; break;
-    case F_TAUNT: out->bool_value = s.autoTaunt; break;
+    case F_PENALTY: out->int_value = s.missPenaltyQuarters; break;
+    case F_TAUNT: out->int_value = s.finalClueSecs; break;
     case F_TRACKING: out->bool_value = s.trackingPulse; break;
     case F_TREASURE: out->bool_value = s.treasure; break;
     case F_IDLE_TAUNT: out->int_value = idle_taunt_option(s.idleTauntSecs); break;
@@ -135,8 +136,8 @@ void set_rule(ModContext*, void* user, const UiControlValue* v) {
     case F_HUNTERS: s.hunters = static_cast<uint8_t>(v->int_value); break;
     case F_DECOYS: s.freeDecoys = static_cast<uint8_t>(v->int_value); break;
     case F_JOIN: s.foundJoinHunters = v->bool_value; break;
-    case F_PENALTY: s.missPenalty = v->bool_value; break;
-    case F_TAUNT: s.autoTaunt = v->bool_value; break;
+    case F_PENALTY: s.missPenaltyQuarters = static_cast<uint8_t>(std::clamp<int64_t>(v->int_value, 0, 4)); break;
+    case F_TAUNT: s.finalClueSecs = static_cast<uint16_t>(std::clamp<int64_t>(v->int_value, 0, 60)); break;
     case F_TRACKING: s.trackingPulse = v->bool_value; break;
     case F_TREASURE: s.treasure = v->bool_value; break;
     case F_IDLE_TAUNT: {
@@ -199,22 +200,27 @@ ModResult build_rules(ModContext*, UiWindowHandle, UiElementHandle left, UiEleme
         F_DECOYS, nullptr, 0, 0, 10, 1);
     add_rule(left, UI_CONTROL_TOGGLE, "Found hiders become hunters",
         "On: a found prop becomes a hunter. Off: they watch until the next round.", F_JOIN);
-    add_rule(left, UI_CONTROL_TOGGLE, "Miss penalty",
-        "A miss costs a quarter heart. At the final quarter, misses impose two seconds of recovery. A find restores one heart.", F_PENALTY);
+    add_rule(left, UI_CONTROL_DROPDOWN, "Miss penalty",
+        "Half a heart by default, including hits on decoys. When a miss leaves the final quarter, "
+        "it adds two seconds of recovery. A confirmed find restores one heart.",
+        F_PENALTY, kMissPenalties, std::size(kMissPenalties));
     add_rule(left, UI_CONTROL_DROPDOWN, "Stationary clue",
         "A hider that has not moved this long automatically taunts. Moving resets the timer. "
-        "Works in both modes; Off disables stationary clues.",
+        "Works in both modes. Off by default, so a convincing hiding spot is safe.",
         F_IDLE_TAUNT, kIdleTaunts, std::size(kIdleTaunts));
-    add_rule(left, UI_CONTROL_TOGGLE, "Automatic clues",
-        "On by default: hiders reveal a three-second clue every 30 seconds (20 on large maps), "
-        "then every 15 seconds in the last minute (12 for the last hider). A manual or stationary taunt also satisfies "
-        "the timer, so clues never stack.", F_TAUNT);
+    add_rule(left, UI_CONTROL_NUMBER, "Final clue",
+        "One rough clue per remaining hider, this many seconds before the hunt ends. "
+        "20 by default; 0 disables it for voluntary clues only. In short rounds it occurs no earlier "
+        "than halfway. Recent taunts or pickups delay it to avoid stacking.", F_TAUNT,
+        nullptr, 0, 0, 60, 5, "seconds remaining (0 = Off)");
     add_rule(left, UI_CONTROL_TOGGLE, "Hunter tracking",
         "D-pad down gives a three-second direction and rough range to the nearest hider. "
-        "25-second cooldown; no name or exact world marker.", F_TRACKING);
+        "25-second cooldown; no name or exact world marker. Direction is relative to your view "
+        "when the pulse starts and stays fixed.", F_TRACKING);
     add_rule(left, UI_CONTROL_TOGGLE, "Treasure rupees",
         "Up to 24 rupees spread across reachable ground. Pickups give 1 point (2 in Treasure Rush); "
-        "the third adds up to 2. Loot and taunts share a 6-point round bonus limit. Each pickup reveals a clue.", F_TREASURE);
+        "the third adds up to 2. Loot and taunts share a 6-point round bonus limit. Each pickup "
+        "gives hunters a rough direction and range for three seconds; no exact marker.", F_TREASURE);
     svc_ui->pane_add_section(mod_ctx, left, "Lobby");
     add_rule(left, UI_CONTROL_TOGGLE, "Automatic rounds",
         "After the scoreboard, a new round starts with new hunters.", F_NEXT);
@@ -552,15 +558,18 @@ ModResult build_help(ModContext*, UiWindowHandle, UiElementHandle left, UiElemen
         "D-pad up places a decoy. You start with three; extras cost 3 round points.</p></div>", nullptr);
     svc_ui->pane_add_rml(mod_ctx, left,
         "<div class='hs-guide'><h3>Take a risk</h3><p>D-pad down taunts for a point. "
-        "Manual and automatic taunts reveal your position to hunters for 3 seconds. "
-        "Watch the reveal alert and move afterwards. Rupees give 1 point and a clue; "
+        "Taunts and rupees give hunters a rough direction and range for 3 seconds. "
+        "You can stay hidden safely; there is just one final clue with 20 seconds left by default. "
+        "Watch the clue alert and relocate afterwards. Rupees give 1 point and a clue; "
         "your third pickup adds up to 2. Every third round gives 2 points per rupee. "
         "Loot and taunts share a 6-point bonus limit each round.</p></div>", nullptr);
     svc_ui->pane_add_rml(mod_ctx, left,
         "<div class='hs-guide'><h3>Hunt</h3><p>Use B to hit disguised hiders or tag nearby "
-        "props while swimming. Misses cost a quarter heart. At the last quarter, a miss "
-        "adds 2 seconds of recovery; finding someone restores a heart. D-pad down tracks "
-        "the nearest hider, with a 25-second cooldown.</p></div>", nullptr);
+        "props while swimming. Misses cost half a heart by default; the host can adjust it. "
+        "A miss that leaves the last quarter adds 2 seconds of recovery; finding someone restores a heart. "
+        "Sheathe your sword to use Horse Grass and other interactions. D-pad down tracks "
+        "the nearest hider, with a 25-second cooldown. Clue directions are relative to your view "
+        "when the clue arrives; turning does not update them.</p></div>", nullptr);
     svc_ui->pane_add_rml(mod_ctx, left,
         "<div class='hs-guide'><h3>Play again</h3><p>Hiders earn up to 12 points across the hunt "
         "and 6 for surviving. Starting hunters share up to 12 capture-progress points and get "

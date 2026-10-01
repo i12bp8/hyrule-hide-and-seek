@@ -666,7 +666,7 @@ int Puppet::execute() {
         if (mCyl.GetTgHitAc() == dComIfGp_getPlayer(0)) {
             if (mDecoy) {
                 // A decoy is deliberately a miss: it disappears, but does not suppress the
-                // hunter's quarter-heart missed-swing penalty. Clear it from our path at once rather
+                // hunter's configured missed-swing penalty. Clear it from our path at once rather
                 // than after the host's round trip; the host's snapshot then deletes it for all.
                 match::report_decoy_hit(mDecoyId);
                 mHiddenUntil = now_ms() + kDecoyHitHideMs;

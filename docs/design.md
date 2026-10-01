@@ -80,12 +80,17 @@ Prop Hunt is the main mode; classic Hide & Seek comes along for free.
   walk-through. A mesh only becomes solid once the local Link is clear of it, so a decoy never traps
   the hider who placed it. Your own disguise never blocks you. While swimming, where the game
   prevents sword use, B performs a close-range prop tag. A sword swing that hits no real hider costs
-  a quarter heart (never the last quarter-heart). Every round starts with five hearts.
-- D-pad down requests a host-confirmed taunt for a point (once per 10 seconds). Hunters hear a Link shout and get a direction, distance and
-  through-scenery world marker for three seconds, with a four-second cooldown. Stationary hiders
-  taunt after 30 seconds by default. Regular clues run every 30 seconds (20 on large maps), then
-  every 15 seconds in the last minute. The last hider gets clues every 12 seconds in the final minute. The hider sees a reveal banner and upcoming-clue countdown. Both systems work in either game mode and share a timer
-  with manual taunts. Hunters get a three-second direction/rough-range pulse every 25 seconds.
+  half a heart by default (host-adjustable from Off to one heart in quarter-heart steps; never
+  the last quarter). Every round starts with five hearts. Hunters can sheathe their sword normally.
+- D-pad down requests a host-confirmed taunt for a point (once per 10 seconds). Hunters hear a
+  Link shout and get a broad direction sector and range band for three seconds, with a four-second
+  cooldown. There is no exact distance or world marker. Clue categories are captured relative to
+  the hunter's view when the clue arrives and stay fixed. Treasure uses the same rough clue.
+  Stationary clues default to Off. There is just one final clue per surviving hider at 20 seconds
+  remaining, adjustable from 0–60 (0 disables it), capped at half the hunt for short rounds.
+  A recent clue delays the finale through the cooldown. The roster carries whether the finale
+  has fired, so host changes and late joins cannot repeat it. The hider sees a clue alert and
+  upcoming-clue countdown. Hunters get a three-second direction/range pulse every 25 seconds.
 - Hunters don't see props' name tags.
 
 ### Hide & Seek

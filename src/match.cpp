@@ -118,7 +118,8 @@ Writer roster_msg() {
         w.u16(p.score);
         w.u16(p.roundPoints);
         w.u8(static_cast<uint8_t>((p.found ? 1 : 0) | (p.ready ? 2 : 0) |
-            (p.startingRole == Role::Hunter ? 4 : 0) | (p.startingRole == Role::Hider ? 8 : 0)));
+            (p.startingRole == Role::Hunter ? 4 : 0) | (p.startingRole == Role::Hider ? 8 : 0) |
+            (p.finalClueGiven ? 16 : 0)));
         w.u8(p.hunterRounds);
         w.u8(p.decoysUsed);
         w.u8(p.rupeesCollected);
@@ -506,10 +507,11 @@ void host_update() {
                 const Player& p = P(id);
                 if (p.present && p.role == Role::Hider && !p.found) {
                     changed = award_survival(id, now) || changed;
-                    uint64_t interval = clue_interval_ms(s_match.map, ms_left());
-                    if (hiders_left() == 1 && ms_left() <= 60000) interval = 12000;
-                    if (s_match.settings.autoTaunt && now - p.lastClueAt >= interval) {
-                        host_clue(id, static_cast<uint8_t>(s_rng() % 6), ClueKind::Regular);
+                    const auto& rules = s_match.settings;
+                    if (now < s_match.phaseEnd && rules.finalClueSecs != 0 && !p.finalClueGiven &&
+                        ms_left() <= final_clue_window_ms(rules.finalClueSecs, rules.seekSecs)) {
+                        host_clue(id, static_cast<uint8_t>(s_rng() % 6), ClueKind::Final);
+                        changed = p.finalClueGiven || changed;
                     } else if (s_match.settings.idleTauntSecs != 0 &&
                         now - std::max(p.lastMovedAt, p.lastClueAt) >= s_match.settings.idleTauntSecs * 1000u) {
                         host_clue(id, static_cast<uint8_t>(s_rng() % 6), ClueKind::Stationary);
@@ -577,6 +579,7 @@ void handle_roster(Reader& r) {
         p.roundPoints = roundPoints;
         p.found = (flags & 1) != 0;
         p.ready = (flags & 2) != 0;
+        p.finalClueGiven = (flags & 16) != 0;
         p.hunterRounds = hunterRounds;
         p.decoysUsed = decoysUsed;
         p.rupeesCollected = rupeesCollected;
@@ -628,11 +631,12 @@ void Settings::write(Writer& w) const {
     w.u16(hideSecs);
     w.u16(seekSecs);
     w.u8(hunters);
-    w.u8(static_cast<uint8_t>((foundJoinHunters ? 1 : 0) | (missPenalty ? 2 : 0) |
-                              (autoTaunt ? 4 : 0) | (autoNext ? 8 : 0) | (isPublic ? 16 : 0) |
+    w.u8(static_cast<uint8_t>((foundJoinHunters ? 1 : 0) | (autoNext ? 8 : 0) | (isPublic ? 16 : 0) |
                               (trackingPulse ? 32 : 0) | (treasure ? 64 : 0)));
     w.u16(idleTauntSecs);
     w.u8(freeDecoys);
+    w.u8(missPenaltyQuarters);
+    w.u16(finalClueSecs);
 }
 
 void Settings::read(Reader& r) {
@@ -645,14 +649,14 @@ void Settings::read(Reader& r) {
     hunters = r.u8();
     const uint8_t f = r.u8();
     foundJoinHunters = f & 1;
-    missPenalty = f & 2;
-    autoTaunt = f & 4;
     autoNext = f & 8;
     isPublic = f & 16;
     trackingPulse = f & 32;
     treasure = f & 64;
     idleTauntSecs = std::clamp<uint16_t>(r.u16(), 0, 600);
     freeDecoys = std::clamp<uint8_t>(r.u8(), 0, 10);
+    missPenaltyQuarters = std::min<uint8_t>(r.u8(), 4);
+    finalClueSecs = std::min<uint16_t>(r.u16(), 60);
 }
 
 // ---- queries ---------------------------------------------------------------------------------
@@ -733,10 +737,10 @@ uint32_t next_clue_ms() {
     const auto& p = P(self());
     if (s_match.phase != Phase::Seek || p.role != Role::Hider || p.found) return UINT32_MAX;
     uint64_t next = UINT64_MAX;
-    if (s_match.settings.autoTaunt) {
-        uint64_t interval = clue_interval_ms(s_match.map, ms_left());
-        if (hiders_left() == 1 && ms_left() <= 60000) interval = 12000;
-        next = p.lastClueAt + interval;
+    if (s_match.settings.finalClueSecs != 0 && !p.finalClueGiven) {
+        next = s_match.phaseEnd - final_clue_window_ms(s_match.settings.finalClueSecs,
+                                                      s_match.settings.seekSecs);
+        next = std::max(next, p.lastClueAt + kTauntCooldownMs);
     }
     if (s_match.settings.idleTauntSecs != 0) next = std::min(next,
         std::max(p.lastMovedAt, p.lastClueAt) + s_match.settings.idleTauntSecs * 1000u);
@@ -851,6 +855,7 @@ void start_round() {
         p.decoysUsed = 0;
         p.rupeesCollected = 0;
         p.finds = 0;
+        p.finalClueGiven = false;
         p.lastTauntAt = p.lastClueAt = p.lastMovedAt = p.revealedUntil = 0;
     }
 
@@ -1082,10 +1087,13 @@ void on_message(uint8_t from, const uint8_t* data, size_t size) {
         break;
     }
 
-    case MSG_SETTINGS:
+    case MSG_SETTINGS: {
         if (!fromHost) break;
-        s_match.settings.read(r);
+        Settings incoming;
+        incoming.read(r);
+        if (r.ok()) s_match.settings = incoming;
         break;
+    }
 
     case MSG_ROSTER:
         if (fromHost) handle_roster(r);
@@ -1161,6 +1169,7 @@ void on_message(uint8_t from, const uint8_t* data, size_t size) {
             id < 1 || id > kMaxPlayers || kind > static_cast<uint8_t>(ClueKind::Treasure) ||
             P(id).role != Role::Hider || P(id).found) break;
         P(id).lastClueAt = now_ms(); P(id).revealedUntil = now_ms() + kTauntRevealMs;
+        if (kind == static_cast<uint8_t>(ClueKind::Final)) P(id).finalClueGiven = true;
         if (s_hooks.taunt) s_hooks.taunt(id, sound, static_cast<ClueKind>(kind));
         break;
     }

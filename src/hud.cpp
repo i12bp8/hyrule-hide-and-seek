@@ -237,17 +237,17 @@ void draw_hider_feedback(Painter& p, const Screen& s) {
     if (me.revealedUntil > now) {
         const auto kind = local::taunt_kind();
         const char* reason = kind == ClueKind::Manual ? "Manual taunt" : kind == ClueKind::Stationary ?
-            "Stayed still too long" : kind == ClueKind::Treasure ? "Treasure pickup" : "Automatic taunt";
+            "Stayed still too long" : kind == ClueKind::Treasure ? "Treasure pickup" : "Final clue";
         const auto card = centre_card(s.x, s.y, s.w, 55, 39, 284);
         const uint8_t opacity = static_cast<uint8_t>(195 + 15 * std::sin(now % 1200 * 0.005236f));
         p.card(card, rgba(120, 45, 15, opacity));
         p.box(card.x + 1, card.y + 6, card.x + 3, card.y + card.h - 6, rgba(255, 205, 65));
-        p.centred_fit("REVEALED  " + std::to_string((me.revealedUntil - now + 999) / 1000) + "s", cx, card.y + 5, 14, card.w - 22, rgba(255, 230, 140));
+        p.centred_fit("CLUE SENT  " + std::to_string((me.revealedUntil - now + 999) / 1000) + "s", cx, card.y + 5, 14, card.w - 22, rgba(255, 230, 140));
         p.centred_fit(reason, cx, card.y + 25, 10, card.w - 22, rgba(255, 235, 195));
     } else {
         const auto next = match::next_clue_ms();
         if (next != UINT32_MAX) {
-            const std::string text = (next <= 3000 ? "Taunt in " : "Next clue  ") + std::to_string((next + 999) / 1000) + "s";
+            const std::string text = "Clue in " + std::to_string((next + 999) / 1000) + "s";
             p.centred_fit(text, cx, s.y + 56, next <= 3000 ? 13 : 10, s.w * 0.56f, next <= 3000 ? rgba(255, 170, 90) : rgba(240, 230, 180));
         }
     }
@@ -353,56 +353,32 @@ void draw_name_tags(Painter& p, const Screen& s) {
 
 void draw_taunt_pings(Painter& p, const Screen& s) {
     if (match::my_role() != Role::Hunter || match::get().phase != Phase::Seek) return;
-    const auto* view = dComIfGd_getView();
-    if (view == nullptr) return;
-    struct Ping { cXyz position; Vec camera; float strength; float distance; };
+    struct Ping { SearchClue clue; float strength; };
     std::vector<Ping> pings;
     for (int id = 1; id <= kMaxPlayers; ++id) {
-        cXyz position; const auto strength = local::taunt_ping(id, position);
+        SearchClue clue; const auto strength = local::taunt_ping(id, clue);
         if (strength <= 0) continue;
-        Vec camera; mDoLib_pos2camera(&position, &camera);
-        pings.push_back({position, camera, strength, (position - view->lookat.eye).abs()});
+        pings.push_back({clue, strength});
     }
     std::sort(pings.begin(), pings.end(), [](const Ping& a, const Ping& b) {
-        return a.strength != b.strength ? a.strength > b.strength : a.distance < b.distance;
+        return a.strength > b.strength;
     });
-    const auto direction = [](const Vec& camera) {
-        const float side = -camera.z * 0.35f;
-        return camera.z > -1 ? "Behind" : camera.x > side ? "Right" : camera.x < -side ? "Left" : "Ahead";
-    };
     std::string text;
     bool tracking = false;
     if (!pings.empty()) {
         const auto& ping = pings.front();
-        text = std::string("Clue  |  ") + direction(ping.camera) + "  |  " +
-            std::to_string(std::max(1, static_cast<int>(std::lround(ping.distance / 100)))) + "m";
+        text = std::string("Clue  |  ") + ping.clue.direction + "  |  " + ping.clue.range;
         if (pings.size() > 1) text += "  +" + std::to_string(pings.size() - 1);
     } else {
-        cXyz at;
-        if (!local::tracking_clue(at)) return;
-        Vec camera; mDoLib_pos2camera(&at, &camera);
-        const float distance = (at - view->lookat.eye).abs();
-        text = std::string("Tracking  |  ") + direction(camera) + "  |  " +
-            (distance < 1200 ? "Near" : distance < 3500 ? "Warm" : "Distant");
+        SearchClue clue;
+        if (!local::tracking_clue(clue)) return;
+        text = std::string("Tracking  |  ") + clue.direction + "  |  " + clue.range;
         tracking = true;
     }
     const auto card = centre_card(s.x, s.y, s.w, 55, 25, 284);
     p.card(card, rgba(0, 0, 0, 160));
     p.centred_fit(text, card.x + card.w * 0.5f, card.y + 6, 12, card.w - 20,
         tracking ? rgba(120, 230, 255) : rgba(255, 205, 65));
-    int drawn = 0;
-    for (const auto& ping : pings) {
-        if (drawn == 3) break;
-        if (ping.camera.z > -1) continue;
-        cXyz at = ping.position; at.y += 175;
-        Vec out; mDoLib_project(&at, &out);
-        const Rect marker{out.x - 8, out.y - 16, 16, 20};
-        if (!reserve_label(marker, s)) continue;
-        const auto alpha = static_cast<uint8_t>(130 + 100 * ping.strength);
-        p.card(marker, rgba(0, 0, 0, alpha));
-        p.centered("!", out.x, marker.y + 4, 13, rgba(255, 205, 65, alpha));
-        ++drawn;
-    }
 }
 
 void draw_scoreboard(Painter& p, const Screen& s) {

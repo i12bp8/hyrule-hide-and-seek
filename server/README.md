@@ -8,7 +8,7 @@ their home IP addresses to other players or accept incoming connections.
 Use Dusklight **2.0.3 or newer**. The official Linux WebSocket backend and HTTPS CA fix are in
 [v2.0.3](https://github.com/TwilitRealm/dusklight/releases/tag/v2.0.3). The public Worker disables
 legacy HTTP polling and responds with an actionable upgrade message. A private Node relay retains
-the fallback for older clients. Everyone in a room must use the same game protocol (currently 8).
+the fallback for older clients. Everyone in a room must use the same game protocol (currently 9).
 
 ## Deploy with Wrangler
 

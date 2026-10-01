@@ -110,9 +110,9 @@ static void host_room(int players) {
     reset_net(players);
     match::on_welcome();
     match::Settings defaults;
-    CHECK(defaults.autoTaunt && defaults.trackingPulse);
+    CHECK(defaults.finalClueSecs == 20 && defaults.trackingPulse && defaults.missPenaltyQuarters == 2);
     CHECK(defaults.hideSecs == 30 && defaults.seekSecs == 180);
-    CHECK(defaults.idleTauntSecs == 30);
+    CHECK(defaults.idleTauntSecs == 0);
     CHECK(defaults.freeDecoys == 3);
     match::Settings s;
     s.map = 0;
@@ -195,8 +195,8 @@ static void test_protocol_roundtrip() {
     s.hideSecs = 5;      // clamps to 10
     s.seekSecs = 60000;  // clamps to 1800
     s.hunters = 2;
-    s.missPenalty = false;
-    s.autoTaunt = true;
+    s.missPenaltyQuarters = 0;
+    s.finalClueSecs = 35;
     s.idleTauntSecs = 90;
     s.freeDecoys = 99;  // clamps to the host-visible 0..10 range
     s.isPublic = true;
@@ -210,9 +210,21 @@ static void test_protocol_roundtrip() {
     CHECK(!t.trackingPulse);
     CHECK(t.mode == Mode::HideAndSeek && t.map == kRandomMap && t.hunters == 2);
     CHECK(t.hideSecs == 10 && t.seekSecs == 1800);
-    CHECK(!t.missPenalty && t.isPublic && t.foundJoinHunters && t.autoTaunt && t.autoNext);
+    CHECK(t.missPenaltyQuarters == 0 && t.isPublic && t.foundJoinHunters && t.finalClueSecs == 35 && t.autoNext);
     CHECK(t.idleTauntSecs == 90);
     CHECK(t.freeDecoys == 10);
+
+    // A partial settings packet must not turn a saved penalty/finale Off or partially apply it.
+    host_room(2);
+    const auto original = settings::format_rules(match::get().settings);
+    for (size_t length = 1; length < sw.bytes().size(); ++length) {
+        match::on_message(g_fake.host, sw.bytes().data(), length);
+        CHECK(settings::format_rules(match::get().settings) == original);
+    }
+    s.missPenaltyQuarters = 255; s.finalClueSecs = 65535;
+    Writer extreme(MSG_SETTINGS); s.write(extreme);
+    deliver(g_fake.host, extreme.bytes());
+    CHECK(match::get().settings.missPenaltyQuarters == 4 && match::get().settings.finalClueSecs == 60);
 }
 
 static void test_decoy_economy_and_validation() {
@@ -752,17 +764,17 @@ static void test_props() {
 static void test_balanced_rules() {
     std::printf("balanced rules and saved-rule migration\n");
     const auto fresh = settings::parse_rules("");
-    CHECK(fresh.hideSecs == 30 && fresh.seekSecs == 180 && fresh.autoTaunt);
-    CHECK(fresh.trackingPulse && fresh.idleTauntSecs == 30);
+    CHECK(fresh.hideSecs == 30 && fresh.seekSecs == 180 && fresh.finalClueSecs == 20);
+    CHECK(fresh.trackingPulse && fresh.idleTauntSecs == 0 && fresh.missPenaltyQuarters == 2);
     const auto upgraded = settings::parse_rules(settings::upgrade_rules("0,14,45,240,0,27,60,10"));
     CHECK(upgraded.hideSecs == 30 && upgraded.seekSecs == 180);
-    CHECK(upgraded.autoTaunt && upgraded.trackingPulse && upgraded.idleTauntSecs == 20);
+    CHECK(upgraded.finalClueSecs == 20 && upgraded.trackingPulse && upgraded.idleTauntSecs == 20);
     CHECK(upgraded.map == 14 && upgraded.isPublic && upgraded.freeDecoys == 10);
     const auto legacy = settings::parse_rules(settings::upgrade_rules("0,255,45,240,0,11"));
-    CHECK(legacy.hideSecs == 30 && legacy.autoTaunt && legacy.idleTauntSecs == 20);
+    CHECK(legacy.hideSecs == 30 && legacy.finalClueSecs == 20 && legacy.idleTauntSecs == 20);
     const auto custom = settings::parse_rules(settings::upgrade_rules("1,9,75,360,3,16,0,7"));
     CHECK(custom.hideSecs == 75 && custom.seekSecs == 360 && custom.hunters == 3);
-    CHECK(!custom.autoTaunt && !custom.missPenalty && custom.idleTauntSecs == 0);
+    CHECK(custom.finalClueSecs == 0 && custom.missPenaltyQuarters == 0 && custom.idleTauntSecs == 0);
     CHECK(custom.mode == Mode::HideAndSeek && custom.map == 9 && custom.freeDecoys == 7);
     auto changed = fresh;
     changed.trackingPulse = false;
@@ -771,16 +783,39 @@ static void test_balanced_rules() {
     const auto stock = settings::parse_rules(settings::upgrade_balance_rules("0,14,30,180,0,111,20,3"));
     CHECK(stock.idleTauntSecs == 30 && stock.map == 14);
     const auto kept = settings::parse_rules(settings::upgrade_balance_rules("1,9,75,360,3,16,20,7"));
-    CHECK(kept.idleTauntSecs == 20 && kept.seekSecs == 360 && !kept.autoTaunt && kept.freeDecoys == 7);
-    CHECK(life_after_miss(20) == 19 && life_after_miss(2) == 1 && life_after_miss(1) == 1);
+    CHECK(kept.idleTauntSecs == 20 && kept.seekSecs == 360 && kept.finalClueSecs == 0 && kept.freeDecoys == 7);
+    const auto search = settings::parse_rules(settings::upgrade_search_rules("0,14,30,180,0,111,30,3"));
+    CHECK(search.idleTauntSecs == 0 && search.finalClueSecs == 20 && search.missPenaltyQuarters == 2);
+    CHECK(search.map == 14 && search.foundJoinHunters && search.treasure);
+    const auto customSearch = settings::parse_rules(settings::upgrade_search_rules("1,9,75,360,3,16,20,7"));
+    CHECK(customSearch.idleTauntSecs == 20 && customSearch.finalClueSecs == 0 && customSearch.missPenaltyQuarters == 0);
+    const auto pipeline = settings::upgrade_balance_rules(settings::upgrade_treasure_rules(
+        settings::upgrade_rules("0,255,45,240,0,11")));
+    CHECK(settings::parse_rules(settings::upgrade_search_rules(pipeline, true)).idleTauntSecs == 0);
+    changed.idleTauntSecs = 30; changed.missPenaltyQuarters = 4; changed.finalClueSecs = 0;
+    const auto explicitRules = settings::format_rules(changed);
+    CHECK(settings::upgrade_search_rules(explicitRules) == explicitRules);
+    CHECK(settings::parse_rules(explicitRules).missPenaltyQuarters == 4);
+    CHECK(settings::parse_rules("0,255,30,180,0,111,0,3,99,999").missPenaltyQuarters == 4);
+    CHECK(settings::parse_rules("0,255,30,180,0,111,0,3,-1,-1").finalClueSecs == 0);
+    CHECK(life_after_miss(20) == 18 && life_after_miss(2) == 1 && life_after_miss(1) == 1);
     CHECK(life_after_miss(0) == 0 && kArenaHeartPieces / 5 * 4 == kArenaLife);
+    for (uint8_t penalty = 0; penalty <= 4; ++penalty) {
+        uint16_t life = kArenaLife;
+        for (int miss = 0; miss < 30; ++miss) {
+            const auto next = life_after_miss(life, penalty);
+            CHECK(next >= 1 && next <= life);
+            CHECK(penalty == 0 ? next == life : (life == 1 || next < life));
+            CHECK(exhausted_after_miss(life, penalty) == (penalty != 0 && next == 1));
+            life = next;
+        }
+        CHECK(life == (penalty == 0 ? kArenaLife : 1));
+    }
     CHECK(kTauntRevealMs == 3000 && kTauntCooldownMs == 4000);
     for (int n = 2; n <= kMaxPlayers; ++n) {
         for (int map = 0; map < map_count(); ++map) {
             const int hunters = recommended_hunters(n, map);
             CHECK(hunters >= 1 && hunters < n);
-            CHECK(clue_interval_ms(map, 60000) == 15000);
-            CHECK(clue_interval_ms(map, 180000) == (map_info(map).large ? 20000 : 30000));
         }
     }
     CHECK(recommended_hunters(4, 0) == 1 && recommended_hunters(4, 9) == 2);
@@ -801,6 +836,102 @@ static void test_balanced_rules() {
     match::set_settings(rules);
     match::start_round();
     CHECK(match::count_role(Role::Hunter) == 1);
+}
+
+static void test_search_clues() {
+    std::printf("voluntary search clues and one final clue across modes and maps\n");
+    CHECK(std::string(search_clue(10, 100, 1199).direction) == "Ahead");
+    CHECK(std::string(search_clue(100, 10, 1200).direction) == "Right");
+    CHECK(std::string(search_clue(-100, 10, 3500).direction) == "Left");
+    CHECK(std::string(search_clue(10, -100, 2000).direction) == "Behind");
+    CHECK(std::string(search_clue(10, 100, 1199).range) == "Near");
+    CHECK(std::string(search_clue(10, 100, 1200).range) == "In the area");
+    CHECK(std::string(search_clue(10, 100, 3500).range) == "Distant");
+    CHECK(final_clue_window_ms(20, 180) == 20000 && final_clue_window_ms(60, 30) == 15000);
+    for (Mode mode : {Mode::PropHunt, Mode::HideAndSeek}) {
+        for (int map : {0, 9}) {
+            host_room(4);
+            auto rules = match::get().settings;
+            rules.mode = mode; rules.map = map; rules.seekSecs = 180;
+            match::set_settings(rules); match::start_round();
+            const char* stage = map_info(map).stage;
+            everyone_ready(4, stage); advance(21000);
+            CHECK(match::get().phase == Phase::Seek);
+            const auto end = match::get().phaseEnd;
+            const auto tick = [&](uint64_t at) {
+                s_now = at;
+                for (int id = 1; id <= 4; ++id)
+                    deliver(id, state_msg(stage, id * 1000.0f, 0, 0));
+                match::update();
+            };
+            g_fake.sent.clear();
+            tick(end - 90000); // no movement and no regular/stationary reveal by default
+            tick(end - 60000); // last minute does not accelerate clues
+            tick(end - 20001);
+            CHECK(count_sent(MSG_CLUE) == 0);
+            tick(end - 20000);
+            const int hiders = match::hiders_left();
+            CHECK(count_sent(MSG_CLUE) == hiders);
+            for (int id = 1; id <= 4; ++id) {
+                if (match::player(id).role == Role::Hider)
+                    CHECK(match::player(id).finalClueGiven && match::player(id).revealedUntil == s_now + kTauntRevealMs);
+            }
+            tick(end - 15000); tick(end - 10000);
+            CHECK(count_sent(MSG_CLUE) == hiders);
+            CHECK(match::next_clue_ms() == UINT32_MAX);
+            // A promoted host carries the roster's flag and does not repeat the finale.
+            g_fake.self = g_fake.host = 2; match::on_host_changed(2);
+            tick(end - 5000);
+            CHECK(count_sent(MSG_CLUE) == hiders);
+            match::end_round(); match::start_round();
+            for (int id = 1; id <= 4; ++id) CHECK(!match::player(id).finalClueGiven);
+        }
+    }
+
+    // A recent manual clue delays the final clue; it cannot suppress the finale forever.
+    host_room(2);
+    auto rules = match::get().settings; rules.seekSecs = 180;
+    match::set_settings(rules); match::start_round();
+    const char* stage = map_info(match::get().map).stage;
+    everyone_ready(2, stage); advance(21000);
+    const auto end = match::get().phaseEnd;
+    const int hider = hider_id();
+    const auto fresh = [&] { deliver(hider, state_msg(stage, 0, 0, 0)); };
+    s_now = end - 21000; fresh();
+    Writer manual(MSG_TAUNT); manual.u32(match::get().round); manual.u8(0);
+    deliver(hider, manual.bytes());
+    g_fake.sent.clear();
+    s_now = end - 20000; fresh(); match::update();
+    CHECK(count_sent(MSG_CLUE) == 0 && !match::player(hider).finalClueGiven);
+    g_fake.self = hider;
+    CHECK(match::next_clue_ms() == 3000);
+    g_fake.self = g_fake.host;
+    s_now = end - 17000; fresh(); match::update();
+    CHECK(count_sent(MSG_CLUE) == 1 && match::player(hider).finalClueGiven);
+
+    // Off means quiet hiding for the entire hunt, but deliberate taunts remain available.
+    host_room(2); rules = match::get().settings; rules.finalClueSecs = 0;
+    match::set_settings(rules); match::start_round();
+    stage = map_info(match::get().map).stage;
+    everyone_ready(2, stage); advance(21000);
+    s_now = match::get().phaseEnd - 1000;
+    const int quiet = hider_id(); deliver(quiet, state_msg(stage, 0, 0, 0));
+    g_fake.sent.clear(); match::update();
+    CHECK(count_sent(MSG_CLUE) == 0);
+    Writer voluntary(MSG_TAUNT); voluntary.u32(match::get().round); voluntary.u8(0);
+    deliver(quiet, voluntary.bytes());
+    CHECK(count_sent(MSG_CLUE) == 1);
+
+    // Stationary pressure is still an explicit host option.
+    host_room(2); rules = match::get().settings;
+    rules.finalClueSecs = 0; rules.idleTauntSecs = 15;
+    match::set_settings(rules); match::start_round();
+    stage = map_info(match::get().map).stage;
+    everyone_ready(2, stage); advance(21000);
+    const int idle = hider_id(); deliver(idle, state_msg(stage, 0, 0, 0));
+    g_fake.sent.clear(); advance(16000);
+    deliver(idle, state_msg(stage, 0, 0, 0)); match::update();
+    CHECK(count_sent(MSG_CLUE) == 1 && !match::player(idle).finalClueGiven);
 }
 
 static void test_exit_collision() {
@@ -896,7 +1027,7 @@ static void test_treasure_and_clues() {
     deliver(static_cast<uint8_t>(hider == g_fake.host ? hunter : hider), forged.bytes());
     CHECK(match::player(hunter).revealedUntil == 0);
     advance(31000); fresh(hider, 2100); match::update();
-    CHECK(match::player(hider).revealedUntil > s_now); // host, rather than hider, enforces automatic clue
+    CHECK(match::player(hider).revealedUntil == reveal); // no recurring reveal after hiding quietly
     const auto before = match::player(hider).roundPoints;
     CHECK(before == points + 3); // manual bonus + two objective points, no automatic-taunt points
     CHECK(match::spawn_rupee(2800, 0, 0));
@@ -1210,6 +1341,7 @@ int main() {
     test_maps();
     test_props();
     test_balanced_rules();
+    test_search_clues();
     test_exit_collision();
     std::printf("%d checks, %d failed\n", s_checks, s_failed);
     return s_failed == 0 ? 0 : 1;

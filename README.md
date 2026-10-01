@@ -24,7 +24,7 @@ Use **Dusklight 2.0.3 or newer**. Its official Linux AppImage fixes the missing 
 and HTTPS certificate issue ([release notes](https://github.com/TwilitRealm/dusklight/releases/tag/v2.0.3)).
 Linux, Windows and macOS now use the same WebSocket transport. The default public relay requires it;
 old Linux builds can still use a private Node relay's HTTPS fallback.
-Everyone in a room needs **mod v0.3.1 (protocol 8)**.
+Everyone in a room needs **mod v0.3.3 (protocol 9)**.
 
 ### A round
 
@@ -43,7 +43,7 @@ Everyone in a room needs **mod v0.3.1 (protocol 8)**.
 | **D-pad left** | Props: previous prop |
 | **D-pad up** | Props: place a decoy during Hide or Hunt |
 | **D-pad down** | Hiders: taunt (3 s reveal, 4 s cooldown; +1 point every 10 s at most). Hunters: tracking pulse. |
-| **B** | Hunters: swing; while swimming, tag a nearby prop. A miss costs a quarter heart; exhaustion adds a 2 s attack recovery. |
+| **B** | Hunters: swing; while swimming, tag a nearby prop. A miss costs half a heart by default; exhaustion adds a 2 s attack recovery. |
 
 There are 57 selectable props drawn from across Hyrule: pots, crates, furniture, village signs and
 targets, forest plants, mountain rocks, Zora water props, plus a walking cucco, Ordon Ranch goats, Hidden Village/Ordon/Castle Town cats,
@@ -63,20 +63,26 @@ no hunter points and deliberately count as a missed swing.
 
 Mode (Prop Hunt / Hide & Seek), map (or a random one every round), hiding and round time, number of
 hunters, whether found props join the hunters, the miss penalty, how long a prop may stay still
-before automatically taunting (30 seconds by default, or Off), free decoys per hider, regular
-taunt clues, hunter tracking pulses, starting rounds automatically, and whether the room is listed
+before automatically taunting (Off by default), free decoys per hider, the final clue timer,
+hunter tracking pulses, starting rounds automatically, and whether the room is listed
 publicly, and collectible treasure. Rules are locked during a round.
 
-The default rules keep the hunt moving: automatic clues every 30 seconds (20 on large maps),
-then every 15 seconds in the last minute (12 seconds for the last hider). Each clue lasts three seconds. Manual and stationary
-taunts satisfy the same timer, so clues don't stack. These work in both game modes.
+The default rules give hiders a choice: stay hidden, or risk a clue to earn points from rupees
+and manual taunts. There are no recurring automatic clues. Each surviving hider gives **one final
+clue with 20 seconds remaining**. The host can set this from 0–60 seconds; 0 means voluntary
+clues only. Short custom hunts keep their first half quiet. A recent clue delays the final clue
+until the four-second clue cooldown ends. Stationary clues are optional and default to Off.
+These rules work in both game modes, including for the last hider.
 
 Hunters can press D-pad down for a three-second direction and rough range to the nearest hider,
 with a 25-second cooldown. It gives no name or exact marker. Auto hunter counts round up to one
 per four players on compact maps and one per three on large maps, leaving at least one hider.
 Random uses compact maps with fewer than six players; any large map can still be selected.
-Everyone starts each round with five hearts. A miss preserves the final quarter but at that
-point imposes two seconds before another hit can count; a confirmed find restores one heart.
+Everyone starts each round with five hearts. Misses and hits on decoys cost **half a heart** by
+default. The host can choose Off, a quarter, half, three quarters, or one heart. A miss preserves
+the final quarter; when it leaves that quarter, it imposes two seconds before another hit can
+count. A confirmed find restores one heart. Hunters can sheathe their sword normally to use
+Horse Grass, call Epona, and interact with the map.
 The Rules tab's **Use recommended rules** button restores this balance while keeping your mode,
 chosen map and public-room preference. Existing stock rules upgrade automatically; custom rules
 are retained. Old stock decoy allowances migrate from five to three.
@@ -97,10 +103,16 @@ third round is **Treasure Rush**, with **2 points per rupee**. Treasure and manu
 **6-point bonus limit per round**. Spending on decoys does not reset that limit; further pickups
 still reveal a clue but give no points once it is reached.
 
-Each pickup gives hunters a three-second clue. Hiders see a pulsing **REVEALED** alert
-with the reason and remaining reveal time. The same feedback appears for manual, regular and
-stationary taunts. An upcoming-clue countdown warns you before automatic taunts. The host confirms
-clues for everyone; spinning in place or taking tiny steps does not reset the stationary timer.
+Each pickup gives hunters a three-second clue: **Ahead / Behind / Left / Right** and
+**Near / In the area / Distant**. Manual taunts, optional stationary clues, the final clue and
+tracking use the same broad information. There are no exact distances, names or world markers.
+Direction is relative to the hunter's view when the clue arrives; direction and range stay fixed
+for its duration, so turning or moving cannot narrow it to an exact position. Hiders can relocate
+after taking a risk. Nearby hunters can still hear the positional taunt.
+
+Hiders see a pulsing **CLUE SENT** alert with the reason and remaining time. An upcoming-clue
+countdown warns you before the final or optional stationary clue. The host confirms clues for
+everyone; spinning in place or taking tiny steps does not reset an enabled stationary timer.
 
 ### Clean HUD and mobile menus
 
@@ -183,7 +195,7 @@ free indefinitely. See [capacity and quota estimates](server/README.md#free-tier
 ### Tests
 
 ```sh
-tests/run.sh                    # rules, balance, saved settings, interpolation and layout (4,300+ checks)
+tests/run.sh                    # rules, balance, saved settings, interpolation and layout (4,500+ checks)
 cd server && npm install && npm test   # the relay and the bots
 ```
 

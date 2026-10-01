@@ -57,9 +57,4 @@ int recommended_hunters(int players, int map) {
     return std::clamp((players + perHunter - 1) / perHunter, 1, players - 1);
 }
 
-uint64_t clue_interval_ms(int map, uint32_t remainingMs) {
-    if (remainingMs <= 60000) return 15000;
-    return map_info(map).large ? 20000 : 30000;
-}
-
 }  // namespace hs

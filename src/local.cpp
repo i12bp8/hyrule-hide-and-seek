@@ -23,6 +23,7 @@
 #include "f_op/f_op_actor_mng.h"
 #include "m_Do/m_Do_audio.h"
 #include "m_Do/m_Do_controller_pad.h"
+#include "m_Do/m_Do_lib.h"
 
 #include <cmath>
 #include <cstring>
@@ -78,7 +79,7 @@ uint8_t s_confirmedFinds = 0;
 uint64_t s_lastDecoy = 0;
 
 struct TauntPing {
-    cXyz position{0.0f, 0.0f, 0.0f};
+    SearchClue clue;
     uint64_t at = 0;
 };
 TauntPing s_tauntPings[kSlots];
@@ -94,7 +95,7 @@ uint64_t s_lastSwordCheck = 0;
 uint64_t s_lastColorCheck = 0;
 uint64_t s_lastTracking = 0;
 bool s_haveTracking = false;
-cXyz s_trackingPosition{0.0f, 0.0f, 0.0f};
+SearchClue s_trackingClue;
 bool s_roundHealth = false;
 u8 s_previousMaxLife = 0;
 u16 s_previousLife = 0;
@@ -104,6 +105,15 @@ std::mt19937 s_rng{std::random_device{}()};
 daAlink_c* link() {
     fopAc_ac_c* p = dComIfGp_getPlayer(0);
     return p != nullptr && fopAcM_GetName(p) == fpcNm_ALINK_e ? static_cast<daAlink_c*>(p) : nullptr;
+}
+
+SearchClue capture_clue(const cXyz& position) {
+    const auto* view = dComIfGd_getView();
+    if (view == nullptr) return {};
+    cXyz at = position;
+    Vec camera;
+    mDoLib_pos2camera(&at, &camera);
+    return search_clue(camera.x, -camera.z, (at - view->lookat.eye).abs());
 }
 
 bool playing_prop_hunt() {
@@ -322,11 +332,8 @@ void hunter_controls(daAlink_c* l) {
     if (now - s_lastSwordCheck > 500) {
         s_lastSwordCheck = now;
         ensure_hunter_sword();
-        // B normally refuses even to draw the sword in Castle Town. Keep it readied during the
-        // hunt as a second line of defence in case that stage check was inlined by a game build.
-        if (m.phase == Phase::Seek && l->mEquipItem != 0x103 && !l->checkEquipAnime()) {
-            l->swordEquip(TRUE);
-        }
+        // Keep the sword available, but let the player draw and sheathe it normally. Forcing it
+        // out every half second interrupted Horse Grass, climbing and other map interactions.
     }
     // Backup for the setCutType hook, in case the game inlined that call: a new cut type is a
     // new swing.
@@ -339,11 +346,11 @@ void hunter_controls(daAlink_c* l) {
     s_lastCutType = cut;
     if (s_swinging && now - s_swingAt > kSwingWindowMs) {
         s_swinging = false;
-        if (!s_swingHit && m.settings.missPenalty && playing_prop_hunt() && m.phase == Phase::Seek) {
+        if (!s_swingHit && m.settings.missPenaltyQuarters != 0 && playing_prop_hunt() && m.phase == Phase::Seek) {
             // Current life is measured in quarters. Keep the final quarter to avoid a game over.
             const u16 life = dComIfGs_getLife();
-            dComIfGs_setLife(life_after_miss(life));
-            if (life <= 2) s_attackReadyAt = now + 2000;
+            dComIfGs_setLife(life_after_miss(life, m.settings.missPenaltyQuarters));
+            if (exhausted_after_miss(life, m.settings.missPenaltyQuarters)) s_attackReadyAt = now + 2000;
             play_at(Z2SE_SY_CURSOR_CANCEL, &l->current.pos);
         }
     }
@@ -366,7 +373,7 @@ void hunter_controls(daAlink_c* l) {
             const float distance = (at - l->current.pos).abs();
             if (nearest < 0.0f || distance < nearest) {
                 nearest = distance;
-                s_trackingPosition = at;
+                s_trackingClue = capture_clue(at);
             }
         }
         if (nearest >= 0.0f) {
@@ -598,14 +605,14 @@ uint32_t tracking_cooldown_secs() {
     return static_cast<uint32_t>((kTrackingCooldownMs - (now_ms() - s_lastTracking) + 999) / 1000);
 }
 
-bool tracking_clue(cXyz& position) {
+bool tracking_clue(SearchClue& clue) {
     if (!s_haveTracking || match::my_role() != Role::Hunter || match::get().phase != Phase::Seek ||
         !match::get().settings.trackingPulse || now_ms() - s_lastTracking >= kTrackingRevealMs) return false;
-    position = s_trackingPosition;
+    clue = s_trackingClue;
     return true;
 }
 
-float taunt_ping(int id, cXyz& position) {
+float taunt_ping(int id, SearchClue& clue) {
     if (id < 1 || id > kMaxPlayers || match::my_role() != Role::Hunter ||
         match::get().phase != Phase::Seek) {
         return 0.0f;
@@ -614,7 +621,7 @@ float taunt_ping(int id, cXyz& position) {
     if (ping.at == 0) return 0.0f;
     const uint64_t age = now_ms() - ping.at;
     if (age >= kTauntRevealMs) return 0.0f;
-    position = ping.position;
+    clue = ping.clue;
     return 1.0f - static_cast<float>(age) / static_cast<float>(kTauntRevealMs);
 }
 
@@ -649,7 +656,7 @@ void play_taunt(uint8_t from, uint8_t sound, ClueKind kind) {
     }
     play_at(kTaunts[sound % kTauntCount], &feet);
     if (match::my_role() == Role::Hunter && match::get().phase == Phase::Seek) {
-        s_tauntPings[from] = {feet, now_ms()};
+        s_tauntPings[from] = {capture_clue(feet), now_ms()};
         // The voice remains positional; this cue makes sure a distant taunt is not silently lost.
         play_at(Z2SE_SY_HINT_BUTTON_BLINK, nullptr);
     }

@@ -31,11 +31,11 @@ struct Settings {
     uint16_t seekSecs = 180;
     uint8_t hunters = 0;  // 0 = map-aware, one per three/four players
     bool foundJoinHunters = true;
-    bool missPenalty = true;
-    bool autoTaunt = true;
+    uint8_t missPenaltyQuarters = 2;  // 0 = Off; 1..4 = quarter to one heart
+    uint16_t finalClueSecs = 20;  // one clue per remaining hider; 0 disables it
     bool trackingPulse = true;
     bool treasure = true;
-    uint16_t idleTauntSecs = 30;  // 0 disables stationary-hider auto-taunts
+    uint16_t idleTauntSecs = 0;  // optional stationary clues; hiding still is safe by default
     bool autoNext = true;
     bool isPublic = false;
     uint8_t freeDecoys = 3;  // free placements per hider, available from the Hide phase
@@ -65,6 +65,7 @@ struct Player {
     uint64_t lastClueAt = 0;
     uint64_t lastMovedAt = 0;
     uint64_t revealedUntil = 0;
+    bool finalClueGiven = false;  // carried in the roster for late joins and host migration
     float idleX = 0, idleY = 0, idleZ = 0;
     uint8_t rupeesCollected = 0;
     uint8_t finds = 0;

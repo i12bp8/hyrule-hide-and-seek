@@ -1,6 +1,6 @@
-# Balance changes in v0.3.1
+# Balance and search rules in v0.3.3
 
-The previous default round awarded a survivor 18 passive points plus 5 for surviving, before
+Before v0.3.1, the default round awarded a survivor 18 passive points plus 5 for surviving, before
 manual taunts, 3-point treasure, the 5-point pickup challenge and 5-point Treasure Rush pickups.
 A hunter earned only 5 per find. Loot also spawned only 650–1,800 units from players, with a
 2,500-unit host proximity requirement: an empty region could never get treasure.
@@ -43,11 +43,31 @@ combine both roles' objective or win rewards. Late joiners have no starting role
 round. Starting roles, objective counters, bonus counters and capture progress travel with the
 round snapshots and survive host migration. Custom hunt durations keep the same maximum score.
 
-The 30-second hiding head start, map-aware hunter counts, hunter tracking, miss cost and three
-free decoys remain recommended. The stock stationary clue moves from 20 to 30 seconds. Regular
-clues remain 30 seconds on compact maps and 20 on large maps; the final minute uses 15 seconds,
-or 12 for the last hider. Clues still last 3 seconds and share a timer with manual/loot clues.
-This reduces the combination of infection, tracking and nearly continuous endgame reveals.
+The 30-second hiding head start, map-aware hunter counts, hunter tracking and three free decoys
+remain recommended. The score budgets introduced in v0.3.1 are unchanged.
+
+Player feedback on v0.3.2 identified too much free, precise information for hunters: regular
+clues, stationary clues, accelerated last-hider clues and tracking all operated together.
+An exact marker also made a risky treasure pickup nearly a guaranteed encounter. The new
+default has no recurring clues and no stationary timer. Each remaining hider gives one final
+clue at 20 seconds left, so the end still gives hunters a chance without repeatedly exposing
+the last survivor. The host can move this window from 0–60 seconds or turn it Off. In a short
+custom hunt the window is capped at half the hunt. A recent clue delays the finale through the
+four-second cooldown; a host change does not repeat it.
+
+Treasure and manual taunts keep their existing limited rewards and now give only a broad
+90-degree direction sector and one of three distance bands. Hunter tracking uses the same
+information. These categories are captured relative to the hunter's camera at the moment of
+the clue and remain fixed for three seconds. No exact distance, height, name or world marker
+is displayed, and turning the camera does not refine the bearing. Positional audio remains a
+useful nearby cue. This makes a pickup a choice between score/decoy funding and giving away a
+search area; a good stationary disguise can simply choose safety.
+
+Misses, including decoys, cost half a heart by default; the host can choose Off or quarter-heart
+steps up to one heart. Five starting hearts, one-heart recovery for a find and two-second attack
+recovery at the final quarter remain. The protected last quarter prevents a game over while
+still slowing indiscriminate searching. Hunters can sheathe their sword normally so Horse Grass
+and other interactions remain available.
 
 Treasure capacity rises from 8 to 24 with 1,200-unit horizontal spacing. Connected ground is
 explored during Hide and Hunt, with a bounded native-collision budget per frame. Candidates
@@ -62,6 +82,9 @@ load; visited player routes supplement the spawn-connected area, including separ
 Automated checks cover a large open area with players at the centre, distant routes around a
 corner, rejection of an unreachable island, pickup spacing, shared progress for 2–16 players,
 short and long round durations, duplicate claims, infection, spending and host migration.
+New checks cover quiet hiding until the finale, one final clue in both modes on compact/large
+maps, cooldown delays, voluntary-only and optional stationary rules, rule migration and every
+miss-cost choice down to the protected last quarter.
 These tests do not validate the real maps' collision or prove a 50% win rate.
 
 For each map, play paired sessions where the same players swap starting roles. Record the
@@ -72,6 +95,6 @@ finds. Do not tune based on a handful of rounds or compare raw team totals with 
 
 If props keep winning, first assess map size and how often clues produce an actual encounter;
 try a longer hunt or another starting hunter. If hunters keep winning, try fewer starting
-hunters, a longer stationary-clue delay or turning infection off. Keep score rewards comparable
+hunters, disabling the final clue or turning infection off. Keep score rewards comparable
 while changing search pressure. The host's Rules tab supports these changes. The new defaults
 are a starting point for this playtesting, not a guarantee of equal difficulty.

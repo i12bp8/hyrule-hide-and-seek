@@ -68,6 +68,8 @@ void init() {
     s_hints = reg("control_hints", CONFIG_VAR_BOOL, 0, true);
     s_rules = reg("host_rules", CONFIG_VAR_STRING);
     s_rulesVersion = reg("host_rules_version", CONFIG_VAR_INT);
+    const auto originalRules = get_str(s_rules);
+    const bool legacySearchRules = std::count(originalRules.begin(), originalRules.end(), ',') < 9;
 
     if (s_rulesVersion != 0 && get_int(s_rulesVersion, 0) < 2) {
         const std::string text = get_str(s_rules);
@@ -87,6 +89,11 @@ void init() {
         // of Off persist; this upgrade runs only once.
         if (s_hints != 0) svc_config->set_bool(mod_ctx, s_hints, true);
         svc_config->set_int(mod_ctx, s_rulesVersion, 4);
+    }
+    if (s_rulesVersion != 0 && get_int(s_rulesVersion, 0) < 5) {
+        const auto text = upgrade_search_rules(get_str(s_rules), legacySearchRules);
+        if (s_rules != 0) svc_config->set_string(mod_ctx, s_rules, text.c_str());
+        svc_config->set_int(mod_ctx, s_rulesVersion, 5);
     }
 
     // v0.1.0/v0.1.1 shipped before the public relay was provisioned. Upgrade only that exact
@@ -145,7 +152,7 @@ bool control_hints() {
     return value;
 }
 
-// Stored as "mode,map,hide,seek,hunters,flags,idle-taunt-seconds,free-decoys". Older saves keep
+// Stored as "mode,map,hide,seek,hunters,flags,idle-seconds,free-decoys,miss-quarters,final-seconds". Older saves keep
 // defaults for fields that did not exist yet.
 match::Settings host_rules() {
     return parse_rules(get_str(s_rules));

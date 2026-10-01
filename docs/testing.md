@@ -33,8 +33,9 @@ Dusklight's log open (`~/.local/share/TwilitRealm/Dusklight/logs/`); the mod log
       stop scoring at 6 bonus points. Spend 3 on a decoy, collect again: the cap stays exhausted.
 - [ ] Change host mid-hunt after a find and after spending points. Shared progress, gross bonus
       limits and already awarded survival survive without duplicate points.
-- [ ] Stock stationary clues use 30 seconds, final-minute clues use 15 or 12 for the last hider.
-      Custom Off and custom timings survive the stock-rule upgrade.
+- [ ] Stock stationary clues are Off. Each remaining hider gives one final clue at 20 seconds left,
+      with no recurring/accelerated last-hider clues. Final clue 0 disables it; custom Off and
+      stationary timings survive the stock-rule upgrade. Short hunts keep their first half quiet.
 - [ ] Run paired sessions with role swaps and record per-map wins, duration, finds and per-player
       points before spending. Assess actual balance using [the playtest notes](balance.md).
 
@@ -48,15 +49,21 @@ Dusklight's log open (`~/.local/share/TwilitRealm/Dusklight/logs/`); the mod log
 - [ ] Hiders collect once, receive 1 point, and complete the three-pickup challenge for up to +2.
 - [ ] Round 3 gives 2 points per pickup within the bonus cap; a new round resets loot counts. Treasure Off spawns none.
 - [ ] A pickup triggers the local cue and a three-second clue for hunters. The hider sees the reason.
-- [ ] Manual and both automatic taunts show the pulsing reveal strip and correct countdown.
+- [ ] Manual, final and optional stationary clues show the pulsing CLUE SENT strip and countdown.
 - [ ] Spinning in place does not reset the stationary timer; moving far enough does.
 - [ ] Two hiders reaching the same rupee cannot both receive its points. Expired pickups disappear.
 - [ ] Stand on a collected rupee: no replacement appears under the hider, including after 30 seconds.
       Move away: its 1,200-unit area stays excluded for 30 seconds; other areas still refill.
       Expired pickups have the same cooldown. A host change preserves recently removed locations.
-- [ ] With the miss penalty on, repeated misses at the last quarter heart require two seconds between
-      counted attacks; finding a hider restores one heart.
-- [ ] Rules cannot change until Results. The last hider in the final minute gets a 12-second clue.
+- [ ] Miss penalty defaults to half a heart. Test Off, quarter, half, three quarters and one heart;
+      decoys use the same cost. Misses that leave the last quarter require two seconds between
+      counted attacks; finding a hider restores one heart. Save/restart preserves the choice.
+- [ ] Rules cannot change until Results. Final clue fires once per remaining hider, including
+      after a host change. A recent manual/loot clue delays it through the four-second cooldown.
+- [ ] Sheathe the hunter sword and use Horse Grass on South Faron to call Epona. No forced sword
+      draw interrupts it. Test normal B combat, including Castle Town, climbing and swimming.
+- [ ] Reproduce the reported two-client macOS start: both roles warp to the selected map. Capture
+      logs if a hunter stays in Ordon or crashes during warp; that report remains unconfirmed.
 - [ ] Compare real clients at 50, 100 and 200 ms latency: walking, corners, teleports, hiding and finding.
       Movement should interpolate smoothly and stop extrapolating after 100 ms of missing updates.
 - [ ] Leave the host during Hunt: remaining loot and scores survive the authority change.
@@ -81,7 +88,8 @@ Dusklight's log open (`~/.local/share/TwilitRealm/Dusklight/logs/`); the mod log
 - [ ] Native touch controls remain available during play, clear of the mod's central status cards.
 - [ ] Nearby names do not overlap each other, alerts or the status cards. Hunters never see prop names.
 - [ ] At most two nearby treasure point labels appear; gems remain visible without a label.
-- [ ] Simultaneous clues show one summary and at most three small world markers.
+- [ ] Simultaneous clues show one summary with a count. No exact distance or world marker appears.
+      Turning the camera or moving while a clue is visible does not change its sector/range.
 - [ ] Results with 16 players stay within the screen; long names truncate before score columns.
 - [ ] Control hints default off; the Display toggle shows and hides them cleanly.
 
@@ -169,11 +177,11 @@ Start round. With 4 players (you + 3 bots) there is one hunter; restart until yo
       Crystal appears near the player at a readable size instead of at its authored world origin.
 - [ ] The hunter bot waits at the spawn during Hide, then chases you during the hunt and tags you:
       "You were found!", you become Link again (and a hunter).
-- [ ] D-pad down taunts: a Link shout plays, the taunt bar fills for four seconds, and the hunter gets a three-second
-      direction/distance clue plus a marker at your position.
-- [ ] Regular taunts start enabled: every 30 seconds (20 on large maps), then every 15 seconds
-      in the last minute. Turning the rule off leaves manual and stationary taunts only.
-- [ ] The stationary auto-taunt defaults to 30 seconds. Moving more than 120 units horizontally or 80 vertically resets its
+- [ ] D-pad down taunts: a Link shout plays, the taunt bar fills for four seconds, and the hunter gets
+      a three-second broad direction/range clue, captured relative to their view when it arrives.
+- [ ] One final clue starts enabled at 20 seconds remaining. Turning it Off leaves manual,
+      treasure and explicitly enabled stationary clues only. No exact marker appears.
+- [ ] The stationary auto-taunt defaults to Off. Moving more than 120 units horizontally or 80 vertically resets its
       timer; Off disables it, and a shorter setting fires at the selected delay.
 - [ ] Cucco, pumpkin and oil jar have one clean circular shadow with a sensible footprint. Static
       rocks/furniture, targets and flat/translucent plants have no added black blob or duplicate mesh.
@@ -200,7 +208,7 @@ Restart until you're the hunter (1 in 4).
 - [ ] Castle Town still allows drawing and swinging the sword during the hunt.
 - [ ] From a hider's client, the hunter's complete Link body remains visible while idle, running and
       swinging throughout Hide, Hunt and Results—never only a face/sword, a T-pose or a name tag.
-- [ ] Swinging at nothing costs a quarter heart (never the last quarter). Hitting a real
+- [ ] Swinging at nothing costs half a heart by default (never the last quarter). Hitting a real
       map pot or a player decoy also costs a quarter; hitting the actual hider does not.
 - [ ] D-pad down gives a three-second tracking direction/rough range, then shows a 25-second
       cooldown. It never shows the hider's name or an exact marker. The host can disable it.
@@ -237,7 +245,7 @@ With a friend (or two copies of Dusklight with different `--mods` folders and pr
 - [ ] No enemies or bosses remain, including ones spawned by another mod; no encounter-complete
       cutscene or timer starts when they disappear.
 - [ ] Damage does not remove hearts and underwater air stays full. A hunter's missed sword swing
-      still removes a quarter heart (without taking the last quarter) when that rule is enabled.
+      still removes the configured penalty (without taking the last quarter) when that rule is enabled.
 - [ ] Walk/roll/jump toward loading zones in Hide and Hunt, as hider and hunter: movement stops
       before loading. No fade, respawn, lost disguise or change to the countdown occurs.
 - [ ] Cross camera-tag areas and room boundaries: the third-person camera remains freely movable.

@@ -11,8 +11,8 @@
 
 namespace hs {
 
-// v8 carries starting roles, shared capture progress and gross score counters; up to 24 rupees.
-constexpr int kProtocolVersion = 8;
+// v9 adds adjustable miss cost, one final clue and its roster flag.
+constexpr int kProtocolVersion = 9;
 
 enum MsgType : uint8_t {
     MSG_STATE = 1,     // everyone -> everyone, 10 Hz
@@ -35,7 +35,7 @@ enum MsgType : uint8_t {
     MSG_COLLECT_RUPEE = 26, // hider -> host: round, pickup id
 };
 
-enum class ClueKind : uint8_t { Manual, Regular, Stationary, Treasure };
+enum class ClueKind : uint8_t { Manual, Final, Stationary, Treasure };
 
 enum class Mode : uint8_t { PropHunt = 0, HideAndSeek = 1, Count };
 enum class Phase : uint8_t { Lobby = 0, Gather = 1, Hide = 2, Seek = 3, Results = 4 };
