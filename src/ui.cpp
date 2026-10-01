@@ -558,7 +558,7 @@ ModResult build_help(ModContext*, UiWindowHandle, UiElementHandle left, UiElemen
         "D-pad up places a decoy. You start with three; extras cost 3 round points.</p></div>", nullptr);
     svc_ui->pane_add_rml(mod_ctx, left,
         "<div class='hs-guide'><h3>Take a risk</h3><p>D-pad down taunts for a point. "
-        "Taunts and rupees give hunters a direction arrow and rough range for 3 seconds. "
+        "Taunts and rupees give hunters a precise direction arrow and rough range for 3 seconds. "
         "You can stay hidden safely until the final reveal: one exact location marker for 3 seconds, "
         "with 20 seconds left by default. The host can adjust or disable it. "
         "Watch the clue alert and relocate afterwards. Rupees give 1 point and a clue; "
@@ -570,8 +570,9 @@ ModResult build_help(ModContext*, UiWindowHandle, UiElementHandle left, UiElemen
         "At zero hearts you watch until the next round; hiders win if every hunter is out. "
         "Only finding someone restores a heart. Springs and heart pickups do not heal hunters. "
         "Sheathe your sword to use Horse Grass and other interactions. D-pad down tracks "
-        "the nearest hider, with a 25-second cooldown. Clue directions are relative to your view "
-        "when the clue arrives; turning does not update them.</p></div>", nullptr);
+        "the nearest hider, with a 25-second cooldown. During a clue, the arrow around you points "
+        "toward the hider and updates as you turn or either player moves. "
+        "Ordinary clues do not place a marker on the prop.</p></div>", nullptr);
     svc_ui->pane_add_rml(mod_ctx, left,
         "<div class='hs-guide'><h3>Play again</h3><p>Hiders earn up to 12 points across the hunt "
         "and 6 for surviving. Starting hunters share up to 12 capture-progress points and get "

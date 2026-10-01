@@ -15,21 +15,35 @@ constexpr uint16_t life_after_miss(uint16_t life, uint8_t quarters = 2) {
     return static_cast<uint16_t>(life - std::min<uint16_t>(quarters, life));
 }
 
-// Capture a broad sector and range once. Keeping only these categories prevents camera turns
-// or movement during a clue from narrowing it into an exact bearing or a world marker.
+// The text keeps a broad sector/range; the arrow carries the exact horizontal bearing.
+// Screen-space up means ahead and down means behind the hunter's current view.
 struct SearchClue {
     const char* direction = "Ahead";
     const char* range = "Near";
-    int8_t arrowX = 0;
-    int8_t arrowY = -1; // screen-space up means ahead, down means behind
+    float arrowX = 0;
+    float arrowY = -1;
 };
 inline SearchClue search_clue(float right, float forward, float distance) {
     const bool sideways = std::fabs(right) > std::fabs(forward);
+    const float length = std::hypot(right, forward);
     return {sideways ? (right > 0 ? "Right" : "Left") :
             (forward >= 0 ? "Ahead" : "Behind"),
             distance < 1200 ? "Near" : distance < 3500 ? "In the area" : "Distant",
-            static_cast<int8_t>(sideways ? (right > 0 ? 1 : -1) : 0),
-            static_cast<int8_t>(sideways ? 0 : (forward >= 0 ? -1 : 1))};
+            length > 0.001f ? right / length : 0.0f,
+            length > 0.001f ? -forward / length : -1.0f};
+}
+inline SearchClue search_clue_from_view(float deltaX, float deltaZ,
+    float viewForwardX, float viewForwardZ, float distance) {
+    const float length = std::hypot(viewForwardX, viewForwardZ);
+    if (length > 0.001f) {
+        viewForwardX /= length;
+        viewForwardZ /= length;
+    } else {
+        viewForwardX = 0.0f;
+        viewForwardZ = -1.0f;
+    }
+    return search_clue(-viewForwardZ * deltaX + viewForwardX * deltaZ,
+        viewForwardX * deltaX + viewForwardZ * deltaZ, distance);
 }
 constexpr uint32_t final_clue_window_ms(uint16_t seconds, uint16_t seekSeconds) {
     // A short custom hunt still gets a quiet first half.

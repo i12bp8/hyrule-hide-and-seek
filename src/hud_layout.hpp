@@ -16,6 +16,18 @@ inline Rect centre_card(float x, float y, float width, float top, float height, 
     return {x + (width - w) * 0.5f, y + top, w, height};
 }
 
+struct ClueIndicator {
+    float x, y, radius;
+};
+inline ClueIndicator clue_indicator(float x, float y, float width, float height,
+    float hunterX, float hunterY) {
+    // Keep the entire orbit clear of the status card and bottom role/control hints.
+    const float radius = std::min(60.0f, std::max(0.0f, (height - 164) * 0.5f - 20));
+    const float margin = radius + 18;
+    return {std::clamp(hunterX, x + margin, x + width - margin),
+        std::clamp(hunterY, y + 86 + margin, y + height - 78 - margin), radius};
+}
+
 struct ScoreLayout {
     Rect card;
     float rowHeight;

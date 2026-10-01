@@ -20,6 +20,7 @@
 #include "m_Do/m_Do_ext.h"
 #include "m_Do/m_Do_graphic.h"
 #include "m_Do/m_Do_lib.h"
+#include <gx.h>
 
 #include <algorithm>
 #include <array>
@@ -69,18 +70,23 @@ public:
 
     // Draw a filled arrow with the same native 2D primitives as the cards. The game font does
     // not reliably contain Unicode arrow glyphs, so this works on every platform and language.
-    void arrow(f32 cx, f32 cy, const SearchClue& clue, JUtility::TColor color) {
+    void arrow(f32 cx, f32 cy, const SearchClue& clue, JUtility::TColor color, f32 scale = 1) {
         const f32 dx = clue.arrowX, dy = clue.arrowY;
-        const auto strip = [&](f32 start, f32 end, f32 halfWidth) {
-            const f32 x0 = cx + dx * start + dy * halfWidth;
-            const f32 y0 = cy + dy * start - dx * halfWidth;
-            const f32 x1 = cx + dx * end - dy * halfWidth;
-            const f32 y1 = cy + dy * end + dx * halfWidth;
-            box(std::min(x0, x1), std::min(y0, y1), std::max(x0, x1), std::max(y0, y1), color);
+        m_ortho.setPort();
+        GXSetBlendMode(GX_BM_BLEND, GX_BL_SRCALPHA, GX_BL_INVSRCALPHA, GX_LO_SET);
+        GXSetVtxAttrFmt(GX_VTXFMT0, GX_VA_POS, GX_POS_XYZ, GX_F32, 0);
+        const auto vertex = [&](f32 along, f32 across) {
+            GXPosition3f32(cx + (dx * along - dy * across) * scale,
+                cy + (dy * along + dx * across) * scale, 0);
+            GXColor4u8(color.r, color.g, color.b, color.a);
         };
-        strip(-7, 1, 1.5f);
-        for (int step = 0; step < 4; ++step)
-            strip(6 - step * 2, 8 - step * 2, 1.5f * (step + 1));
+        // Rotated triangles keep the shape crisp at every angle; axis-aligned boxes cannot.
+        GXBegin(GX_TRIANGLES, GX_VTXFMT0, 9);
+        vertex(-8, -2); vertex(1, -2); vertex(1, 2);
+        vertex(-8, -2); vertex(1, 2); vertex(-8, 2);
+        vertex(0, -6); vertex(11, 0); vertex(0, 6);
+        GXEnd();
+        GXSetVtxAttrFmt(GX_VTXFMT0, GX_VA_POS, GX_POS_XYZ, GX_RGBA4, 0);
     }
 
     f32 width(const std::string& text, f32 size) const {
@@ -403,9 +409,11 @@ void draw_taunt_pings(Painter& p, const Screen& s) {
     std::string text;
     SearchClue shown;
     bool tracking = false;
+    float strength = 1.0f;
     if (!pings.empty()) {
         const auto& ping = pings.front();
         shown = ping.clue;
+        strength = ping.strength;
         text = std::string("Clue  |  ") + ping.clue.direction + "  |  " + ping.clue.range;
         if (pings.size() > 1) text += "  +" + std::to_string(pings.size() - 1);
     } else {
@@ -420,6 +428,24 @@ void draw_taunt_pings(Painter& p, const Screen& s) {
     const auto color = tracking ? rgba(120, 230, 255) : rgba(255, 205, 65);
     p.arrow(card.x + 16, card.y + 12, shown, color);
     p.centred_fit(text, card.x + card.w * 0.5f + 10, card.y + 6, 12, card.w - 44, color);
+
+    const auto* hunter = dComIfGp_getPlayer(0);
+    if (hunter == nullptr || dComIfGd_getView() == nullptr) return;
+    cXyz at = hunter->current.pos;
+    at.y += 80;
+    Vec camera; mDoLib_pos2camera(&at, &camera);
+    Vec out{s.x + s.w * 0.5f, s.y + s.h * 0.55f, 0};
+    if (camera.z < -1) mDoLib_project(&at, &out);
+    const auto indicator = clue_indicator(s.x, s.y, s.w, s.h, out.x, out.y);
+    const f32 cx = indicator.x + shown.arrowX * indicator.radius;
+    const f32 cy = indicator.y + shown.arrowY * indicator.radius;
+    const float pulse = std::sin(now_ms() % 900 * 0.0069813f);
+    const float scale = 1.3f + 0.08f * pulse;
+    auto tint = color;
+    tint.a = static_cast<uint8_t>((100 + 155 * strength) * (0.9f + 0.1f * pulse));
+    reserve_label({cx - 18, cy - 18, 36, 36}, s);
+    p.arrow(cx + 1, cy + 2, shown, rgba(0, 0, 0, tint.a), scale + 0.15f);
+    p.arrow(cx, cy, shown, tint, scale);
 }
 
 void draw_scoreboard(Painter& p, const Screen& s) {

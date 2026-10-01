@@ -27,7 +27,8 @@ uint32_t tracking_cooldown_secs();
 bool tracking_clue(SearchClue& clue);
 ClueKind taunt_kind();
 
-// A recent hider taunt as seen by a hunter. Returns its remaining 0..1 reveal strength.
+// A recent hider taunt as seen by a hunter, recalculated from the current view and positions.
+// Returns its remaining 0..1 reveal strength.
 float taunt_ping(int id, SearchClue& clue);
 
 // Only the one final reveal gets an exact world marker. Ordinary taunts stay directional.

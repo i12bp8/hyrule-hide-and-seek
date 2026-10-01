@@ -1009,10 +1009,36 @@ static void test_search_clues() {
     CHECK(std::string(search_clue(10, 100, 1199).range) == "Near");
     CHECK(std::string(search_clue(10, 100, 1200).range) == "In the area");
     CHECK(std::string(search_clue(10, 100, 3500).range) == "Distant");
-    CHECK(search_clue(10, 100, 0).arrowX == 0 && search_clue(10, 100, 0).arrowY == -1);
-    CHECK(search_clue(100, 10, 0).arrowX == 1 && search_clue(100, 10, 0).arrowY == 0);
-    CHECK(search_clue(-100, 10, 0).arrowX == -1 && search_clue(-100, 10, 0).arrowY == 0);
-    CHECK(search_clue(10, -100, 0).arrowX == 0 && search_clue(10, -100, 0).arrowY == 1);
+    CHECK(search_clue(0, 100, 0).arrowX == 0 && search_clue(0, 100, 0).arrowY == -1);
+    CHECK(search_clue(100, 0, 0).arrowX == 1 && search_clue(100, 0, 0).arrowY == 0);
+    CHECK(search_clue(-100, 0, 0).arrowX == -1 && search_clue(-100, 0, 0).arrowY == 0);
+    CHECK(search_clue(0, -100, 0).arrowX == 0 && search_clue(0, -100, 0).arrowY == 1);
+    CHECK(search_clue(0, 0, 0).arrowX == 0 && search_clue(0, 0, 0).arrowY == -1);
+    for (int degrees = 0; degrees < 360; degrees += 15) {
+        const float angle = degrees * 3.14159265f / 180;
+        const auto clue = search_clue(std::sin(angle) * 500, std::cos(angle) * 500, 500);
+        CHECK(std::fabs(clue.arrowX - std::sin(angle)) < 0.0001f);
+        CHECK(std::fabs(clue.arrowY + std::cos(angle)) < 0.0001f);
+        CHECK(std::fabs(std::hypot(clue.arrowX, clue.arrowY) - 1) < 0.0001f);
+    }
+    // A stationary prop moves around the indicator as the hunter turns the camera.
+    const auto ahead = search_clue_from_view(0, -100, 0, -1, 100);
+    const auto right = search_clue_from_view(0, -100, -1, 0, 100);
+    const auto behind = search_clue_from_view(0, -100, 0, 1, 100);
+    const auto left = search_clue_from_view(0, -100, 1, 0, 100);
+    CHECK(ahead.arrowX == 0 && ahead.arrowY == -1);
+    CHECK(right.arrowX == 1 && right.arrowY == 0);
+    CHECK(behind.arrowX == 0 && behind.arrowY == 1);
+    CHECK(left.arrowX == -1 && left.arrowY == 0);
+    // Shallow bearings stay precise; moving across the prop reverses the indication.
+    const auto diagonal = search_clue_from_view(30, -40, 0, -0.1f, 50);
+    CHECK(std::fabs(diagonal.arrowX - 0.6f) < 0.0001f);
+    CHECK(std::fabs(diagonal.arrowY + 0.8f) < 0.0001f);
+    const auto passed = search_clue_from_view(-30, 40, 0, -1, 50);
+    CHECK(std::fabs(passed.arrowX + diagonal.arrowX) < 0.0001f);
+    CHECK(std::fabs(passed.arrowY + diagonal.arrowY) < 0.0001f);
+    const auto verticalView = search_clue_from_view(30, -40, 0, 0, 50);
+    CHECK(std::isfinite(verticalView.arrowX) && std::isfinite(verticalView.arrowY));
     CHECK(final_clue_window_ms(20, 180) == 20000 && final_clue_window_ms(60, 30) == 15000);
     for (Mode mode : {Mode::PropHunt, Mode::HideAndSeek}) {
         for (int map : {0, 9}) {
@@ -1487,6 +1513,16 @@ static void test_mobile_hud_layout() {
         CHECK(top.x >= 12 && top.x + top.w <= 12 + size[0]);
         CHECK(footer.y >= 24 && footer.y + footer.h <= 24 + size[1]);
         CHECK(!top.overlaps(footer));
+        for (float hunterX : {-500.0f, size[0] * 0.5f, size[0] + 500}) {
+            for (float hunterY : {-500.0f, size[1] * 0.5f, size[1] + 500}) {
+                const auto indicator = hud::clue_indicator(12, 24, size[0], size[1], hunterX, hunterY);
+                const float margin = indicator.radius + 18;
+                CHECK(indicator.radius >= 0 && indicator.radius <= 60);
+                CHECK(indicator.x - margin >= 12 && indicator.x + margin <= 12 + size[0]);
+                CHECK(indicator.y - margin >= 24 + 86);
+                CHECK(indicator.y + margin <= 24 + size[1] - 78);
+            }
+        }
         for (int players = 1; players <= 16; ++players) {
             const auto scores = hud::score_layout(12, 24, size[0], size[1], players);
             CHECK(scores.card.x >= 12 && scores.card.x + scores.card.w <= 12 + size[0]);

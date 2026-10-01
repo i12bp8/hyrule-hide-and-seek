@@ -10,6 +10,7 @@
 #include "match.hpp"
 #include "net.hpp"
 #include "props.hpp"
+#include "puppet.hpp"
 #include "settings.hpp"
 #include "ui.hpp"
 
@@ -45,6 +46,7 @@ bool s_left = false;
 const bool s_hunterOnly = std::getenv("HS_STOCK_HUNTER_TEST") != nullptr;
 const bool s_arenaTest = std::getenv("HS_ARENA_TEST") != nullptr;
 const bool s_uiTest = std::getenv("HS_UI_TEST") != nullptr;
+const bool s_directionTest = std::getenv("HS_DIRECTION_TEST") != nullptr;
 const char* s_hudTest = std::getenv("HS_HUD_TEST");
 
 void require(bool condition, const char* message) {
@@ -223,16 +225,16 @@ void arena_test_update(uint64_t now) {
     s_arenaLoaded = UINT64_MAX;
 }
 
-void roster() {
+void roster(int hunter = 2, int count = kMaxPlayers) {
     Writer w(MSG_ROSTER);
-    w.u8(kMaxPlayers);
-    for (int id = 1; id <= kMaxPlayers; ++id) {
+    w.u8(count);
+    for (int id = 1; id <= count; ++id) {
         w.u8(id);
-        w.u8(static_cast<uint8_t>(id == 2 ? Role::Hunter : Role::Hider));
+        w.u8(static_cast<uint8_t>(id == hunter ? Role::Hunter : Role::Hider));
         w.u8(id - 1);
         w.u16(0); w.u16(0);
-        w.u8(id == 2 ? 6 : 10); w.u8(0); w.u8(0); w.u8(0); w.u8(0); w.u8(0); w.u8(0);
-        w.u8(id == 2 ? kArenaLife : 0); w.u16(0);
+        w.u8(id == hunter ? 6 : 10); w.u8(0); w.u8(0); w.u8(0); w.u8(0); w.u8(0); w.u8(0);
+        w.u8(id == hunter ? kArenaLife : 0); w.u16(0);
     }
     apply(net::self_id(), w);
 }
@@ -265,6 +267,86 @@ void rupees(const cXyz& at) {
     }
     apply(net::self_id(), w);
     require(match::get().rupeeCount == match::kMaxRupees, "treasure snapshot rejected");
+}
+
+void direction_test_update(uint64_t now) {
+    auto* hunter = daAlink_getAlinkActorClass();
+    if (!hunter || !dComIfGd_getView()) return;
+    static cXyz origin;
+    static uint64_t lastClue = 0;
+    static int bearings = 0;
+    if (s_joined == 0) {
+        s_joined = now;
+        origin = hunter->current.pos;
+        match::on_joined(2);
+        roster(1, 2);
+        Writer round(MSG_ROUND);
+        round.u32(1); round.u8(0); round.u8(0); round.u16(600); round.u16(600);
+        round.u8(1); round.u8(0); apply(net::self_id(), round);
+        Writer phase(MSG_PHASE);
+        phase.u32(1); phase.u8(static_cast<uint8_t>(Phase::Seek)); phase.u32(600000);
+        apply(net::self_id(), phase);
+    }
+    const auto age = now - s_joined;
+    static bool hunterMoved = false;
+    if (age > 10000 && !hunterMoved) {
+        hunter->current.pos = hunter->old.pos = hunter->field_0x3798 = origin + cXyz(180, 0, 120);
+        hunterMoved = true;
+    }
+    PlayerState state;
+    state.flags = STATE_IN_WORLD | STATE_DISGUISED;
+    copy_str(state.stage, local::stage());
+    state.x = origin.x + 350 * std::sin(age * 0.0004f);
+    state.y = origin.y;
+    state.z = origin.z - 550;
+    Writer update(MSG_STATE); state.write(update); apply(2, update);
+    if (auto* cam = dCam_getBody()) {
+        const float angle = age * 0.0003f;
+        cam->Stop(); cam->SetTrimSize(0);
+        cam->Set(origin + cXyz(0, 100, 0),
+            origin + cXyz(std::sin(angle) * 700, 300, std::cos(angle) * 700), 52.0f, static_cast<s16>(0));
+    }
+    if (age < 1500) return; // allow local phase handling and puppet loading to settle
+    if (age < 20000 && (lastClue == 0 || now - lastClue > 4000)) {
+        lastClue = now;
+        Writer clue(MSG_CLUE); clue.u32(1); clue.u8(2); clue.u8(0);
+        clue.u8(static_cast<uint8_t>(ClueKind::Manual)); apply(net::self_id(), clue);
+    }
+    SearchClue clue;
+    if (now - lastClue < kTauntRevealMs) {
+        require(local::taunt_ping(2, clue) > 0, "active directional clue missing");
+        cXyz target(state.x, state.y, state.z);
+        float height;
+        puppet::anchor(2, target, height);
+        const cXyz delta = target - hunter->current.pos;
+        const auto* view = dComIfGd_getView();
+        const float targetAngle = std::atan2(delta.x, delta.z);
+        const float viewAngle = std::atan2(view->viewMtx[0][2], -view->viewMtx[0][0]);
+        require(std::fabs(clue.arrowX + std::sin(targetAngle - viewAngle)) < 0.001f &&
+            std::fabs(clue.arrowY + std::cos(targetAngle - viewAngle)) < 0.001f,
+            "arrow disagrees with live camera/prop bearing");
+        require(local::final_clue_marker(2, target) == 0, "ordinary taunt made a world marker");
+        auto& player = const_cast<match::Player&>(match::player(2));
+        player.found = true;
+        require(local::taunt_ping(2, clue) == 0, "found hider kept arrow");
+        player.found = false;
+        player.present = false;
+        require(local::taunt_ping(2, clue) == 0, "disconnected hider kept arrow");
+        player.present = true;
+        const auto stateAt = player.stateAt;
+        player.stateAt = now - 2001;
+        require(local::taunt_ping(2, clue) == 0, "stale state kept arrow");
+        player.stateAt = stateAt;
+        const char first = player.state.stage[0]; player.state.stage[0] = '!';
+        require(local::taunt_ping(2, clue) == 0, "off-stage hider kept arrow");
+        player.state.stage[0] = first;
+        ++bearings;
+    } else require(local::taunt_ping(2, clue) == 0, "taunt arrow outlived three-second clue");
+    if (age > 24000) {
+        require(bearings > 100, "insufficient live bearing checks");
+        mods::log::info("DIRECTION_TEST PASS: {} live bearings, expiry, found/disconnected/stale/off-stage suppression, no world marker; {} draw checks", bearings, s_checks);
+        std::fflush(nullptr); std::_Exit(0);
+    }
 }
 }  // namespace
 
@@ -305,6 +387,10 @@ void stock_render_update() {
         return;
     }
     if (net::status() != net::Status::Online) return;
+    if (s_directionTest) {
+        direction_test_update(now);
+        return;
+    }
     if (s_uiTest) {
         if (s_joined == 0) { s_joined = now; ui::open(); }
         if (now - s_joined > 120000) std::_Exit(0);

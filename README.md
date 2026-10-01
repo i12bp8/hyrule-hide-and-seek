@@ -24,8 +24,8 @@ Use **Dusklight 2.0.3 or newer**. Its official Linux AppImage fixes the missing 
 and HTTPS certificate issue ([release notes](https://github.com/TwilitRealm/dusklight/releases/tag/v2.0.3)).
 Linux, Windows and macOS now use the same WebSocket transport. The default public relay requires it;
 old Linux builds can still use a private Node relay's HTTPS fallback.
-Everyone in a room needs **mod v0.3.5 (protocol 10)** for hunter elimination, clue arrows and the precise final reveal.
-It shares rooms with v0.3.3, but older hunters will see the older clue display.
+Everyone in a room needs **protocol 10 (mod v0.3.5 or newer)**.
+Use **v0.3.6** for live, precise direction arrows. Hunters still on v0.3.5 see their older clue display.
 
 ### A round
 
@@ -107,12 +107,13 @@ third round is **Treasure Rush**, with **2 points per rupee**. Treasure and manu
 still reveal a clue but give no points once it is reached.
 
 Each pickup gives hunters a three-second clue: **Ahead / Behind / Left / Right** and
-**Near / In the area / Distant**, with a visible arrow pointing up, down, left or right.
-Manual taunts, optional stationary clues and tracking use the same broad information, without
-exact distances, names or world markers. The final reveal alone adds a precise world marker.
-Direction is relative to the hunter's view when the clue arrives; direction and range stay fixed
-for its duration, so turning or moving cannot narrow it to an exact position. Hiders can relocate
-after taking a risk. Nearby hunters can still hear the positional taunt.
+**Near / In the area / Distant**, with an arrow pointing along the exact bearing to the hider.
+The arrow pulses around the hunter and rotates continuously with the camera, hunter movement
+and hider movement. It points toward the prop without drawing a marker on it.
+Manual taunts, optional stationary clues and tracking use the same feedback, without exact
+distances or names. The final reveal alone adds a precise world marker.
+The text updates with the current direction and rough range for the clue's duration. Hiders can
+relocate after taking a risk. Nearby hunters can still hear the positional taunt.
 
 Hiders see a pulsing **CLUE SENT** alert, or **LOCATION REVEALED** for the exact final marker,
 with the reason and remaining time. Picking up another rupee cannot hide or extend that reveal.

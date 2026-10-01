@@ -79,8 +79,8 @@ ClueKind s_myClueKind = ClueKind::Manual;
 uint64_t s_lastDecoy = 0;
 
 struct TauntPing {
-    SearchClue clue;
     uint64_t at = 0;
+    uint32_t round = 0;
 };
 TauntPing s_tauntPings[kSlots];
 struct FinalMarker {
@@ -100,8 +100,7 @@ u8 s_lastCutType = 0;
 uint64_t s_lastSwordCheck = 0;
 uint64_t s_lastColorCheck = 0;
 uint64_t s_lastTracking = 0;
-bool s_haveTracking = false;
-SearchClue s_trackingClue;
+int s_trackingTarget = 0;
 bool s_roundHealth = false;
 u8 s_previousMaxLife = 0;
 u16 s_previousLife = 0;
@@ -113,13 +112,28 @@ daAlink_c* link() {
     return p != nullptr && fopAcM_GetName(p) == fpcNm_ALINK_e ? static_cast<daAlink_c*>(p) : nullptr;
 }
 
-SearchClue capture_clue(const cXyz& position) {
+bool clue_target(int id, cXyz& position) {
+    if (id < 1 || id > kMaxPlayers) return false;
+    const auto& p = match::player(id);
+    if (!p.present || p.role != Role::Hider || p.found || !p.hasState ||
+        !(p.state.flags & STATE_IN_WORLD) || now_ms() - p.stateAt > 2000 ||
+        std::strncmp(p.state.stage, stage(), 8) != 0) return false;
+    float height;
+    if (!puppet::anchor(id, position, height)) position.set(p.state.x, p.state.y, p.state.z);
+    return true;
+}
+
+bool live_clue(int id, SearchClue& clue) {
     const auto* view = dComIfGd_getView();
-    if (view == nullptr) return {};
-    cXyz at = position;
-    Vec camera;
-    mDoLib_pos2camera(&at, &camera);
-    return search_clue(camera.x, -camera.z, (at - view->lookat.eye).abs());
+    const auto* hunter = link();
+    cXyz position;
+    if (view == nullptr || hunter == nullptr || !clue_target(id, position)) return false;
+    const cXyz delta = position - hunter->current.pos;
+    // The horizontal camera right axis gives a stable heading even when looking straight down.
+    // Measure from Link, so camera distance and pitch cannot distort the bearing to a nearby prop.
+    clue = search_clue_from_view(delta.x, delta.z,
+        view->viewMtx[0][2], -view->viewMtx[0][0], delta.abs());
+    return true;
 }
 
 bool playing_prop_hunt() {
@@ -376,7 +390,7 @@ void on_phase_change(Phase from, Phase to) {
     if (to == Phase::Seek) {
         s_lastTaunt = now_ms();
         s_lastTracking = 0;
-        s_haveTracking = false;
+        s_trackingTarget = 0;
     }
     (void)from;
 }
@@ -410,21 +424,19 @@ void hunter_controls(daAlink_c* l) {
     if (m.settings.trackingPulse && mDoCPd_c::getTrigDown(PAD_1) &&
         (s_lastTracking == 0 || now - s_lastTracking >= kTrackingCooldownMs)) {
         float nearest = -1.0f;
+        int target = 0;
         for (int id = 1; id <= kMaxPlayers; ++id) {
-            const auto& p = match::player(id);
-            if (!p.present || p.role != Role::Hider || p.found || !p.hasState ||
-                !(p.state.flags & STATE_IN_WORLD) || now - p.stateAt > 2000 ||
-                std::strncmp(p.state.stage, stage(), 8) != 0) continue;
-            const cXyz at(p.state.x, p.state.y, p.state.z);
+            cXyz at;
+            if (!clue_target(id, at)) continue;
             const float distance = (at - l->current.pos).abs();
             if (nearest < 0.0f || distance < nearest) {
                 nearest = distance;
-                s_trackingClue = capture_clue(at);
+                target = id;
             }
         }
         if (nearest >= 0.0f) {
             s_lastTracking = now;
-            s_haveTracking = true;
+            s_trackingTarget = target;
             play_at(Z2SE_SY_HINT_BUTTON_BLINK, nullptr);
         } else play_at(Z2SE_SY_CURSOR_CANCEL, nullptr);
     }
@@ -660,10 +672,9 @@ uint32_t tracking_cooldown_secs() {
 }
 
 bool tracking_clue(SearchClue& clue) {
-    if (!s_haveTracking || match::my_role() != Role::Hunter || match::get().phase != Phase::Seek ||
+    if (s_trackingTarget == 0 || match::my_role() != Role::Hunter || match::get().phase != Phase::Seek ||
         !match::get().settings.trackingPulse || now_ms() - s_lastTracking >= kTrackingRevealMs) return false;
-    clue = s_trackingClue;
-    return true;
+    return live_clue(s_trackingTarget, clue);
 }
 
 float taunt_ping(int id, SearchClue& clue) {
@@ -672,10 +683,10 @@ float taunt_ping(int id, SearchClue& clue) {
         return 0.0f;
     }
     const TauntPing& ping = s_tauntPings[id];
-    if (ping.at == 0) return 0.0f;
+    if (ping.at == 0 || ping.round != match::get().round) return 0.0f;
     const uint64_t age = now_ms() - ping.at;
     if (age >= kTauntRevealMs) return 0.0f;
-    clue = ping.clue;
+    if (!live_clue(id, clue)) return 0.0f;
     return 1.0f - static_cast<float>(age) / static_cast<float>(kTauntRevealMs);
 }
 
@@ -720,7 +731,7 @@ void play_taunt(uint8_t from, uint8_t sound, ClueKind kind) {
     }
     play_at(kTaunts[sound % kTauntCount], &feet);
     if (match::my_role() == Role::Hunter && match::get().phase == Phase::Seek) {
-        s_tauntPings[from] = {capture_clue(feet), now_ms()};
+        s_tauntPings[from] = {now_ms(), match::get().round};
         if (kind == ClueKind::Final) {
             feet.y += std::clamp(height + 25.0f, 70.0f, 260.0f);
             // Store separately: a later voluntary clue must not erase or extend the final pulse.

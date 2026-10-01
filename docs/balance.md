@@ -56,12 +56,13 @@ custom hunt the window is capped at half the hunt. The finale bypasses the ordin
 cooldown to fire on time; a host change does not repeat it. Its position stays where the hider
 was revealed, and a later pickup cannot erase or prolong the marker.
 
-Treasure and manual taunts keep their existing limited rewards and now give only a broad
-90-degree direction sector and one of three distance bands. Hunter tracking uses the same
-information, now with an arrow showing the direction. These categories are captured relative to the hunter's camera at the moment of
-the clue and remain fixed for three seconds. No exact distance, height, name or world marker
-is displayed for ordinary clues, and turning the camera does not refine the bearing. The final
-marker is the only precise reveal, adding urgency while leaving a chance to relocate afterward.
+Treasure and manual taunts keep their existing limited rewards. Their three-second arrow now
+shows the exact horizontal bearing around the hunter, updating with the current camera heading
+and both players' positions. The text gives a broad direction sector and one of three distance
+bands. Hunter tracking uses the same feedback for its selected hider. This increases the
+information hunters can gain during a clue; paired playtests should assess the effect on finds.
+No exact distance, height, name or world marker is displayed for ordinary clues. The final
+marker alone marks a precise world position, leaving a chance to relocate afterward.
 Positional audio remains a
 useful nearby cue. This makes a pickup a choice between score/decoy funding and giving away a
 search area; a good stationary disguise can simply choose safety.

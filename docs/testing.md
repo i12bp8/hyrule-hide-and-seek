@@ -89,6 +89,12 @@ Dusklight's log open (`~/.local/share/TwilitRealm/Dusklight/logs/`); the mod log
 
 ### Mobile and clean interface
 
+The live direction-arrow change passed 4,982 rules/protocol/bearing/layout assertions on
+2026-10-02. Official Linux Dusklight 2.0.3 passed 452 live bearing checks while the camera,
+hider and hunter moved, plus expiry and found/disconnected/stale/off-stage suppression.
+The run completed 30,422 draw-list checks, and ordinary taunts created no world marker.
+The pulsing arrow was visually inspected around the hunter. Other platforms need runtime checks.
+
 - [ ] On Android and iOS, tap Host/Join, edit a code, open dropdowns and scroll public lobbies.
 - [ ] In landscape and portrait, the menu stays within the safe area and the navigation stacks
       on narrow screens. Touch targets stay at least 46 dp high.
@@ -98,7 +104,12 @@ Dusklight's log open (`~/.local/share/TwilitRealm/Dusklight/logs/`); the mod log
 - [ ] Ordinary clues show one summary with a direction arrow and count, without exact distances
       or world markers. Final reveals alone show precise markers at the reveal locations for
       three seconds; check 1/4/15 hiders, camera turns, moving away, found players and round resets.
-      Turning the camera or moving while a clue is visible does not change its sector/range.
+- [ ] During a taunt, turn the camera through 360 degrees and walk past the prop. The pulsing
+      arrow stays around the hunter and points along the exact bearing, including diagonals and
+      behind you. Change camera pitch/distance and move the hider: the arrow keeps following it
+      for three seconds. Direction and rough range text update; no marker appears on the prop.
+      Found, disconnected, stale or off-stage hiders immediately lose their arrows. Check tracking
+      uses the same feedback and stays on its selected hider until the pulse expires.
 - [ ] Results with 16 players stay within the screen; long names truncate before score columns.
 - [ ] Control hints default off; the Display toggle shows and hides them cleanly.
 
@@ -187,7 +198,8 @@ Start round. With 4 players (you + 3 bots) there is one hunter; restart until yo
 - [ ] The hunter bot waits at the spawn during Hide, then chases you during the hunt and tags you:
       "You were found!", you become Link again (and a hunter).
 - [ ] D-pad down taunts: a Link shout plays, the taunt bar fills for four seconds, and the hunter gets
-      a three-second broad direction arrow/range clue, captured relative to their view when it arrives.
+      a three-second precise direction arrow around the hunter, plus rough range. Turning or moving
+      either player updates the arrow without placing a marker on the prop.
 - [ ] One final clue starts enabled at 20 seconds remaining. Turning it Off leaves manual,
       treasure and explicitly enabled stationary clues only. Only the final reveal shows an exact marker.
 - [ ] The stationary auto-taunt defaults to Off. Moving more than 120 units horizontally or 80 vertically resets its
@@ -314,6 +326,11 @@ The driver populates 16 player states, starts a round, cycles all 57 selectable 
 decoy snapshots and 24 treasure actors, then leaves and checks cleanup. It checks the actual material/shape lists for
 cycles before rendering and exits successfully only after logging `STOCK_RENDER_TEST PASS`.
 Injected states exercise the real actors and rendering, not 16 independent network clients.
+
+Set `HS_DIRECTION_TEST=1` for a focused 24-second hunter-arrow regression. It turns the native
+camera, moves the hider and hunter, checks live bearings and expiry, and verifies that found,
+disconnected, stale and off-stage hiders lose their arrows. Ordinary taunts must never create a
+world marker. Success logs `DIRECTION_TEST PASS` alongside the real draw-list checks.
 
 - [ ] Run on stock Linux and Windows, both with interpolation on and off.
 - [ ] Separately join real cross-platform clients and place decoys with D-pad up.
