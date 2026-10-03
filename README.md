@@ -26,6 +26,7 @@ Linux, Windows and macOS now use the same WebSocket transport. The default publi
 old Linux builds can still use a private Node relay's HTTPS fallback.
 Everyone in a room needs **protocol 10 (mod v0.3.5 or newer)**.
 Use **v0.3.6** for live, precise direction arrows. Hunters still on v0.3.5 see their older clue display.
+Use **v0.3.7** to fix invisible players on systems with limited game root-heap space.
 
 ### A round
 

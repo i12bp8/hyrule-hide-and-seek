@@ -327,6 +327,17 @@ decoy snapshots and 24 treasure actors, then leaves and checks cleanup. It check
 cycles before rendering and exits successfully only after logging `STOCK_RENDER_TEST PASS`.
 Injected states exercise the real actors and rendering, not 16 independent network clients.
 
+Set `HS_HEAP_TEST=1` for the reported 32767 KB root-heap regression. It keeps the game's root
+heap below 32 MiB free throughout the test, verifies that the full multiplayer heap uses host
+memory, checks aligned allocations and JKR heap lookup, and destroys/recreates the heap three
+times before loading assets. It injects one failed heap creation, model-archive mount and
+animation-archive mount, then requires recovery without restart. All 15 remote Link puppets
+must become visible in the lobby before the usual prop/160-decoy stress test runs.
+
+On 2026-10-03, official Linux Dusklight 2.0.3 passed this regression at 32767 KB root free,
+including failure recovery, every remote lobby puppet, all selectable props, 160 decoys and
+167,031 draw-list checks through cleanup. GCC/Clang builds and 4,982 rules checks also passed.
+
 Set `HS_DIRECTION_TEST=1` for a focused 24-second hunter-arrow regression. It turns the native
 camera, moves the hider and hunter, checks live bearings and expiry, and verifies that found,
 disconnected, stale and off-stage hiders lose their arrows. Ordinary taunts must never create a

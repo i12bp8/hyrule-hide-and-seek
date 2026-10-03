@@ -8,7 +8,8 @@
 // - Sword, sheath and shield models.
 // - Link's animations, read by index from the game's AlAnm archive and cached.
 //
-// All of it lives in one heap the mod creates from the root heap and frees on shutdown.
+// All of it lives in one heap backed by host memory, registered under the game's root heap.
+// The mod destroys the heap and frees its backing memory on shutdown.
 
 #include <cstdint>
 

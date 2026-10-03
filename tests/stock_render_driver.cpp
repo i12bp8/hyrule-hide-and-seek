@@ -23,6 +23,9 @@
 #include "d/actor/d_a_scene_exit.h"
 #include "f_op/f_op_actor_iter.h"
 #include "JSystem/J3DGraphAnimator/J3DAnimation.h"
+#include "JSystem/JKernel/JKRArchive.h"
+#include "JSystem/JKernel/JKRExpHeap.h"
+#include "JSystem/JKernel/JKRHeap.h"
 #include "f_op/f_op_actor.h"
 #include "SSystem/SComponent/c_math.h"
 
@@ -37,6 +40,10 @@ namespace hs::testing {
 namespace {
 DEFINE_HOOK(&J3DDrawBuffer::drawHead, DrawHead);
 DEFINE_HOOK(&J3DMatPacket::draw, MatDraw);
+using ExternalHeapCreateFn = JKRExpHeap* (*)(void*, u32, JKRHeap*, bool);
+using ArchiveMountFn = JKRArchive* (*)(const char*, JKRArchive::EMountMode, JKRHeap*, JKRArchive::EMountDirection);
+DEFINE_HOOK((static_cast<ExternalHeapCreateFn>(&JKRExpHeap::create)), ExternalHeapCreate);
+DEFINE_HOOK((static_cast<ArchiveMountFn>(&JKRArchive::mount)), ArchiveMount);
 uint64_t s_start = 0;
 uint64_t s_joined = 0;
 bool s_round = false;
@@ -47,6 +54,7 @@ const bool s_hunterOnly = std::getenv("HS_STOCK_HUNTER_TEST") != nullptr;
 const bool s_arenaTest = std::getenv("HS_ARENA_TEST") != nullptr;
 const bool s_uiTest = std::getenv("HS_UI_TEST") != nullptr;
 const bool s_directionTest = std::getenv("HS_DIRECTION_TEST") != nullptr;
+const bool s_heapTest = std::getenv("HS_HEAP_TEST") != nullptr;
 const char* s_hudTest = std::getenv("HS_HUD_TEST");
 
 void require(bool condition, const char* message) {
@@ -54,6 +62,88 @@ void require(bool condition, const char* message) {
     mods::log::error("STOCK_RENDER_TEST FAIL: {}", message);
     std::fflush(nullptr);
     std::_Exit(2);
+}
+
+bool s_failHeapCreate = false;
+bool s_failModelMount = false;
+bool s_failAnimMount = false;
+
+HookAction fail_heap_create(ModContext*, void*, void* retval, void*) {
+    if (!s_failHeapCreate) return HOOK_CONTINUE;
+    s_failHeapCreate = false;
+    *static_cast<JKRExpHeap**>(retval) = nullptr;
+    return HOOK_SKIP_ORIGINAL;
+}
+
+HookAction fail_archive_mount(ModContext*, void* args, void* retval, void*) {
+    const auto* path = mods::arg<const char*>(args, 0);
+    if (s_failModelMount && std::strcmp(path, "/res/Object/Kmdl.arc") == 0) s_failModelMount = false;
+    else if (s_failAnimMount && std::strcmp(path, "/res/Object/AlAnm.arc") == 0) s_failAnimMount = false;
+    else return HOOK_CONTINUE;
+    *static_cast<JKRArchive**>(retval) = nullptr;
+    return HOOK_SKIP_ORIGINAL;
+}
+
+bool check_heap() {
+    static int phase = 0;
+    static uint64_t retryAt = 0;
+    if (!s_heapTest || phase == 4) return true;
+    if (phase != 0) {
+        if (now_ms() < retryAt) return false;
+        if (phase == 1) {
+            require(!linkkit::ready() && !s_failModelMount, "model mount failure not exercised");
+        } else if (phase == 2) {
+            require(linkkit::ready(), "Link files did not recover after mount failure");
+            require(!s_failAnimMount && linkkit::anim(linkkit::kIdleAnim) == nullptr,
+                "animation mount failure not exercised");
+        } else {
+            require(linkkit::ready() && linkkit::anim(linkkit::kIdleAnim) != nullptr,
+                "animation archive did not recover after mount failure");
+            require(mods::hook::uninstall<ExternalHeapCreate>() == MOD_OK, "heap test hook cleanup failed");
+            require(mods::hook::uninstall<ArchiveMount>() == MOD_OK, "archive test hook cleanup failed");
+            mods::log::info("HEAP_TEST: transient heap/model/animation failures recovered without restart");
+        }
+        ++phase;
+        retryAt = now_ms() + 1100;
+        return phase == 4;
+    }
+    auto* root = JKRHeap::getRootHeap();
+    require(root != nullptr, "root heap unavailable");
+    // Reproduce the report: 32767 KB is below the old 16 MiB heap + 16 MiB reserve cutoff.
+    // Keep the pressure allocation alive for the entire full-room/decoy rendering test.
+    constexpr u32 reportedFree = (32u << 20) - 512;
+    const u32 available = root->getMaxAllocatableSize(32);
+    if (available > reportedFree) {
+        require(root->alloc(available - reportedFree, 32) != nullptr, "could not constrain root heap");
+    }
+    const s32 rootFree = root->getFreeSize();
+    require(rootFree > (16 << 20) && rootFree < (32 << 20), "root heap does not reproduce reported limit");
+    const auto children = root->getHeapTree().getNumChildren();
+    for (int cycle = 0; cycle < 3; ++cycle) {
+        auto* heap = linkkit::heap();
+        require(heap != nullptr && heap->getSize() > (63u << 20), "multiplayer heap unavailable at reported limit");
+        require(root->getFreeSize() == rootFree, "multiplayer consumed game root memory");
+        require(root->getHeapTree().getNumChildren() == children + 1, "external heap not registered");
+        void* allocation = heap->alloc(1024, 32);
+        require(allocation != nullptr && reinterpret_cast<uintptr_t>(allocation) % 32 == 0,
+            "external heap allocation/alignment failed");
+        require(JKRHeap::findFromRoot(allocation) == heap, "game cannot find external heap allocation");
+        heap->free(allocation);
+        linkkit::shutdown();
+        require(root->getHeapTree().getNumChildren() == children, "external heap left dangling tree node");
+        require(root->getFreeSize() == rootFree, "external heap shutdown changed game root memory");
+    }
+    mods::log::info("HEAP_TEST: {} KB root free; host heap allocation, lookup and three shutdown/reload cycles passed",
+        rootFree / 1024);
+    require(mods::hook::add_pre<ExternalHeapCreate>(fail_heap_create) == MOD_OK, "heap failure hook unavailable");
+    require(mods::hook::add_pre<ArchiveMount>(fail_archive_mount) == MOD_OK, "archive failure hook unavailable");
+    s_failHeapCreate = s_failModelMount = s_failAnimMount = true;
+    require(!linkkit::ready() && !s_failHeapCreate, "heap failure not exercised");
+    require(root->getHeapTree().getNumChildren() == children, "failed heap left dangling tree node");
+    require(!linkkit::ready(), "failed heap retried without backoff");
+    phase = 1;
+    retryAt = now_ms() + 1100;
+    return false;
 }
 
 void check_animations() {
@@ -367,6 +457,7 @@ void stock_render_update() {
         std::exit(2);
     }
     if (!local::in_world() || dComIfGp_isEnableNextStage()) return;
+    if (!check_heap()) return;
     check_animations();
     if (s_arenaTest) {
         arena_test_update(now);
@@ -421,6 +512,13 @@ void stock_render_update() {
         Writer w(MSG_STATE);
         state.write(w);
         apply(id, w);
+    }
+    if (s_heapTest && !s_round && now - s_joined > 6000) {
+        cXyz feet;
+        float height = 0;
+        for (int id = 2; id <= kMaxPlayers; ++id) {
+            require(puppet::anchor(id, feet, height) && height > 0, "full-room Link puppet invisible under root pressure");
+        }
     }
     if (!s_round && now - s_joined > 8000) {
         roster();

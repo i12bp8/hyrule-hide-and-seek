@@ -20,6 +20,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <new>
 #include <vector>
 
 namespace hs::linkkit {
@@ -27,16 +28,20 @@ namespace hs::linkkit {
 namespace {
 
 // In a full room every player can keep ten independently transformed prop models. Resource data is
-// shared by the game, but each J3DModel and its animation state lives in this heap.
-constexpr u32 kHeapWanted = 64u << 20;
-constexpr u32 kHeapMinimum = 16u << 20;
-constexpr u32 kRootReserve = 16u << 20;
+// shared by the game, but each J3DModel and its animation state lives in this heap. Back it with
+// host memory: the game's root arena can have just under 32 MiB left, even on a machine with
+// plenty of RAM. Reserving 16 MiB there and requiring another 16 MiB disabled every puppet.
+constexpr u32 kHeapSize = 64u << 20;
+constexpr std::align_val_t kHeapAlignment{32};
+constexpr uint64_t kRetryMs = 1000;
 constexpr int kAnimCacheSize = 256;
 
 JKRExpHeap* s_heap = nullptr;
-bool s_heapTried = false;
+void* s_heapBuffer = nullptr;
+uint64_t s_heapRetryAt = 0;
+bool s_heapFailureLogged = false;
 JKRArchive* s_animArchive = nullptr;
-bool s_animArchiveTried = false;
+uint64_t s_animArchiveRetryAt = 0;
 
 struct Raw {
     u8* data = nullptr;
@@ -44,7 +49,7 @@ struct Raw {
 };
 
 struct Files {
-    bool tried = false;
+    uint64_t retryAt = 0;
     bool ok = false;
     Raw body, head, face, hands, sword, sheath, shield;
 } s_files;
@@ -87,9 +92,10 @@ Raw copy_out(JKRArchive* arc, const char* name) {
 }
 
 bool load_files() {
-    if (s_files.tried) return s_files.ok;
-    s_files.tried = true;
+    if (s_files.ok) return true;
+    if (now_ms() < s_files.retryAt) return false;
     if (heap() == nullptr) return false;
+    s_files.retryAt = now_ms() + kRetryMs;
 
     struct Want {
         const char* arc;
@@ -103,13 +109,17 @@ bool load_files() {
         {"/res/Object/HyShd.arc", {{"al_sha.bmd", &s_files.shield}}},
     };
     for (const Want& want : wants) {
+        if (std::all_of(want.files.begin(), want.files.end(),
+                [](const auto& file) { return file.second->data != nullptr; })) continue;
         JKRArchive* arc =
             JKRArchive::mount(want.arc, JKRArchive::MOUNT_MEM, s_heap, JKRArchive::MOUNT_DIRECTION_TAIL);
         if (arc == nullptr) {
             mods::log::warn("linkkit: could not open {}", want.arc);
             continue;
         }
-        for (const auto& [name, raw] : want.files) *raw = copy_out(arc, name);
+        for (const auto& [name, raw] : want.files) {
+            if (raw->data == nullptr) *raw = copy_out(arc, name);
+        }
         arc->unmount();
     }
     s_files.ok = s_files.body.data && s_files.head.data && s_files.face.data && s_files.hands.data;
@@ -152,23 +162,31 @@ int s_localColor = -1;
 }  // namespace
 
 JKRHeap* heap() {
-    if (s_heap != nullptr || s_heapTried) return s_heap;
-    s_heapTried = true;
+    if (s_heap != nullptr) return s_heap;
+    const uint64_t now = now_ms();
+    if (now < s_heapRetryAt) return nullptr;
+    s_heapRetryAt = now + kRetryMs;
     JKRHeap* root = JKRHeap::getRootHeap();
     if (root == nullptr) return nullptr;
-    const u32 rootFree = static_cast<u32>(root->getFreeSize());
-    u32 size = kHeapWanted;
-    if (rootFree < size + kRootReserve) size = rootFree > kRootReserve ? rootFree - kRootReserve : 0;
-    if (size < kHeapMinimum) {
-        mods::log::warn("linkkit: only {} KB free in the root heap, other players won't be drawn",
-            rootFree / 1024);
+    void* buffer = ::operator new(kHeapSize, kHeapAlignment, std::nothrow);
+    if (buffer != nullptr) {
+        // An explicit parent registers the external buffer in JKR's heap tree. findFromRoot()
+        // searches these external child heaps too, so game allocations/disposers still work.
+        s_heap = JKRExpHeap::create(buffer, kHeapSize, root, false);
+        if (s_heap == nullptr) ::operator delete(buffer, kHeapAlignment);
+        else s_heapBuffer = buffer;
+    }
+    if (s_heap == nullptr) {
+        if (!s_heapFailureLogged) {
+            mods::log::warn("linkkit: could not allocate {} MB for other players; will retry",
+                kHeapSize >> 20);
+            s_heapFailureLogged = true;
+        }
         return nullptr;
     }
-    s_heap = JKRExpHeap::create(size, root, false);
-    if (s_heap != nullptr) {
-        s_heap->setName("HideSeekHeap");
-        mods::log::info("linkkit: {} MB heap for other players", size >> 20);
-    }
+    s_heapFailureLogged = false;
+    s_heap->setName("HideSeekHeap");
+    mods::log::info("linkkit: {} MB host-memory heap for other players", kHeapSize >> 20);
     return s_heap;
 }
 
@@ -219,7 +237,7 @@ J3DAnmTransform* anim(uint16_t idx) {
     for (AnimEntry& e : s_anims) {
         if (e.idx == idx) {
             if (e.failedAt == 0) return e.anm;
-            if (now - e.failedAt < 1000) return nullptr;
+            if (now - e.failedAt < kRetryMs) return nullptr;
             // A mount or allocation can fail briefly during a stage transition. A transient miss
             // must not permanently leave every remote Link on the bind-pose fallback.
             e = AnimEntry{};
@@ -236,8 +254,8 @@ J3DAnmTransform* anim(uint16_t idx) {
     // open for the mod's lifetime (mounting per lookup repeatedly loaded the whole multi-MB
     // archive into our heap on every cache miss/retry, which is needless churn and, if the size
     // this SDK reports back for a resource is ever wrong, an unbounded memcpy).
-    if (!s_animArchiveTried) {
-        s_animArchiveTried = true;
+    if (s_animArchive == nullptr && now >= s_animArchiveRetryAt) {
+        s_animArchiveRetryAt = now + kRetryMs;
         s_animArchive = JKRArchive::mount("/res/Object/AlAnm.arc", JKRArchive::MOUNT_MEM, s_heap,
             JKRArchive::MOUNT_DIRECTION_TAIL);
     }
@@ -377,12 +395,17 @@ void shutdown() {
         s_animArchive->unmount();
         s_animArchive = nullptr;
     }
-    s_animArchiveTried = false;
+    s_animArchiveRetryAt = 0;
     if (s_heap != nullptr) {
         s_heap->destroy();
         s_heap = nullptr;
     }
-    s_heapTried = false;
+    // The external-buffer heap unlinks/disposes itself, but does not own its backing allocation.
+    // Release it only after every game disposer and the archive volume list have been cleaned up.
+    ::operator delete(s_heapBuffer, kHeapAlignment);
+    s_heapBuffer = nullptr;
+    s_heapRetryAt = 0;
+    s_heapFailureLogged = false;
 }
 
 }  // namespace hs::linkkit
