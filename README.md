@@ -1,13 +1,13 @@
 # Hyrule Hide & Seek
 
-Online **Prop Hunt** and **Hide & Seek** for Twilight Princess on [Dusklight](https://github.com/TwilitRealm/dusklight).
+Online **Prop Hunt** for Twilight Princess on [Dusklight](https://github.com/TwilitRealm/dusklight).
 2 to 16 players. Everyone is Link in their own tunic colour. Props hide as objects, furniture, animals and townspeople;
 hunters get a sword and a timer.
 
 ## Play
 
 1. Put `hyrule_hide_and_seek.dusk` in Dusklight's `mods` folder (or install it from the in-game mod browser).
-2. On the title screen pick the **Hide & Seek** game mode and start a new file. It's a separate save,
+2. On the title screen pick the **Prop Hunt** game mode and start a new file. It's a separate save,
    set up as a completed-story sandbox so everyone's world matches: no story cutscenes or quest
    interruptions, enemies or bosses; no twilight; fixed daylight; Hero's Clothes, sword and shield;
    five hearts; and unlimited air underwater.
@@ -24,9 +24,8 @@ Use **Dusklight 2.0.3 or newer**. Its official Linux AppImage fixes the missing 
 and HTTPS certificate issue ([release notes](https://github.com/TwilitRealm/dusklight/releases/tag/v2.0.3)).
 Linux, Windows and macOS now use the same WebSocket transport. The default public relay requires it;
 old Linux builds can still use a private Node relay's HTTPS fallback.
-Everyone in a room needs **protocol 10 (mod v0.3.5 or newer)**.
-Use **v0.3.6** for live, precise direction arrows. Hunters still on v0.3.5 see their older clue display.
-Use **v0.3.7** to fix invisible players on systems with limited game root-heap space.
+Everyone in a room needs **v0.4.0 (protocol 11)**. Older rooms are incompatible.
+Existing dedicated saves still work; the classic Link-only mode has been removed.
 
 ### A round
 
@@ -43,16 +42,16 @@ Use **v0.3.7** to fix invisible players on systems with limited game root-heap s
 | --- | --- |
 | **D-pad right** | Props: copy the pot, crate or barrel next to you (or the next prop) |
 | **D-pad left** | Props: previous prop |
-| **D-pad up** | Props: place a decoy during Hide or Hunt |
-| **D-pad down** | Hiders: taunt (3 s reveal, 4 s cooldown; +1 point every 10 s at most). Hunters: tracking pulse. |
+| **D-pad up** | Props: tap to place a decoy; hold for 0.45 s during Hunt to swap with your newest decoy. Hunters: whistle. |
+| **D-pad down** | Hiders: taunt (3 s reveal, 4 s cooldown; 1–2 points every 10 s at most). Hunters: tracking pulse. |
 | **B** | Hunters: swing; while swimming, tag a nearby prop. A missed swing costs half a heart by default; zero hearts eliminates you. |
 
-There are 57 selectable props drawn from across Hyrule: pots, crates, furniture, village signs and
-targets, forest plants, mountain rocks, Zora water props, plus a walking cucco, Ordon Ranch goats, Hidden Village/Ordon/Castle Town cats,
-and Castle Town citizens and shoppers. Milk jars, market baskets and shopping bags expand the
-settlement scenery. Native friendly animals and people are preserved. Selection is themed
-to the current map. Every disguise is the size of the real object and exactly as solid: you can't
-walk through a crate or a fence disguise, but grass stays walk-through.
+There are **67 selectable disguises**: pots, crates, barrels, pumpkins and leaves, grasses,
+rocks, signs, targets, graves, furniture, animals and 30 Castle Town citizens. Each map offers a
+matching selection. Models use native lighting, shadows and looping animations; grass sways and
+lily pads follow the water surface. The invisible crystal disguise has been removed.
+World interaction prompts are suppressed during rounds so a real pot or grass does not give away
+a nearby disguise. Solid props use native push cylinders or collision meshes.
 
 Each hider starts with three free decoy placements (host-adjustable from 0–10). After those are used,
 an extra decoy costs 3 points earned in that round and is available only during Hunt. Every player
@@ -61,13 +60,17 @@ setup. An eleventh placement replaces only that player's oldest decoy. Decoys ar
 real object, so hiders can block a passage with them; a hunter clears one by hitting it. They give
 no hunter points and deliberately count as a missed swing.
 
+A hider can swap places with their newest decoy **twice per round**, with a **15-second cooldown**.
+It costs no points and works during Hunt; the decoy moves to the hider's old position.
+Hunters can whistle every **40 seconds**. Every hidden prop makes a positional sound for hunters to listen for; the whistle
+creates no direction arrow or location marker. Tracking remains on D-pad down with a 25-second cooldown.
+
 ### Rules the host can change
 
-Mode (Prop Hunt / Hide & Seek), map (or a random one every round), hiding and round time, number of
+Map (or a random one every round), hiding and round time, number of
 hunters, whether found props join the hunters, the miss penalty, how long a prop may stay still
 before automatically taunting (Off by default), free decoys per hider, the final clue timer,
-hunter tracking pulses, starting rounds automatically, and whether the room is listed
-publicly, and collectible treasure. Rules are locked during a round.
+hunter tracking and whistles, decoy swapping, automatic rounds, public listing and treasure. Rules are locked during a round.
 
 The default rules give hiders a choice: stay hidden, or risk a clue to earn points from rupees
 and manual taunts. There are no recurring automatic clues. Each surviving hider gets **one exact
@@ -75,7 +78,7 @@ location marker for three seconds, with 20 seconds remaining**. The host can set
 0–60 seconds; 0 means voluntary clues only. Short custom hunts keep their first half quiet.
 The final marker fires on time, even after a recent ordinary clue. It marks the reveal location;
 moving afterward leaves that spot behind. Stationary clues are optional and default to Off.
-These rules work in both game modes, including for the last hider.
+These rules apply to every surviving prop, including the last one.
 
 Hunters can press D-pad down for a three-second direction and rough range to the nearest hider,
 with a 25-second cooldown. It gives no name or exact marker. Auto hunter counts round up to one
@@ -85,13 +88,11 @@ Everyone starts each round with five hearts. Misses and hits on decoys cost **ha
 default. The host can choose Off, a quarter, half, three quarters, or one heart. At zero hearts,
 a hunter watches until the next round. Hiders win immediately when every hunter is out.
 Only a confirmed find restores one heart, up to five: spring water, found hearts, potions and
-other world healing cannot refill a hunter. Hunters can sheathe their sword normally to use
-Horse Grass, call Epona, and interact with the map.
-The Rules tab's **Use recommended rules** button restores this balance while keeping your mode,
+other world healing cannot refill a hunter. Hunters can sheathe their sword normally; round interaction prompts stay suppressed.
+The Rules tab's **Use recommended rules** button restores this balance while keeping your
 chosen map and public-room preference. Existing stock rules upgrade automatically; custom rules
-are retained. Old stock decoy allowances migrate from five to three.
-
-**Hide & Seek mode**: everyone stays Link and hunters tag hiders by touching them, like SMO Online.
+are retained. Old stock decoy allowances migrate from five to three. Upgrading to the new
+map catalogue resets the map choice to Random while preserving the other custom settings.
 
 ### Treasure and clues
 
@@ -103,8 +104,8 @@ areas far from other rupees. Collected or expired locations keep a 1,200-unit ex
 cannot farm its replacements.
 
 Hiders earn **1 point per pickup**, with up to **2 extra points** for their third pickup. Every
-third round is **Treasure Rush**, with **2 points per rupee**. Treasure and manual taunts share a
-**6-point bonus limit per round**. Spending on decoys does not reset that limit; further pickups
+third round is **Treasure Rush**, with **2 points per rupee**. Treasure and manual taunts share an
+**8-point bonus limit per round**, also shared with style awards. Spending on decoys does not reset that limit; further pickups
 still reveal a clue but give no points once it is reached.
 
 Each pickup gives hunters a three-second clue: **Ahead / Behind / Left / Right** and
@@ -137,22 +138,34 @@ Use the **Guide** tab for the controls, including the touch D-pad on mobile.
 
 ### Maps
 
-Ordon Village, Ordon Ranch, Ordon Spring, South Faron Woods, Kakariko Village, Kakariko Graveyard,
-Death Mountain Trail, Zora's Domain, Upper Zora's River, Lake Hylia, Castle Town, Sacred Grove,
-Hidden Village, Gerudo Desert, Hyrule Field. The selected stage is the play area: scripted doors are
-inert, and loading-zone floors and exit volumes block movement before a transition can start.
-The arena stays loaded rather than returning you to its spawn. Every arena uses the normal free
-third-person field camera, without authored fixed camera zones or story cutscenes.
+The **13 arenas** are Ordon Village, Ordon Ranch, Kakariko Village, Kakariko Graveyard,
+Death Mountain, Castle Town, Sacred Grove, Hidden Village, Bulblin Camp, Telma's Bar,
+Snowpeak Ruins, Arbiter's Grounds and Hyrule Castle Grounds.
+
+Each has its own spawn, bounded play area, themed disguise pool and extra native scenery.
+Post-story layers and trigger filtering prevent quest events from starting. Loading exits and
+void boundaries block movement. Arenas use a free third-person camera. Random selects compact
+arenas for fewer than six players; the Ranch, Bulblin Camp and Castle Grounds suit larger rooms.
 
 ### Scoring
 
-Both starting roles have the same **24-point round ceiling**:
+Both starting roles have the same **26-point round ceiling**:
 
 | Points | Hiders | Starting hunters |
 | --- | --- | --- |
 | Objective: up to 12 | Awarded live in proportion to the hunt survived (1 per 15 s in a default round). | Every confirmed find advances shared points: 12 × found / starting hiders, rounded down. |
-| Bonus: up to 6 | Treasure and manual taunts; taunts give 1 at most every 10 s. | 3 per personal find, or 6 when the round started with only one hider. |
+| Bonus: up to 8 | Treasure, manual taunts and style awards. | 3 per personal find, or 8 with only one starting hider, plus style awards. |
 | Win: 6 | Survive until the hiders win. | Find every hider before time runs out. |
+
+Style rewards share the same 8-point gross bonus allowance:
+
+- **Bold taunt:** 2 points with a hunter within 1,500 units; otherwise a normal taunt gives 1.
+  Scoring taunts are spaced at least 10 seconds apart.
+- **Decoy fooled:** 1 point when a hunter hits your decoy, up to three awards per round.
+- **Close call:** 1 point for a hunter's miss within 400 units, up to twice per round, at least 8 seconds apart.
+- **Last standing:** 2 points if you are the only surviving prop when the timer expires and more than one prop started.
+- **First blood:** 1 point for the first find of the round.
+- **Quick find:** 1 point for another personal find within 20 seconds.
 
 Automatic clues give no points. Found hiders retain their survival points and can earn personal
 find bonuses from their remaining allowance after becoming hunters; they receive no hunter
@@ -162,7 +175,7 @@ current-round points and 3 from the session total. Totals otherwise add up for t
 
 These limits prevent loot farming or room size alone from inflating one role's score. Map routes,
 player skill and the chosen rules still affect which side wins; equal score ceilings do not prove
-equal win rates. The [balance notes](docs/balance.md) explain the references and playtest checks.
+equal win rates. The [balance notes](docs/balance.md) explain the score budgets and playtest checks.
 
 ## Not compatible with
 
@@ -203,13 +216,13 @@ free indefinitely. See [capacity and quota estimates](server/README.md#free-tier
 ### Tests
 
 ```sh
-tests/run.sh                    # rules, balance, saved settings, interpolation and layout (4,500+ checks)
+tests/run.sh                    # rules, balance, saved settings, interpolation and layout (5,700+ checks)
 cd server && npm install && npm test   # the relay and the bots
 ```
 
 `tests/recolor_preview.py <disc> out.png` renders every tunic colour from your own game files.
 `tools/validate_prop_assets.py <disc>` checks every archive, model and animation name against an
-extracted disc, including exact letter case and numeric model IDs.
+extracted disc, including exact letter case, numeric archive entry indices and collision meshes.
 
 ### Try it alone
 

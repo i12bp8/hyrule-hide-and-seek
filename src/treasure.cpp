@@ -33,7 +33,7 @@ bool ground_position(Point originPoint, Point& atPoint) {
     if (y == -G_CM3D_F_INF || !std::isfinite(y) || std::fabs(y - origin.y) > 260.0f ||
         dComIfG_Bgsp().GetExitId(ground) != 0x3F || dBgS_GetNY(ground) < 0.65f) return false;
     at.y = y;
-    if (arena::overlaps_loading_exit({at.x, at.y, at.z})) return false;
+    if (arena::overlaps_loading_exit({at.x, at.y, at.z}) || arena::edge_distance(at.x, at.z) < 150.0f) return false;
     dBgS_WtrChk water; water.Set(at, at.y + 100000.0f);
     if (dComIfG_Bgsp().WaterChk(&water) && water.GetHeight() > at.y + 80.0f) return false;
     // A point over a cliff/wall is a bad reward. Require a clear path at body height and
@@ -80,9 +80,8 @@ void update() {
         std::strncmp(local::stage(), map_info(m.map).stage, 8) != 0) return;
     if (m.round != s_round) {
         s_round = m.round; s_nextSpawn = s_nextSeed = 0;
-        // Broad outdoor maps use larger steps; village streets and mountain paths need detail.
-        const bool broad = m.map == 9 || m.map == 13 || m.map == 14;
-        s_area.clear(broad ? 600.0f : 300.0f);
+        // Broad outdoor maps use larger steps; village streets and interiors need detail.
+        s_area.clear(map_info(m.map).treasureStep);
     }
     const uint64_t now = now_ms();
     if (net::is_host()) {

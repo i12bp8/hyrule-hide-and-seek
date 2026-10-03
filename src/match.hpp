@@ -23,9 +23,11 @@ constexpr float kRupeeSpacing = 1200.0f;
 constexpr float kRupeeCollectRadius = 180.0f; // 100-unit local pickup plus one moving-state interval
 constexpr uint64_t kRupeeRespawnCooldownMs = 30000;
 constexpr float kRupeePlayerClearance = 600.0f;
+constexpr uint64_t kWhistleCooldownMs = 40000;
+constexpr uint64_t kSwapCooldownMs = 15000;
+constexpr int kSwapsPerRound = 2;
 
 struct Settings {
-    Mode mode = Mode::PropHunt;
     uint8_t map = kRandomMap;
     uint16_t hideSecs = 30;
     uint16_t seekSecs = 180;
@@ -39,6 +41,8 @@ struct Settings {
     bool autoNext = true;
     bool isPublic = false;
     uint8_t freeDecoys = 3;  // free placements per hider, available from the Hide phase
+    bool decoySwap = true;   // hold D-pad up: trade places with your newest decoy
+    bool whistle = true;     // hunters' D-pad up: every prop makes a sound where it hides
 
     void write(Writer& w) const;
     void read(Reader& r);
@@ -78,6 +82,16 @@ struct Player {
     uint64_t lastDecoyAt = 0;
     uint16_t objectiveAwarded = 0;  // host bookkeeping for survival/capture progress
     uint8_t decoysUsed = 0;
+    // Round stats, carried in the roster for the results awards.
+    uint8_t decoyFools = 0;   // hunters who struck this player's decoys
+    uint8_t closeCalls = 0;   // missed swings right next to this hider
+    uint8_t taunts = 0;
+    uint8_t swapsUsed = 0;
+    uint8_t misses = 0;       // a hunter's missed swings (decoys included)
+    uint64_t swapReadyAt = 0;     // local-clock deadline, carried as remaining time in the roster
+    uint64_t whistleReadyAt = 0;
+    uint64_t quickFindUntil = 0;
+    uint64_t closeCallReadyAt = 0;
 };
 
 struct Decoy {
@@ -127,6 +141,9 @@ int decoy_count();
 const Decoy& decoy(int index);
 int my_decoys_left();  // remaining free placements; extra placements cost kExtraDecoyCost
 bool can_place_decoy();
+bool can_swap();         // decoy swap available right now
+int my_swaps_left();
+uint32_t whistle_cooldown_ms();
 uint32_t next_clue_ms();
 int rupee_points();
 bool rupee_spawn_blocked(float x, float z); // recent pickups and fresh, active hiders
@@ -151,8 +168,16 @@ void report_hit(uint8_t target);
 void report_miss();
 uint16_t my_hunter_life();  // includes unacknowledged local misses for immediate feedback
 void place_decoy();
+void request_swap();
+void request_whistle();
 void report_decoy_hit(uint8_t decoyId);
 void send_taunt(uint8_t sound);
+
+#ifdef HS_LAB
+// Test harness only: a host-side decoy at an exact spot, for side-by-side disguise checks.
+void lab_add_decoy(uint8_t prop, float x, float y, float z, int16_t yaw);
+void lab_clear_decoys();
+#endif
 
 // Wiring to net.
 void on_welcome();
@@ -165,11 +190,11 @@ void on_disconnected();
 // Every frame.
 void update();
 
-// Hooks for the local-player module: taunts from others and rounds starting.
+// Hooks for the local-player module: taunts from others, whistles and confirmed swaps.
 struct Hooks {
     void (*taunt)(uint8_t from, uint8_t sound, ClueKind kind) = nullptr;
-    void (*roundStarted)() = nullptr;
-    void (*foundMe)(uint8_t by) = nullptr;
+    void (*whistle)(uint8_t hunter) = nullptr;
+    void (*teleport)(float x, float y, float z, int16_t yaw) = nullptr;
 };
 void set_hooks(const Hooks& hooks);
 

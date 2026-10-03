@@ -6,6 +6,7 @@
 #include "match.hpp"
 #include "protocol.hpp"
 #include "props.hpp"
+#include "rarc.hpp"
 #include "arena_geometry.hpp"
 #include "gameplay.hpp"
 #include "rules_config.hpp"
@@ -190,7 +191,8 @@ static void test_protocol_roundtrip() {
     CHECK(!shortReader.ok());
 
     match::Settings s;
-    s.mode = Mode::HideAndSeek;
+    s.decoySwap = false;
+    s.whistle = false;
     s.map = kRandomMap;
     s.hideSecs = 5;      // clamps to 10
     s.seekSecs = 60000;  // clamps to 1800
@@ -208,7 +210,7 @@ static void test_protocol_roundtrip() {
     t.read(sr);
     CHECK(sr.ok());
     CHECK(!t.trackingPulse);
-    CHECK(t.mode == Mode::HideAndSeek && t.map == kRandomMap && t.hunters == 2);
+    CHECK(!t.decoySwap && !t.whistle && t.map == kRandomMap && t.hunters == 2);
     CHECK(t.hideSecs == 10 && t.seekSecs == 1800);
     CHECK(t.missPenaltyQuarters == 0 && t.isPublic && t.foundJoinHunters && t.finalClueSecs == 35 && t.autoNext);
     CHECK(t.idleTauntSecs == 90);
@@ -418,13 +420,13 @@ static void test_full_round_two_players() {
     else deliver(static_cast<uint8_t>(hunter), hit_msg(1, static_cast<uint8_t>(hider)));
     CHECK(match::player(hider).found);
     CHECK(count_sent(MSG_FOUND) == 1);
-    CHECK(match::player(hunter).roundPoints == 12 + 6);
+    CHECK(match::player(hunter).roundPoints == 12 + scoring::kBonusPoints);
     CHECK(match::player(hider).roundPoints == 6);
 
     advance(100);
     CHECK(match::get().phase == Phase::Results);
     CHECK(match::get().winner == 1);
-    CHECK(match::player(hunter).roundPoints == 12 + 6 + 6);
+    CHECK(match::player(hunter).roundPoints == 12 + scoring::kBonusPoints + 6);
     CHECK(match::player(hider).roundPoints == 6); // joining hunters earns no second win bonus
     CHECK(count_sent(MSG_RESULTS) == 1);
 
@@ -596,11 +598,12 @@ static void test_client_and_host_migration() {
         roster.u8(id == 1 ? 0 : 3); // survival objective already awarded at 30 seconds
         roster.u8(id == 1 ? kArenaLife : 0);
         roster.u16(0);
+        for (int stat = 0; stat < 5; ++stat) roster.u8(0);
+        for (int cooldown = 0; cooldown < 4; ++cooldown) roster.u16(0);
     }
     deliver(1, roster.bytes());
     Writer round(MSG_ROUND);
     round.u32(7);
-    round.u8(0);
     round.u8(2);
     round.u16(30);
     round.u16(120);
@@ -687,79 +690,48 @@ static void test_maps() {
 }
 
 static void test_props() {
-    std::printf("prop catalogue\n");
-    CHECK(prop_count() == 67);
+    std::printf("native prop catalogue and per-arena palettes\n");
+    CHECK(prop_count() == kPropCount);
+    CHECK(prop_count_for_map(-1) == kPropCount - 1);
     for (int i = 0; i < prop_count(); ++i) {
         const PropInfo& prop = prop_info(i);
-        CHECK(prop.name != nullptr && prop.arc != nullptr);
-        CHECK(prop.bmd != nullptr || prop.bmdIndex >= 0);
+        CHECK(prop.name != nullptr && prop.arc != nullptr && prop.model.set());
         CHECK(prop.radius > 0.0f && prop.height > 0.0f && prop.scale > 0.0f);
-        CHECK(prop.simpleShadowSize >= 0.0f && prop.simpleShadowSize <= 200.0f);
-        CHECK(std::isfinite(prop.offsetX) && std::isfinite(prop.offsetY) &&
-              std::isfinite(prop.offsetZ));
-    }
-    CHECK(std::strcmp(prop_info(15).name, "Sign") == 0);
-    CHECK(std::strcmp(prop_info(20).name, "Gravestone") == 0);
-    CHECK(std::strcmp(prop_info(58).name, "Map Table") == 0);
-    CHECK(prop_count_for_map(-1) == 57);        // nine unsafe or oversized legacy IDs stay reserved
-    CHECK(prop_info(27).simpleShadowSize == 0.0f); // Lily Pad gets no black ground blob
-    CHECK(prop_info(5).simpleShadowSize == 70.0f); // pumpkins use a cheap native-sized shadow
-    CHECK(prop_info(9).simpleShadowSize == 48.0f); // Cucco no longer redraws into a shadow pass
-    CHECK(prop_info(35).simpleShadowSize == 61.0f); // neither does the oil jar
-    // Disguises are drawn at the native actor's scale, the size of the real object beside them.
-    CHECK(prop_info(2).scale == 0.5f);   // Crate: daObjCarry_c KIBAKO
-    CHECK(prop_info(5).scale == 1.4f);   // Pumpkin: daObj_Pumpkin_Param_c
-    CHECK(prop_info(7).scale == 0.5f);   // Small Crate: Obj_kbox
-    CHECK(prop_info(11).scale == 0.6f);  // Deku Nut: daObjCarry_c BOKKURI
-    CHECK(prop_info(19).scale == 1.35f); // Boar Bones: daObjIBone_c
-    CHECK(prop_info(20).scale == 1.0f);  // Gravestone
-    CHECK(prop_info(45).scale == 2.0f);  // Large Box: daObj_Lbox_HIO_c
-    CHECK(!prop_on_map(28, -1) && !prop_on_map(29, -1)); // ice floes are platforms at real size
-    CHECK(!prop_on_map(30, -1) && !prop_on_map(31, -1)); // so are the raft and the kelp
-    // Collision copies the native actor's.
-    CHECK(prop_solid_unmatched() == 0);
-    CHECK(prop_solid(0).kind == Solid::Cylinder && prop_solid(0).radius == 30.0f);  // Pot
-    CHECK(prop_solid(20).kind == Solid::Background);   // Gravestone
-    CHECK(prop_solid(45).kind == Solid::Background);   // Large Box
-    CHECK(prop_solid(32).kind == Solid::None);         // Laundry hangs loose
-    CHECK(prop_solid(9).kind == Solid::None);          // a real Cucco is pushed aside
-    for (int i = 0; i < prop_count(); ++i) {
-        const PropSolid& solid = prop_solid(i);
-        if (solid.kind == Solid::Background) {
-            CHECK(solid.dzb != nullptr || solid.dzbIndex >= 0);
-            CHECK(solid.bgScaleX > 0.0f && solid.bgScaleY > 0.0f && solid.bgScaleZ > 0.0f);
+        CHECK(std::isfinite(prop.offsetY) && std::isfinite(prop.shadowSize));
+        CHECK(prop.shadowSize >= 0.0f);
+        CHECK(std::strcmp(prop.name, "Crystal") != 0); // invisible legacy disguise is removed
+        if (prop.solid.kind == Solid::Background) {
+            CHECK(prop.solid.dzb.set() && prop.solid.bgScale > 0.0f);
         }
-        if (solid.kind == Solid::Cylinder) CHECK(solid.radius >= 0.0f);
+        if (prop.solid.kind == Solid::Cylinder) CHECK(prop.solid.radius >= 0.0f);
     }
-    CHECK(prop_info(32).scale == 1.0f && prop_info(32).offsetY > 140.0f); // Laundry
-    CHECK(prop_info(26).scale == 4.0f && std::fabs(prop_info(26).offsetX) > 2000.0f); // Crystal
-    CHECK(!prop_on_map(36, -1)); // environment-sized River Rock
-    CHECK(!prop_on_map(43, -1)); // incomplete two-model Board Target
-    CHECK(!prop_on_map(47, -1)); // particle-dependent Palace Candle
-    CHECK(!prop_on_map(50, -1)); // actor-placed flat Desert Fence rail
-    CHECK(!prop_on_map(57, -1)); // composite Lake Buoy
-    CHECK(prop_for_carry_type(3) == 10);   // cannonball
-    CHECK(prop_for_carry_type(6) == 11);   // Deku nut
-    CHECK(prop_for_carry_type(10) == 12);  // big blue pot
-    CHECK(prop_for_carry_type(12) == 13);  // small Twilight pot
-    CHECK(prop_for_carry_type(13) == 14);  // big Twilight pot
-    CHECK(prop_for_carry_type(99) == -1);
-    for (int i = 0; i < 200; ++i) {
-        const int prop = random_prop();
-        CHECK(prop >= 0 && prop < prop_count() && prop_on_map(prop, -1));
-    }
-    for (int map = 0; map < map_count(); ++map) {
-        CHECK(prop_count_for_map(map) >= 15);
-        int current = prop_for_map(map, 0);
-        CHECK(prop_on_map(current, map));
-        const int next = step_prop(current, map, 1);
-        const int previous = step_prop(current, map, -1);
-        CHECK(next != current && previous != current);
-        CHECK(prop_on_map(next, map) && prop_on_map(previous, map));
-        for (int i = 0; i < 50; ++i) {
-            const int prop = random_prop(map);
-            CHECK(prop >= 0 && prop < prop_count() && prop_on_map(prop, map));
+    CHECK(prop_info(kCrate).scale == 0.5f && prop_info(kCrate).shadow == Shadow::Square);
+    CHECK(prop_info(kPumpkin).scale == 1.4f && prop_info(kPumpkin).shadowSize == 50.0f);
+    CHECK(prop_info(kLilyPad).motion == Motion::LilyPad && prop_info(kLilyPad).offsetY == 0);
+    CHECK(prop_info(kLilyPad).shadow == Shadow::None);
+    CHECK(prop_info(kHorseGrass).motion == Motion::Sway && prop_info(kHorseGrass).shadow == Shadow::None);
+    CHECK(prop_info(kCucco).shadow == Shadow::Real && prop_info(kOilJar).extra.set());
+    CHECK(prop_info(kPot).solid.kind == Solid::Cylinder && prop_info(kPot).solid.radius == 30);
+    CHECK(prop_info(kGravestone).solid.kind == Solid::Background);
+    CHECK(prop_info(kCucco).solid.kind == Solid::None);
+    CHECK(prop_for_native(Native::Carry, 0) == kPot);
+    CHECK(prop_for_native(Native::Carry, 10) == kBlueBigPot);
+    CHECK(prop_for_native(Native::Carry, 99) == -1);
+    CHECK(prop_for_native(Native::CallGrass, 1) == kHorseGrass);
+    CHECK(!prop_selectable(kTreasureRupee) && !prop_selectable(-1));
+    for (int map = -1; map < map_count(); ++map) {
+        const int count = prop_count_for_map(map);
+        CHECK(count >= 6);
+        bool seen[kPropCount] = {};
+        for (int ordinal = 0; ordinal < count; ++ordinal) {
+            const int prop = prop_for_map(map, ordinal);
+            CHECK(prop_selectable(prop) && prop_on_map(prop, map));
+            CHECK(!seen[prop]); seen[prop] = true;
+            CHECK(step_prop(prop, map, 1) == prop_for_map(map, ordinal + 1));
+            CHECK(step_prop(prop, map, -1) == prop_for_map(map, ordinal - 1));
         }
+        for (int i = 0; i < 50; ++i) CHECK(prop_on_map(random_prop(map), map));
+        CHECK(!prop_on_map(kTreasureRupee, map));
     }
 }
 
@@ -768,38 +740,38 @@ static void test_balanced_rules() {
     const auto fresh = settings::parse_rules("");
     CHECK(fresh.hideSecs == 30 && fresh.seekSecs == 180 && fresh.finalClueSecs == 20);
     CHECK(fresh.trackingPulse && fresh.idleTauntSecs == 0 && fresh.missPenaltyQuarters == 2);
-    const auto upgraded = settings::parse_rules(settings::upgrade_rules("0,14,45,240,0,27,60,10"));
+    const auto upgraded = settings::parse_legacy_rules(settings::upgrade_rules("0,14,45,240,0,27,60,10"));
     CHECK(upgraded.hideSecs == 30 && upgraded.seekSecs == 180);
     CHECK(upgraded.finalClueSecs == 20 && upgraded.trackingPulse && upgraded.idleTauntSecs == 20);
     CHECK(upgraded.map == 14 && upgraded.isPublic && upgraded.freeDecoys == 10);
-    const auto legacy = settings::parse_rules(settings::upgrade_rules("0,255,45,240,0,11"));
+    const auto legacy = settings::parse_legacy_rules(settings::upgrade_rules("0,255,45,240,0,11"));
     CHECK(legacy.hideSecs == 30 && legacy.finalClueSecs == 20 && legacy.idleTauntSecs == 20);
-    const auto custom = settings::parse_rules(settings::upgrade_rules("1,9,75,360,3,16,0,7"));
+    const auto custom = settings::parse_legacy_rules(settings::upgrade_rules("1,9,75,360,3,16,0,7"));
     CHECK(custom.hideSecs == 75 && custom.seekSecs == 360 && custom.hunters == 3);
     CHECK(custom.finalClueSecs == 0 && custom.missPenaltyQuarters == 0 && custom.idleTauntSecs == 0);
-    CHECK(custom.mode == Mode::HideAndSeek && custom.map == 9 && custom.freeDecoys == 7);
+    CHECK(custom.map == 9 && custom.freeDecoys == 7);
     auto changed = fresh;
     changed.trackingPulse = false;
     CHECK(!settings::parse_rules(settings::format_rules(changed)).trackingPulse);
     CHECK(settings::format_rules(settings::parse_rules(settings::format_rules(custom))) == settings::format_rules(custom));
-    const auto stock = settings::parse_rules(settings::upgrade_balance_rules("0,14,30,180,0,111,20,3"));
+    const auto stock = settings::parse_legacy_rules(settings::upgrade_balance_rules("0,14,30,180,0,111,20,3"));
     CHECK(stock.idleTauntSecs == 30 && stock.map == 14);
-    const auto kept = settings::parse_rules(settings::upgrade_balance_rules("1,9,75,360,3,16,20,7"));
+    const auto kept = settings::parse_legacy_rules(settings::upgrade_balance_rules("1,9,75,360,3,16,20,7"));
     CHECK(kept.idleTauntSecs == 20 && kept.seekSecs == 360 && kept.finalClueSecs == 0 && kept.freeDecoys == 7);
-    const auto search = settings::parse_rules(settings::upgrade_search_rules("0,14,30,180,0,111,30,3"));
+    const auto search = settings::parse_legacy_rules(settings::upgrade_search_rules("0,14,30,180,0,111,30,3"));
     CHECK(search.idleTauntSecs == 0 && search.finalClueSecs == 20 && search.missPenaltyQuarters == 2);
     CHECK(search.map == 14 && search.foundJoinHunters && search.treasure);
-    const auto customSearch = settings::parse_rules(settings::upgrade_search_rules("1,9,75,360,3,16,20,7"));
+    const auto customSearch = settings::parse_legacy_rules(settings::upgrade_search_rules("1,9,75,360,3,16,20,7"));
     CHECK(customSearch.idleTauntSecs == 20 && customSearch.finalClueSecs == 0 && customSearch.missPenaltyQuarters == 0);
     const auto pipeline = settings::upgrade_balance_rules(settings::upgrade_treasure_rules(
         settings::upgrade_rules("0,255,45,240,0,11")));
-    CHECK(settings::parse_rules(settings::upgrade_search_rules(pipeline, true)).idleTauntSecs == 0);
+    CHECK(settings::parse_legacy_rules(settings::upgrade_search_rules(pipeline, true)).idleTauntSecs == 0);
     changed.idleTauntSecs = 30; changed.missPenaltyQuarters = 4; changed.finalClueSecs = 0;
     const auto explicitRules = settings::format_rules(changed);
-    CHECK(settings::upgrade_search_rules(explicitRules) == explicitRules);
+    CHECK(settings::parse_rules(explicitRules).decoySwap == changed.decoySwap);
     CHECK(settings::parse_rules(explicitRules).missPenaltyQuarters == 4);
-    CHECK(settings::parse_rules("0,255,30,180,0,111,0,3,99,999").missPenaltyQuarters == 4);
-    CHECK(settings::parse_rules("0,255,30,180,0,111,0,3,-1,-1").finalClueSecs == 0);
+    CHECK(settings::parse_rules("255,30,180,0,111,0,3,99,999").missPenaltyQuarters == 4);
+    CHECK(settings::parse_rules("255,30,180,0,111,0,3,-1,-1").finalClueSecs == 0);
     CHECK(life_after_miss(20) == 18 && life_after_miss(2) == 0 && life_after_miss(1) == 0);
     CHECK(life_after_miss(0) == 0 && kArenaHeartPieces / 5 * 4 == kArenaLife);
     for (uint8_t penalty = 0; penalty <= 4; ++penalty) {
@@ -819,19 +791,19 @@ static void test_balanced_rules() {
             CHECK(hunters >= 1 && hunters < n);
         }
     }
-    CHECK(recommended_hunters(4, 0) == 1 && recommended_hunters(4, 9) == 2);
-    CHECK(recommended_hunters(16, 14) == 6);
+    CHECK(recommended_hunters(4, 0) == 1 && recommended_hunters(4, 8) == 2);
+    CHECK(recommended_hunters(16, 12) == 6);
     for (int i = 0; i < 100; ++i) {
         const int selected = random_map(0, 2);
         CHECK(selected != 0 && !map_info(selected).large);
     }
     host_room(4);
     match::Settings rules;
-    rules.map = 9;
+    rules.map = 8;
     rules.autoNext = false;
     match::set_settings(rules);
     match::start_round();
-    CHECK(match::get().map == 9 && match::count_role(Role::Hunter) == 2);
+    CHECK(match::get().map == 8 && match::count_role(Role::Hunter) == 2);
     match::end_round();
     rules.hunters = 1;
     match::set_settings(rules);
@@ -933,11 +905,12 @@ static void test_find_healing() {
         CHECK(match::player(hunter).hunterLife == 20 && match::player(hunter).missSequence == 3);
     }
     host_room(2);
-    auto rules = match::get().settings; rules.mode = Mode::HideAndSeek;
+    auto rules = match::get().settings;
     match::set_settings(rules); match::start_round();
     everyone_ready(2, map_info(match::get().map).stage); advance(21'000);
-    deliver(hunter_id(), miss_msg(match::get().round, 10));
-    CHECK(match::player(hunter_id()).hunterLife == kArenaLife && match::get().phase == Phase::Seek);
+    const int lastHunter = hunter_id();
+    deliver(lastHunter, miss_msg(match::get().round, 10));
+    CHECK(match::player(lastHunter).hunterLife == 0 && match::get().phase == Phase::Results);
 }
 
 static void test_hunter_health_migration() {
@@ -955,7 +928,7 @@ static void test_hunter_health_migration() {
         if (sent.bytes[0] == MSG_ROSTER) roster = sent.bytes;
         if (sent.bytes[0] == MSG_ROUND) round = sent.bytes;
     }
-    CHECK(roster.size() == 2 + 4 * 17);
+    CHECK(roster.size() == 2 + 4 * 30);
     reset_net(4); g_fake.self = living; g_fake.host = living == 1 ? 2 : 1;
     match::on_welcome();
     deliver(g_fake.host, roster); deliver(g_fake.host, round);
@@ -971,7 +944,7 @@ static void test_hunter_health_migration() {
     match::report_miss(); match::report_hit(hider_id()); match::report_decoy_hit(1);
     CHECK(count_sent(MSG_MISS) == 2 && count_sent(MSG_HIT) == 0 && count_sent(MSG_HIT_DECOY) == 0);
     // A partial acknowledgement leaves the last miss predicted, without double charging.
-    const auto offset = 2 + (living - 1) * 17;
+    const auto offset = 2 + (living - 1) * 30;
     roster[offset + 14] = 2; roster[offset + 15] = 9;
     deliver(g_fake.host, roster);
     CHECK(match::my_hunter_life() == 0 && match::player(living).missSequence == 9);
@@ -1001,7 +974,7 @@ static void test_hunter_health_migration() {
 }
 
 static void test_search_clues() {
-    std::printf("voluntary search clues and one final clue across modes and maps\n");
+    std::printf("voluntary search clues and one final clue across arenas\n");
     CHECK(std::string(search_clue(10, 100, 1199).direction) == "Ahead");
     CHECK(std::string(search_clue(100, 10, 1200).direction) == "Right");
     CHECK(std::string(search_clue(-100, 10, 3500).direction) == "Left");
@@ -1040,11 +1013,11 @@ static void test_search_clues() {
     const auto verticalView = search_clue_from_view(30, -40, 0, 0, 50);
     CHECK(std::isfinite(verticalView.arrowX) && std::isfinite(verticalView.arrowY));
     CHECK(final_clue_window_ms(20, 180) == 20000 && final_clue_window_ms(60, 30) == 15000);
-    for (Mode mode : {Mode::PropHunt, Mode::HideAndSeek}) {
+    { // finale on a compact arena and a large arena
         for (int map : {0, 9}) {
             host_room(4);
             auto rules = match::get().settings;
-            rules.mode = mode; rules.map = map; rules.seekSecs = 180;
+            rules.map = map; rules.seekSecs = 180;
             match::set_settings(rules); match::start_round();
             const char* stage = map_info(map).stage;
             everyone_ready(4, stage); advance(21000);
@@ -1318,7 +1291,7 @@ static void test_treasure_respawn() {
     // A new round announcement clears the client's old snapshot and cooldowns together.
     g_fake.host = hunter;
     Writer nextRound(MSG_ROUND);
-    nextRound.u32(match::get().round + 1); nextRound.u8(static_cast<uint8_t>(rules.mode));
+    nextRound.u32(match::get().round + 1);
     nextRound.u8(match::get().map); nextRound.u16(rules.hideSecs); nextRound.u16(rules.seekSecs);
     nextRound.u8(1); nextRound.u8(0);
     deliver(static_cast<uint8_t>(hunter), nextRound.bytes());
@@ -1431,10 +1404,10 @@ static void test_fair_round_scores() {
         }
         advance(100);
         CHECK(match::get().winner == 1 && match::get().phase == Phase::Results);
-        CHECK(match::player(hunters[0]).roundPoints == 18 + scoring::personal_find(hiders.size()));
+        CHECK(match::player(hunters[0]).roundPoints == 18 + scoring::personal_find(hiders.size()) + (hiders.size() > 1 ? scoring::kFirstBloodPoints : 0));
         for (size_t i = 1; i < hunters.size(); ++i) CHECK(match::player(hunters[i]).roundPoints == 18);
-        CHECK(match::player(hiders[0]).roundPoints <= 7); // no survival or win award for their new team
-        for (int id = 1; id <= n; ++id) CHECK(match::player(id).roundPoints <= 24);
+        CHECK(match::player(hiders[0]).roundPoints <= scoring::kBonusPoints + scoring::survival(5000, rules.seekSecs)); // no survival or win award for their new team
+        for (int id = 1; id <= n; ++id) CHECK(match::player(id).roundPoints <= scoring::kObjectivePoints + scoring::kBonusPoints + scoring::kWinPoints);
     }
 
     host_room(2);
@@ -1453,19 +1426,19 @@ static void test_fair_round_scores() {
         Writer pickup(MSG_COLLECT_RUPEE); pickup.u32(match::get().round); pickup.u16(match::get().rupees[0].id);
         deliver(static_cast<uint8_t>(hider), pickup.bytes());
     };
-    for (int n = 0; n < 5; ++n) loot();
-    CHECK(match::player(hider).bonusEarned == 6 && match::player(hider).roundPoints == 6);
+    for (int n = 0; n < 6; ++n) loot();
+    CHECK(match::player(hider).bonusEarned == scoring::kBonusPoints && match::player(hider).roundPoints == scoring::kBonusPoints);
     deliver(static_cast<uint8_t>(hider), place_decoy_msg(match::get().round));
-    CHECK(match::player(hider).roundPoints == 3);
+    CHECK(match::player(hider).roundPoints == scoring::kBonusPoints - match::kExtraDecoyCost);
     loot();
-    CHECK(match::player(hider).roundPoints == 3 && match::player(hider).bonusEarned == 6);
+    CHECK(match::player(hider).roundPoints == scoring::kBonusPoints - match::kExtraDecoyCost && match::player(hider).bonusEarned == scoring::kBonusPoints);
     // A new host keeps the gross limit and the last survival award, even after spending.
     g_fake.host = hider; g_fake.self = hider;
     match::on_host_changed(hider);
     loot();
-    CHECK(match::player(hider).roundPoints == 3 && match::player(hider).bonusEarned == 6);
+    CHECK(match::player(hider).roundPoints == scoring::kBonusPoints - match::kExtraDecoyCost && match::player(hider).bonusEarned == scoring::kBonusPoints);
     advance(181'000);
-    CHECK(match::player(hider).roundPoints == 21); // 12 survival + 6 win + 3 unspent bonus
+    CHECK(match::player(hider).roundPoints == scoring::kObjectivePoints + scoring::kWinPoints + scoring::kBonusPoints - match::kExtraDecoyCost); // 12 survival + 6 win + 3 unspent bonus
     match::start_round();
     CHECK(match::player(hider).bonusEarned == 0 && match::player(hider).objectiveAwarded == 0);
 }
@@ -1486,10 +1459,10 @@ static void test_interpolation_and_compact_states() {
     CHECK(bounded.x == 200); // bounded extrapolation, no runaway stale movement
     b.x = 10000;
     CHECK(interpolate_state(a, 1000, b, 1100, 1150).x == 10000); // teleports snap
-    CHECK(prop_on_map(59, 1) && !prop_on_map(59, 10));
-    CHECK(prop_on_map(60, 12) && !prop_on_map(60, 13));
-    CHECK(prop_on_map(61, 10) && !prop_on_map(61, 1));
-    CHECK(!prop_on_map(rupee_prop(), -1));
+    CHECK(prop_on_map(kGoat, 1) && !prop_on_map(kGoat, 10));
+    CHECK(prop_on_map(kCitizenFirst, 5) && !prop_on_map(kCitizenFirst, 1));
+    CHECK(prop_on_map(kChair, 10) && !prop_on_map(kChair, 1));
+    CHECK(!prop_on_map(kTreasureRupee, -1));
 
     // Moving players must stay smooth in the lobby as well as during rounds. Idle traffic drops.
     reset_net(2); match::on_welcome(); g_fake.sent.clear();
@@ -1534,7 +1507,164 @@ static void test_mobile_hud_layout() {
     CHECK((!hud::Rect{0, 0, 20, 20}.overlaps(hud::Rect{28, 0, 20, 20})));
 }
 
+static void test_archive_bounds() {
+    std::printf("private animation archive bounds and entry indices\n");
+    std::vector<uint8_t> bytes(0x74);
+    const auto word = [&](size_t at, uint32_t value) {
+        for (int i = 0; i < 4; ++i) bytes[at + i] = static_cast<uint8_t>(value >> (24 - i * 8));
+    };
+    word(0, 0x52415243); word(4, bytes.size()); word(8, 0x20);
+    word(12, 0x50); word(16, 4);
+    word(0x28, 2); word(0x2C, 0x20);
+    word(0x44, 0x02000000); // entry 0 is a directory
+    word(0x54, 99u << 16);  // entry 1's file ID deliberately differs from its index
+    word(0x58, 0x01000000); word(0x5C, 0); word(0x60, 4);
+    bytes[0x70] = 'B'; bytes[0x71] = 'C'; bytes[0x72] = 'K'; bytes[0x73] = '!';
+    const auto resource = rarc::resource_at(bytes, 1);
+    CHECK(resource.size() == 4 && resource[0] == 'B' && resource[3] == '!');
+    CHECK(rarc::resource_at(bytes, 0).empty());
+    CHECK(rarc::resource_at(bytes, 99).empty());
+    for (size_t length = 0; length < bytes.size(); ++length)
+        CHECK(rarc::resource_at(std::span<const uint8_t>(bytes.data(), length), 1).empty());
+    word(0x60, UINT32_MAX); CHECK(rarc::resource_at(bytes, 1).empty()); word(0x60, 4);
+    word(0x5C, UINT32_MAX); CHECK(rarc::resource_at(bytes, 1).empty()); word(0x5C, 0);
+    word(0x28, UINT32_MAX); CHECK(rarc::resource_at(bytes, 1).empty()); word(0x28, 2);
+    word(0x2C, UINT32_MAX); CHECK(rarc::resource_at(bytes, 1).empty()); word(0x2C, 0x20);
+    word(12, UINT32_MAX); CHECK(rarc::resource_at(bytes, 1).empty()); word(12, 0x50);
+    word(8, UINT32_MAX); CHECK(rarc::resource_at(bytes, 1).empty()); word(8, 0x20);
+    word(0, 0); CHECK(rarc::resource_at(bytes, 1).empty());
+}
+
+static void test_prop_abilities() {
+    std::printf("authoritative swaps, whistles, limits and migration\n");
+    host_room(3);
+    auto rules = match::get().settings; rules.seekSecs = 300; match::set_settings(rules);
+    match::start_round();
+    const char* stage = map_info(match::get().map).stage;
+    everyone_ready(3, stage); advance(21'000);
+    const int hunter = hunter_id(), hider = hider_id();
+    const int other = 6 - hunter - hider;
+    const auto state = [&](int id, float x) {
+        deliver(id, state_msg(stage, x, 0, 0, STATE_IN_WORLD | STATE_DISGUISED, kPot, 1234));
+    };
+    state(hider, 0);
+    deliver(hider, place_decoy_msg(match::get().round));
+    CHECK(match::decoy_count() == 1);
+    state(hider, 1000);
+    Writer swap(MSG_SWAP); swap.u32(match::get().round);
+    deliver(hunter, swap.bytes()); // hunters cannot teleport
+    CHECK(match::player(hider).swapsUsed == 0);
+    deliver(hider, swap.bytes());
+    CHECK(match::player(hider).swapsUsed == 1 && match::player(hider).state.x == 0);
+    CHECK(match::decoy(0).x == 1000 && match::player(hider).state.propYaw == 1234);
+    CHECK(match::player(hider).previousStateAt == 0);
+    CHECK(match::player(hider).swapReadyAt == s_now + match::kSwapCooldownMs);
+    const auto teleports = count_sent(MSG_TELEPORT);
+    deliver(hider, swap.bytes());
+    CHECK(count_sent(MSG_TELEPORT) == teleports && match::player(hider).swapsUsed == 1);
+
+    // A promoted peer retains the cooldown, even though the swap was sent to only its owner.
+    g_fake.self = g_fake.host = other; match::on_host_changed(other);
+    deliver(hider, swap.bytes()); CHECK(match::player(hider).swapsUsed == 1);
+    advance(match::kSwapCooldownMs + 1); state(hider, -1000);
+    deliver(hider, swap.bytes());
+    CHECK(match::player(hider).swapsUsed == 2 && match::player(hider).state.x == 1000);
+    advance(match::kSwapCooldownMs + 1); state(hider, 0);
+    deliver(hider, swap.bytes()); CHECK(match::player(hider).swapsUsed == 2);
+    Writer stale(MSG_SWAP); stale.u32(match::get().round - 1);
+    deliver(hider, stale.bytes()); CHECK(match::player(hider).swapsUsed == 2);
+
+    state(hunter, 200);
+    Writer whistle(MSG_WHISTLE); whistle.u32(match::get().round);
+    g_fake.sent.clear();
+    deliver(hider, whistle.bytes()); CHECK(count_sent(MSG_WHISTLE) == 0);
+    deliver(hunter, whistle.bytes()); CHECK(count_sent(MSG_WHISTLE) == 1);
+    CHECK(match::player(hunter).whistleReadyAt == s_now + match::kWhistleCooldownMs);
+    deliver(hunter, whistle.bytes()); CHECK(count_sent(MSG_WHISTLE) == 1);
+    CHECK(match::player(hider).revealedUntil == 0); // sound alone, no exact marker or score
+
+    // A late joiner receives remaining cooldowns, using its own clock, and can become host.
+    g_fake.add(4, "Late"); match::on_joined(4);
+    std::vector<uint8_t> roster, round, phase;
+    for (const auto& sent : g_fake.sent) {
+        if (sent.bytes[0] == MSG_ROSTER) roster = sent.bytes;
+        if (sent.bytes[0] == MSG_ROUND) round = sent.bytes;
+        if (sent.bytes[0] == MSG_PHASE) phase = sent.bytes;
+    }
+    CHECK(roster.size() == 2 + 4 * 30);
+    reset_net(4); g_fake.self = 4; g_fake.host = other; match::on_welcome();
+    s_now += 100'000;
+    deliver(other, roster); deliver(other, round); deliver(other, phase);
+    CHECK(match::player(hider).swapsUsed == 2);
+    CHECK(match::player(hunter).whistleReadyAt == s_now + match::kWhistleCooldownMs);
+    g_fake.host = 4; match::on_host_changed(4); state(hunter, 200);
+    g_fake.sent.clear(); deliver(hunter, whistle.bytes());
+    CHECK(count_sent(MSG_WHISTLE) == 0);
+    advance(match::kWhistleCooldownMs + 1); state(hunter, 200);
+    deliver(hunter, whistle.bytes()); CHECK(count_sent(MSG_WHISTLE) == 1);
+
+    // A partial roster cannot apply its first rows and leave the rest with older rules/stats.
+    const auto points = match::player(hider).roundPoints;
+    for (size_t length = 1; length < roster.size(); ++length) {
+        match::on_message(4, roster.data(), length);
+        CHECK(match::player(hider).roundPoints == points && match::player(hider).swapsUsed == 2);
+    }
+}
+
+static void test_style_awards() {
+    std::printf("risk rewards, decoy fools, close calls and quick finds\n");
+    host_room(3); match::start_round();
+    const char* stage = map_info(match::get().map).stage;
+    everyone_ready(3, stage); advance(21'000); advance(5'000);
+    const int hunter = hunter_id(), hider = hider_id(), other = 6 - hunter - hider;
+    const auto fresh = [&] {
+        deliver(hunter, state_msg(stage, 0, 0, 0));
+        deliver(hider, state_msg(stage, 200, 0, 0, STATE_IN_WORLD | STATE_DISGUISED));
+        deliver(other, state_msg(stage, 5000, 0, 0, STATE_IN_WORLD | STATE_DISGUISED));
+    };
+    fresh();
+    Writer taunt(MSG_TAUNT); taunt.u32(match::get().round); taunt.u8(0);
+    deliver(hider, taunt.bytes());
+    CHECK(match::player(hider).bonusEarned == 2 && match::player(hider).taunts == 1);
+    deliver(hider, taunt.bytes()); CHECK(match::player(hider).bonusEarned == 2);
+    deliver(hunter, miss_msg(match::get().round, 1));
+    CHECK(match::player(hider).closeCalls == 1 && match::player(hider).bonusEarned == 3);
+    deliver(hunter, miss_msg(match::get().round, 1));
+    deliver(hunter, miss_msg(match::get().round, 2));
+    CHECK(match::player(hider).closeCalls == 1 && match::player(hunter).misses == 2);
+    advance(scoring::kCloseCallGapMs + 1); fresh();
+    deliver(hunter, miss_msg(match::get().round, 3));
+    CHECK(match::player(hider).closeCalls == 2 && match::player(hider).bonusEarned == 4);
+    deliver(hider, place_decoy_msg(match::get().round));
+    CHECK(match::decoy_count() == 1);
+    const auto decoy = match::decoy(0).id;
+    deliver(hunter, hit_decoy_msg(match::get().round, decoy));
+    CHECK(match::decoy_count() == 0 && match::player(hider).decoyFools == 1);
+    CHECK(match::player(hider).bonusEarned == 5);
+    deliver(hunter, hit_decoy_msg(match::get().round, decoy));
+    CHECK(match::player(hider).bonusEarned == 5);
+    deliver(hunter, hit_msg(match::get().round, hider));
+    CHECK(match::player(hunter).bonusEarned == 4); // find + first blood
+    deliver(other, state_msg(stage, 200, 0, 0));
+    deliver(hunter, hit_msg(match::get().round, other)); advance(1);
+    CHECK(match::get().winner == 1 && match::player(hunter).bonusEarned == 8);
+    CHECK(match::player(hunter).roundPoints == 26);
+
+    host_room(3); match::start_round();
+    stage = map_info(match::get().map).stage;
+    everyone_ready(3, stage); advance(21'000);
+    const int finder = hunter_id(), first = hider_id(), survivor = 6 - finder - first;
+    deliver(finder, state_msg(stage, 0, 0, 0)); deliver(first, state_msg(stage, 100, 0, 0));
+    deliver(finder, hit_msg(match::get().round, first));
+    advance(61'000);
+    CHECK(match::get().winner == 0 && match::player(survivor).bonusEarned == 2);
+    CHECK(match::player(survivor).roundPoints == 20);
+}
+
 int main() {
+    test_archive_bounds();
+    test_prop_abilities();
+    test_style_awards();
     test_map_wide_treasure_layout();
     test_fair_round_scores();
     test_treasure_and_clues();

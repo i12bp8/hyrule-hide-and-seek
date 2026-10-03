@@ -105,6 +105,11 @@ Writer settings_msg() {
     return w;
 }
 
+uint16_t remaining(uint64_t until) {
+    const auto now = now_ms();
+    return static_cast<uint16_t>(std::min<uint64_t>(65535, until > now ? until - now : 0));
+}
+
 Writer roster_msg() {
     Writer w(MSG_ROSTER);
     uint8_t n = 0;
@@ -129,6 +134,15 @@ Writer roster_msg() {
         w.u8(static_cast<uint8_t>(p.objectiveAwarded));
         w.u8(p.hunterLife);
         w.u16(p.missSequence);
+        w.u8(p.decoyFools);
+        w.u8(p.closeCalls);
+        w.u8(p.taunts);
+        w.u8(p.swapsUsed);
+        w.u8(p.misses);
+        w.u16(remaining(p.swapReadyAt));
+        w.u16(remaining(p.whistleReadyAt));
+        w.u16(remaining(p.quickFindUntil));
+        w.u16(remaining(p.closeCallReadyAt));
     }
     return w;
 }
@@ -153,7 +167,6 @@ Writer decoys_msg() {
 Writer round_msg() {
     Writer w(MSG_ROUND);
     w.u32(s_match.round);
-    w.u8(static_cast<uint8_t>(s_match.settings.mode));
     w.u8(s_match.map);
     w.u16(s_match.settings.hideSecs);
     w.u16(s_match.settings.seekSecs);
@@ -186,8 +199,8 @@ Writer phase_msg() {
 void send_meta() {
     const Settings& s = s_match.settings;
     std::string label = std::string(name_of(self())) + "'s room";
-    net::send_meta(s.isPublic, label, static_cast<int>(s.mode),
-        s.map == kRandomMap ? 255 : s.map, static_cast<int>(s_match.phase));
+    net::send_meta(s.isPublic, label, 0, s.map == kRandomMap ? 255 : s.map,
+        static_cast<int>(s_match.phase));
     s_lastMeta = now_ms();
 }
 
@@ -258,20 +271,57 @@ bool fresh_on_map(const Player& p) {
            std::strncmp(p.state.stage, map_info(s_match.map).stage, 8) == 0;
 }
 
+float horizontal_distance(const PlayerState& a, float x, float z) {
+    return std::hypot(a.x - x, a.z - z);
+}
+
+// The nearest live, fresh hunter on the round's map, or a negative distance when there is none.
+float nearest_hunter(float x, float z) {
+    float best = -1.0f;
+    for (int id = 1; id <= kMaxPlayers; ++id) {
+        const Player& h = P(id);
+        if (h.role != Role::Hunter || h.eliminated || !fresh_on_map(h)) continue;
+        const float d = horizontal_distance(h.state, x, z);
+        if (best < 0.0f || d < best) best = d;
+    }
+    return best;
+}
+
+// Bonus points with feedback for everyone. Zero points are still announced, so a player at the
+// bonus limit sees why nothing was added.
+int award(int id, Award kind, int requested) {
+    const int points = give_bonus(id, requested);
+    Writer w(MSG_AWARD);
+    w.u32(s_match.round); w.u8(static_cast<uint8_t>(id)); w.u8(static_cast<uint8_t>(kind));
+    w.u8(static_cast<uint8_t>(points));
+    announce(w);
+    return points;
+}
+
 void host_clue(int id, uint8_t sound, ClueKind kind) {
     Player& p = P(id);
     const uint64_t now = now_ms();
     if (s_match.phase != Phase::Seek || p.role != Role::Hider || p.found || !fresh_on_map(p) ||
         (kind != ClueKind::Treasure && kind != ClueKind::Final && p.lastClueAt != 0 &&
          now - p.lastClueAt < kTauntCooldownMs)) return;
-    // Only deliberate taunts earn a point. Automatic clues cannot farm a hiding spot.
-    const bool award = kind == ClueKind::Manual &&
-                       (p.lastTauntAt == 0 || now - p.lastTauntAt >= kTauntPointEveryMs);
-    if (award) { p.lastTauntAt = now; give_bonus(id, 1); }
+    // Only deliberate taunts earn points. Automatic clues cannot farm a hiding spot. A taunt with
+    // a hunter close by is worth more: the reward follows the risk.
+    const bool scored = kind == ClueKind::Manual &&
+                        (p.lastTauntAt == 0 || now - p.lastTauntAt >= kTauntPointEveryMs);
     Writer w(MSG_CLUE);
     w.u32(s_match.round); w.u8(static_cast<uint8_t>(id)); w.u8(sound); w.u8(static_cast<uint8_t>(kind));
     announce(w);
-    if (award) announce(roster_msg());
+    if (kind == ClueKind::Manual) p.taunts = static_cast<uint8_t>(std::min(255, p.taunts + 1));
+    if (scored) {
+        p.lastTauntAt = now;
+        const float hunter = nearest_hunter(p.state.x, p.state.z);
+        if (hunter >= 0.0f && hunter <= scoring::kBoldTauntRange) {
+            award(id, Award::BoldTaunt, scoring::kBoldTauntPoints);
+        } else {
+            give_bonus(id, scoring::kTauntPoints);
+        }
+    }
+    if (kind == ClueKind::Manual) announce(roster_msg());
 }
 
 void clear_rupees() {
@@ -351,8 +401,7 @@ uint8_t take_decoy_id() {
 void host_place_decoy(int owner) {
     Player& p = P(owner);
     const uint64_t now = now_ms();
-    if (s_match.settings.mode != Mode::PropHunt ||
-        (s_match.phase != Phase::Hide && s_match.phase != Phase::Seek) || !p.present ||
+    if ((s_match.phase != Phase::Hide && s_match.phase != Phase::Seek) || !p.present ||
         p.role != Role::Hider || p.found || !p.hasState || now - p.stateAt > kFreshStateMs ||
         !(p.state.flags & STATE_IN_WORLD) || !(p.state.flags & STATE_DISGUISED) ||
         std::strncmp(p.state.stage, map_info(s_match.map).stage, 8) != 0 ||
@@ -404,7 +453,7 @@ void host_place_decoy(int owner) {
 }
 
 void host_hit_decoy(int attacker, uint8_t id) {
-    if (s_match.settings.mode != Mode::PropHunt || s_match.phase != Phase::Seek) return;
+    if (s_match.phase != Phase::Seek) return;
     Player& p = P(attacker);
     const int index = decoy_index(id);
     if (index < 0 || !p.present || p.role != Role::Hunter || !p.hasState ||
@@ -415,17 +464,84 @@ void host_hit_decoy(int attacker, uint8_t id) {
     const Decoy& d = s_match.decoys[index];
     const float dx = p.state.x - d.x, dy = p.state.y - d.y, dz = p.state.z - d.z;
     if (std::sqrt(dx * dx + dy * dy + dz * dz) > kMaxHitDistance) return;
+    const int owner = d.owner;
     erase_decoy(index);
     announce(decoys_msg());
+    // The decoy did its job: its hider earns a little for every hunter it fooled.
+    Player& o = P(owner);
+    if (o.present && o.role == Role::Hider && !o.found && o.decoyFools < scoring::kMaxDecoyFools) {
+        o.decoyFools = static_cast<uint8_t>(o.decoyFools + 1);
+        award(owner, Award::DecoyFooled, scoring::kDecoyFoolPoints);
+        announce(roster_msg());
+    }
+}
+
+// Trade places with your newest decoy: you appear where it stood, and it takes your old spot.
+void host_swap(int id) {
+    Player& p = P(id);
+    const uint64_t now = now_ms();
+    if (!s_match.settings.decoySwap || s_match.phase != Phase::Seek || p.role != Role::Hider ||
+        p.found || !fresh_on_map(p) || !(p.state.flags & STATE_DISGUISED) ||
+        p.swapsUsed >= kSwapsPerRound || now < p.swapReadyAt) {
+        return;
+    }
+    int newest = -1;
+    for (int i = 0; i < s_match.decoyCount; ++i) {
+        if (s_match.decoys[i].owner == id) newest = i;
+    }
+    if (newest < 0) return;
+    Decoy& d = s_match.decoys[newest];
+    const float x = d.x, y = d.y, z = d.z;
+    const int16_t yaw = d.yaw;
+    d.x = p.state.x; d.y = p.state.y; d.z = p.state.z;
+    d.yaw = p.state.propYaw;
+    d.prop = p.state.prop;
+    p.swapsUsed = static_cast<uint8_t>(p.swapsUsed + 1);
+    p.swapReadyAt = now + kSwapCooldownMs;
+    // Move the host's view of the hider now, so a hit claim in flight is judged at the new spot.
+    p.state.x = x; p.state.y = y; p.state.z = z;
+    p.state.yaw = p.state.propYaw = yaw;
+    p.previousStateAt = 0;
+    p.idleX = x; p.idleY = y; p.idleZ = z;
+    p.lastMovedAt = now;
+    announce(decoys_msg());
+    Writer w(MSG_TELEPORT);
+    w.u32(s_match.round); w.f32(x); w.f32(y); w.f32(z); w.s16(yaw);
+    if (id == self()) apply(self(), w.bytes());
+    else net::send(static_cast<uint8_t>(id), w.bytes());
+    announce(roster_msg());
+}
+
+// Every hidden prop makes a sound where it is. No arrows, names or points: hunters must listen.
+void host_whistle(int id) {
+    Player& p = P(id);
+    const uint64_t now = now_ms();
+    if (!s_match.settings.whistle || s_match.phase != Phase::Seek || p.role != Role::Hunter ||
+        p.eliminated || !fresh_on_map(p) ||
+        now < p.whistleReadyAt) return;
+    p.whistleReadyAt = now + kWhistleCooldownMs;
+    Writer w(MSG_WHISTLE);
+    w.u32(s_match.round); w.u8(static_cast<uint8_t>(id));
+    announce(w);
 }
 
 void finish(int winner) {
     const uint64_t now = now_ms();
+    int survivors = 0;
+    for (int id = 1; id <= kMaxPlayers; ++id) {
+        const Player& p = P(id);
+        survivors += p.present && p.role == Role::Hider && !p.found ? 1 : 0;
+    }
     for (int id = 1; id <= kMaxPlayers; ++id) {
         Player& p = P(id);
         if (p.present && p.role == Role::Hider && !p.found) {
             award_survival(id, now);
             if (winner == 0) give(id, scoring::kWinPoints);
+            // Outlasting every other prop deserves a mention, but only in a real hunt.
+            if (winner == 0 && survivors == 1 && s_match.startingHiders > 1 &&
+                s_match.phase == Phase::Seek && now >= s_match.phaseEnd) {
+                award(id, Award::LastStanding, scoring::kLastStandingPoints);
+            }
         } else if (p.present && p.startingRole == Role::Hunter && winner == 1) {
             give(id, scoring::kWinPoints);
         }
@@ -448,7 +564,15 @@ void found(int target, int by) {
     t.role = s_match.settings.foundJoinHunters ? Role::Hunter : Role::Spectator;
     t.hunterLife = t.role == Role::Hunter ? kArenaLife : 0;
     award_survival(target, now_ms());
+    const uint64_t now = now_ms();
+    Player& hunter = P(by);
     give_bonus(by, scoring::personal_find(s_match.startingHiders));
+    if (s_match.teamFinds == 0 && s_match.startingHiders > 1) {
+        award(by, Award::FirstBlood, scoring::kFirstBloodPoints);
+    } else if (hunter.quickFindUntil != 0 && now <= hunter.quickFindUntil) {
+        award(by, Award::QuickFind, scoring::kQuickFindPoints);
+    }
+    hunter.quickFindUntil = now + scoring::kQuickFindMs;
     P(by).finds = static_cast<uint8_t>(std::min(255, P(by).finds + 1));
     P(by).hunterLife = static_cast<uint8_t>(std::min<int>(kArenaLife, P(by).hunterLife + 4));
     ++s_match.teamFinds;
@@ -466,15 +590,35 @@ void found(int target, int by) {
 }
 
 void host_miss(int id, uint16_t sequence) {
-    if (s_match.phase != Phase::Seek || s_match.settings.mode != Mode::PropHunt) return;
+    if (s_match.phase != Phase::Seek) return;
     Player& p = P(id);
     if (!p.present || p.role != Role::Hunter || sequence <= p.missSequence || sequence > 4096) return;
     // A cumulative counter makes duplicate reports harmless and preserves pending misses when
     // the host changes. A player can only report their own misses, never a life/healing value.
     const unsigned misses = sequence - p.missSequence;
     p.missSequence = sequence;
+    p.misses = static_cast<uint8_t>(std::min<unsigned>(255, p.misses + misses));
     p.hunterLife = static_cast<uint8_t>(life_after_miss(p.hunterLife,
         static_cast<uint8_t>(std::min<unsigned>(kArenaLife, misses * s_match.settings.missPenaltyQuarters))));
+    // The closest prop held its nerve while the sword swung past it.
+    if (fresh_on_map(p)) {
+        int nearest = 0;
+        float best = scoring::kCloseCallRange;
+        for (int other = 1; other <= kMaxPlayers; ++other) {
+            const Player& h = P(other);
+            if (h.role != Role::Hider || h.found || !fresh_on_map(h)) continue;
+            const float d = std::hypot(h.state.x - p.state.x, h.state.z - p.state.z);
+            if (d <= best && std::fabs(h.state.y - p.state.y) < 250.0f) { best = d; nearest = other; }
+        }
+        Player& h = P(nearest);
+        const uint64_t now = now_ms();
+        if (nearest != 0 && h.closeCalls < scoring::kMaxCloseCalls &&
+            now >= h.closeCallReadyAt) {
+            h.closeCalls = static_cast<uint8_t>(h.closeCalls + 1);
+            h.closeCallReadyAt = now + scoring::kCloseCallGapMs;
+            award(nearest, Award::CloseCall, scoring::kCloseCallPoints);
+        }
+    }
     if (p.hunterLife == 0) {
         p.eliminated = true;
         p.role = Role::Spectator;
@@ -581,8 +725,12 @@ void apply(uint8_t from, const std::vector<uint8_t>& bytes) {
 
 void handle_roster(Reader& r) {
     const uint8_t n = r.u8();
+    if (!r.ok() || n > kMaxPlayers) return;
+    Player incoming[kSlots];
+    std::copy(std::begin(s_match.players), std::end(s_match.players), std::begin(incoming));
     bool listed[kSlots] = {};
-    for (int i = 0; i < n && r.ok(); ++i) {
+    const uint64_t now = now_ms();
+    for (int i = 0; i < n; ++i) {
         const uint8_t id = r.u8();
         const Role role = static_cast<Role>(r.u8());
         const uint8_t color = r.u8();
@@ -597,8 +745,16 @@ void handle_roster(Reader& r) {
         const uint8_t objectiveAwarded = r.u8();
         const uint8_t hunterLife = r.u8();
         const uint16_t missSequence = r.u16();
-        if (!r.ok() || id < 1 || id > kMaxPlayers) break;
-        Player& p = P(id);
+        const uint8_t decoyFools = r.u8();
+        const uint8_t closeCalls = r.u8();
+        const uint8_t taunts = r.u8();
+        const uint8_t swapsUsed = r.u8();
+        const uint8_t misses = r.u8();
+        const uint16_t swapLeft = r.u16(), whistleLeft = r.u16();
+        const uint16_t findLeft = r.u16(), closeCallLeft = r.u16();
+        if (!r.ok() || id < 1 || id > kMaxPlayers || listed[id] ||
+            role > Role::Spectator) return;
+        Player& p = incoming[id];
         listed[id] = true;
         p.present = true;
         p.role = role;
@@ -618,8 +774,17 @@ void handle_roster(Reader& r) {
         p.startingRole = (flags & 4) ? Role::Hunter : (flags & 8) ? Role::Hider : Role::None;
         p.bonusEarned = std::min<uint8_t>(bonusEarned, scoring::kBonusPoints);
         p.objectiveAwarded = std::min<uint8_t>(objectiveAwarded, scoring::kObjectivePoints);
+        p.decoyFools = decoyFools;
+        p.closeCalls = closeCalls;
+        p.taunts = taunts;
+        p.swapsUsed = std::min<uint8_t>(swapsUsed, kSwapsPerRound);
+        p.misses = misses;
+        p.swapReadyAt = swapLeft ? now + std::min<uint64_t>(swapLeft, kSwapCooldownMs) : 0;
+        p.whistleReadyAt = whistleLeft ? now + std::min<uint64_t>(whistleLeft, kWhistleCooldownMs) : 0;
+        p.quickFindUntil = findLeft ? now + std::min<uint64_t>(findLeft, scoring::kQuickFindMs) : 0;
+        p.closeCallReadyAt = closeCallLeft ? now + std::min<uint64_t>(closeCallLeft, scoring::kCloseCallGapMs) : 0;
     }
-    (void)listed;
+    if (r.ok()) std::copy(std::begin(incoming), std::end(incoming), std::begin(s_match.players));
 }
 
 bool valid_state(const PlayerState& s) {
@@ -657,13 +822,13 @@ void handle_state(uint8_t from, Reader& r) {
 // ---- Settings ---------------------------------------------------------------------------------
 
 void Settings::write(Writer& w) const {
-    w.u8(static_cast<uint8_t>(mode));
     w.u8(map);
     w.u16(hideSecs);
     w.u16(seekSecs);
     w.u8(hunters);
-    w.u8(static_cast<uint8_t>((foundJoinHunters ? 1 : 0) | (autoNext ? 8 : 0) | (isPublic ? 16 : 0) |
-                              (trackingPulse ? 32 : 0) | (treasure ? 64 : 0)));
+    w.u8(static_cast<uint8_t>((foundJoinHunters ? 1 : 0) | (decoySwap ? 2 : 0) | (whistle ? 4 : 0) |
+                              (autoNext ? 8 : 0) | (isPublic ? 16 : 0) | (trackingPulse ? 32 : 0) |
+                              (treasure ? 64 : 0)));
     w.u16(idleTauntSecs);
     w.u8(freeDecoys);
     w.u8(missPenaltyQuarters);
@@ -671,8 +836,6 @@ void Settings::write(Writer& w) const {
 }
 
 void Settings::read(Reader& r) {
-    const uint8_t m = r.u8();
-    mode = m < static_cast<uint8_t>(Mode::Count) ? static_cast<Mode>(m) : Mode::PropHunt;
     const uint8_t wantedMap = r.u8();
     map = wantedMap == kRandomMap || wantedMap < map_count() ? wantedMap : kRandomMap;
     hideSecs = std::clamp<uint16_t>(r.u16(), 10, 600);
@@ -680,6 +843,8 @@ void Settings::read(Reader& r) {
     hunters = r.u8();
     const uint8_t f = r.u8();
     foundJoinHunters = f & 1;
+    decoySwap = f & 2;
+    whistle = f & 4;
     autoNext = f & 8;
     isPublic = f & 16;
     trackingPulse = f & 32;
@@ -744,8 +909,7 @@ int my_decoys_left() {
 bool can_place_decoy() {
     const Player& me = P(self());
     const uint64_t now = now_ms();
-    if (s_match.settings.mode != Mode::PropHunt ||
-        (s_match.phase != Phase::Hide && s_match.phase != Phase::Seek) || !me.present ||
+    if ((s_match.phase != Phase::Hide && s_match.phase != Phase::Seek) || !me.present ||
         me.role != Role::Hider || me.found || !me.hasState || now - me.stateAt > kFreshStateMs ||
         !(me.state.flags & STATE_IN_WORLD) || !(me.state.flags & STATE_DISGUISED) ||
         std::strncmp(me.state.stage, map_info(s_match.map).stage, 8) != 0 ||
@@ -762,6 +926,29 @@ bool can_place_decoy() {
     }
     return my_decoys_left() > 0 ||
            (s_match.phase == Phase::Seek && me.roundPoints >= kExtraDecoyCost);
+}
+
+int my_swaps_left() {
+    if (!s_match.settings.decoySwap) return 0;
+    return std::max(0, kSwapsPerRound - static_cast<int>(P(self()).swapsUsed));
+}
+
+bool can_swap() {
+    const Player& me = P(self());
+    const uint64_t now = now_ms();
+    if (!s_match.settings.decoySwap || s_match.phase != Phase::Seek || me.role != Role::Hider ||
+        me.found || my_swaps_left() == 0 || !(me.state.flags & STATE_DISGUISED) ||
+        now < me.swapReadyAt) return false;
+    for (int i = 0; i < s_match.decoyCount; ++i) {
+        if (s_match.decoys[i].owner == self()) return true;
+    }
+    return false;
+}
+
+uint32_t whistle_cooldown_ms() {
+    const Player& me = P(self());
+    const uint64_t now = now_ms();
+    return static_cast<uint32_t>(me.whistleReadyAt > now ? me.whistleReadyAt - now : 0);
 }
 
 uint32_t next_clue_ms() {
@@ -891,6 +1078,8 @@ void start_round() {
         p.finalClueGiven = false;
         p.finalRevealedUntil = 0;
         p.lastTauntAt = p.lastClueAt = p.lastMovedAt = p.revealedUntil = 0;
+        p.decoyFools = p.closeCalls = p.taunts = p.swapsUsed = p.misses = 0;
+        p.swapReadyAt = p.whistleReadyAt = p.quickFindUntil = p.closeCallReadyAt = 0;
     }
 
     s_match.round += 1;
@@ -988,9 +1177,9 @@ uint16_t my_hunter_life() {
 }
 
 void report_miss() {
+    // Misses are reported even without a heart penalty: they also score close calls and stats.
     if (net::status() != net::Status::Online || s_match.phase != Phase::Seek ||
-        s_match.settings.mode != Mode::PropHunt || my_role() != Role::Hunter ||
-        my_hunter_life() == 0 || s_match.settings.missPenaltyQuarters == 0) return;
+        my_role() != Role::Hunter || my_hunter_life() == 0) return;
     s_missSequence = static_cast<uint16_t>(std::max(s_missSequence, P(self()).missSequence) + 1);
     if (host()) host_miss(self(), s_missSequence);
     else {
@@ -1006,6 +1195,32 @@ void place_decoy() {
         return;
     }
     Writer w(MSG_PLACE_DECOY);
+    w.u32(s_match.round);
+    net::send(net::kToHost, w.bytes());
+}
+
+void request_swap() {
+    if (!can_swap()) return;
+    // Optimistic cooldown so a held button cannot queue several requests.
+    if (host()) {
+        host_swap(self());
+        return;
+    }
+    P(self()).swapReadyAt = now_ms() + kSwapCooldownMs;
+    Writer w(MSG_SWAP);
+    w.u32(s_match.round);
+    net::send(net::kToHost, w.bytes());
+}
+
+void request_whistle() {
+    if (!s_match.settings.whistle || s_match.phase != Phase::Seek || my_role() != Role::Hunter ||
+        my_hunter_life() == 0 || whistle_cooldown_ms() != 0) return;
+    if (host()) {
+        host_whistle(self());
+        return;
+    }
+    P(self()).whistleReadyAt = now_ms() + kWhistleCooldownMs;
+    Writer w(MSG_WHISTLE);
     w.u32(s_match.round);
     net::send(net::kToHost, w.bytes());
 }
@@ -1258,22 +1473,19 @@ void on_message(uint8_t from, const uint8_t* data, size_t size) {
     case MSG_ROUND: {
         if (!fromHost) break;
         const uint32_t round = r.u32();
-        const uint8_t mode = r.u8();
         const uint8_t map = r.u8();
         const uint16_t hide = r.u16();
         const uint16_t seek = r.u16();
         const uint8_t startingHiders = r.u8();
         const uint8_t teamFinds = r.u8();
-        if (!r.ok() || map >= map_count() || mode >= static_cast<uint8_t>(Mode::Count) ||
-            startingHiders >= kMaxPlayers || teamFinds > startingHiders) break;
+        if (!r.ok() || map >= map_count() || startingHiders >= kMaxPlayers ||
+            teamFinds > startingHiders) break;
         if (round != s_match.round) {
             s_missSequence = P(self()).missSequence;
             s_rupeeCooldowns.clear();
             clear_rupees();
         }
         s_match.round = round;
-        s_match.settings.mode = mode < static_cast<uint8_t>(Mode::Count) ? static_cast<Mode>(mode)
-                                                                        : Mode::PropHunt;
         s_match.map = map;
         s_match.settings.hideSecs = hide;
         s_match.settings.seekSecs = seek;
@@ -1282,12 +1494,8 @@ void on_message(uint8_t from, const uint8_t* data, size_t size) {
         s_match.teamFinds = teamFinds;
         s_seekStartedAt = 0;
         const char* role = my_role() == Role::Hunter ? "You are a HUNTER" : "You are a PROP";
-        if (s_match.settings.mode == Mode::HideAndSeek && my_role() == Role::Hider) {
-            role = "You are HIDING";
-        }
         big(std::string("Round ") + std::to_string(round) + ": " + map_info(map).name, 255, 230, 140);
         notice(role, P(self()).color, false);
-        if (s_hooks.roundStarted) s_hooks.roundStarted();
         break;
     }
 
@@ -1333,13 +1541,11 @@ void on_message(uint8_t from, const uint8_t* data, size_t size) {
         s_match.teamFinds = teamFinds;
         Player& t = P(target);
         t.found = true;
-        std::string what = s_match.settings.mode == Mode::PropHunt && t.hasState
-                               ? std::string(" (") + prop_info(t.state.prop).name + ")"
-                               : std::string();
+        std::string what = t.hasState ? std::string(" (") + prop_info(t.state.prop).name + ")"
+                                      : std::string();
         notice(std::string(name_of(by)) + " found " + name_of(target) + what, P(by).color, false);
         if (target == self()) {
             big("You were found!", 255, 120, 90);
-            if (s_hooks.foundMe) s_hooks.foundMe(by);
         } else if (by == self()) {
             big(std::string("Found ") + name_of(target) + "!", 255, 230, 120);
         }
@@ -1355,7 +1561,7 @@ void on_message(uint8_t from, const uint8_t* data, size_t size) {
         if (winner == 1) {
             big("HUNTERS WIN!", 255, 110, 90);
         } else {
-            big(s_match.settings.mode == Mode::PropHunt ? "PROPS WIN!" : "HIDERS WIN!", 120, 230, 120);
+            big("PROPS WIN!", 120, 230, 120);
         }
         break;
     }
@@ -1421,6 +1627,61 @@ void on_message(uint8_t from, const uint8_t* data, size_t size) {
         break;
     }
 
+    case MSG_SWAP: {
+        const uint32_t round = r.u32();
+        if (r.ok() && host() && round == s_match.round) host_swap(from);
+        break;
+    }
+
+    case MSG_TELEPORT: {
+        const uint32_t round = r.u32();
+        const float x = r.f32(), y = r.f32(), z = r.f32();
+        const int16_t yaw = r.s16();
+        if (!r.ok() || !fromHost || round != s_match.round || !std::isfinite(x) ||
+            !std::isfinite(y) || !std::isfinite(z)) break;
+        P(self()).swapReadyAt = now_ms() + kSwapCooldownMs;
+        if (s_hooks.teleport) s_hooks.teleport(x, y, z, yaw);
+        big("SWAPPED!", 140, 220, 255);
+        break;
+    }
+
+    case MSG_WHISTLE: {
+        const uint32_t round = r.u32();
+        if (!r.ok() || round != s_match.round) break;
+        if (!fromHost) {
+            // A hunter's request to the host.
+            if (host()) host_whistle(from);
+            break;
+        }
+        const uint8_t hunter = r.u8();
+        if (!r.ok() || hunter < 1 || hunter > kMaxPlayers) break;
+        P(hunter).whistleReadyAt = now_ms() + kWhistleCooldownMs;
+        if (s_hooks.whistle) s_hooks.whistle(hunter);
+        if (my_role() == Role::Hider && !P(self()).found) {
+            notice(std::string(name_of(hunter)) + " whistled: every prop squeaked!", P(hunter).color);
+        } else if (hunter != self()) {
+            notice(std::string(name_of(hunter)) + " whistled. Listen!", P(hunter).color);
+        }
+        break;
+    }
+
+    case MSG_AWARD: {
+        const uint32_t round = r.u32();
+        const uint8_t id = r.u8(), kind = r.u8(), points = r.u8();
+        if (!r.ok() || !fromHost || round != s_match.round || id < 1 || id > kMaxPlayers ||
+            kind >= static_cast<uint8_t>(Award::Count)) break;
+        static constexpr const char* kNames[] = {"Decoy fooled a hunter", "Close call",
+            "Bold taunt", "First find", "Quick find", "Last prop standing"};
+        const std::string text = std::string(kNames[kind]) +
+            (points ? "  +" + std::to_string(points) : std::string("  (bonus limit)"));
+        if (id == self()) big(text + "!", 255, 220, 120);
+        else if (kind == static_cast<uint8_t>(Award::LastStanding) ||
+                 kind == static_cast<uint8_t>(Award::FirstBlood)) {
+            notice(std::string(name_of(id)) + ": " + kNames[kind], P(id).color);
+        }
+        break;
+    }
+
     default: break;
     }
 }
@@ -1438,5 +1699,22 @@ void update() {
 void set_hooks(const Hooks& hooks) {
     s_hooks = hooks;
 }
+
+#ifdef HS_LAB
+void lab_add_decoy(uint8_t prop, float x, float y, float z, int16_t yaw) {
+    if (!host() || s_match.decoyCount >= kMaxActiveDecoys) return;
+    const uint8_t id = take_decoy_id();
+    if (id == 0) return;
+    Decoy& d = s_match.decoys[s_match.decoyCount++];
+    d = {id, self(), prop, x, y, z, yaw};
+    announce(decoys_msg());
+}
+
+void lab_clear_decoys() {
+    if (!host()) return;
+    clear_decoys();
+    announce(decoys_msg());
+}
+#endif
 
 }  // namespace hs::match

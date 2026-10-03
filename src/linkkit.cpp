@@ -1,6 +1,7 @@
 #include "linkkit.hpp"
 
 #include "common.hpp"
+#include "rarc.hpp"
 #include "recolor.hpp"
 
 #include <mods/svc/texture.h>
@@ -11,6 +12,7 @@
 #include "JSystem/J3DGraphLoader/J3DAnmLoader.h"
 #include "JSystem/JKernel/JKRArchive.h"
 #include "JSystem/JKernel/JKRDecomp.h"
+#include "JSystem/JKernel/JKRDvdRipper.h"
 #include "JSystem/JKernel/JKRExpHeap.h"
 #include "JSystem/JKernel/JKRHeap.h"
 #include "d/actor/d_a_alink.h"
@@ -40,13 +42,13 @@ JKRExpHeap* s_heap = nullptr;
 void* s_heapBuffer = nullptr;
 uint64_t s_heapRetryAt = 0;
 bool s_heapFailureLogged = false;
-JKRArchive* s_animArchive = nullptr;
-uint64_t s_animArchiveRetryAt = 0;
-
 struct Raw {
     u8* data = nullptr;
     u32 size = 0;
 };
+
+Raw s_animArchive;
+uint64_t s_animArchiveRetryAt = 0;
 
 struct Files {
     uint64_t retryAt = 0;
@@ -248,33 +250,38 @@ J3DAnmTransform* anim(uint16_t idx) {
     }
     if (slot == nullptr) return nullptr;  // cache full: the puppet falls back to idle
     slot->idx = idx;
-    // Do not borrow the live daAlink animation archive here. It is remounted around stage changes,
-    // and JKRReadIdxResource() can return zero even though the entry exists; that exact failure
-    // left remote players with no pose and therefore no body. Mount our own view instead, kept
-    // open for the mod's lifetime (mounting per lookup repeatedly loaded the whole multi-MB
-    // archive into our heap on every cache miss/retry, which is needless churn and, if the size
-    // this SDK reports back for a resource is ever wrong, an unbounded memcpy).
-    if (s_animArchive == nullptr && now >= s_animArchiveRetryAt) {
+    // Keep immutable archive bytes in our own heap. Borrowing Link's live archive races stage
+    // changes, while mounting a second archive consumes the System heap needed by map loading.
+    if (s_animArchive.data == nullptr && now >= s_animArchiveRetryAt) {
         s_animArchiveRetryAt = now + kRetryMs;
-        s_animArchive = JKRArchive::mount("/res/Object/AlAnm.arc", JKRArchive::MOUNT_MEM, s_heap,
-            JKRArchive::MOUNT_DIRECTION_TAIL);
+        constexpr u32 kMaxArchiveSize = 16u << 20;
+        u32 size = 0;
+        auto* data = static_cast<u8*>(JKRDvdRipper::loadToMainRAM("/res/Object/AlAnm.arc", nullptr,
+            EXPAND_SWITCH_UNKNOWN1, kMaxArchiveSize, s_heap,
+            JKRDvdRipper::ALLOC_DIRECTION_BACKWARD, 0, nullptr, &size));
+        if (data != nullptr) {
+            if (!rarc::resource_at({data, size}, kIdleAnim).empty()) s_animArchive = {data, size};
+            else s_heap->free(data);
+        }
     }
-    if (s_animArchive == nullptr) {
+    if (s_animArchive.data == nullptr) {
         slot->failedAt = now;
         return nullptr;
     }
-    auto* resource = static_cast<u8*>(s_animArchive->getIdxResource(idx));
+    const auto entry = rarc::resource_at({s_animArchive.data, s_animArchive.size}, idx);
+    // JKR's decompressor takes a mutable pointer even though the source is never modified.
+    auto* resource = entry.empty() ? nullptr : const_cast<u8*>(entry.data());
     // AlAnm's entries can be Yaz0-compressed inside the archive, and getIdxResource() on a memory
     // archive hands back those raw bytes. The animation loader rejects them, which left every
     // remote Link in the bind pose (a T-pose). Expand them the way JKRReadIdxResource() does.
     const JKRCompression compression =
-        resource != nullptr ? JKRCheckCompressed_noASR(resource) : COMPRESSION_NONE;
+        entry.size() >= 16 ? JKRCheckCompressed_noASR(resource) : COMPRESSION_NONE;
     // A resource lookup miss reports its size as (u32)-1, not 0; never trust it past a sane cap
     // (the largest of Link's BCKs is well under this) for an allocation and copy length.
     constexpr u32 kMaxAnimSize = 256 * 1024;
     u32 size = 0;
     if (resource != nullptr) {
-        size = compression == COMPRESSION_NONE ? s_animArchive->getResSize(resource)
+        size = compression == COMPRESSION_NONE ? static_cast<u32>(entry.size())
                                                : JKRDecompExpandSize(resource);
     }
     u8* buffer = size != 0 && size <= kMaxAnimSize ? static_cast<u8*>(s_heap->alloc(size, 32)) : nullptr;
@@ -389,12 +396,7 @@ void shutdown() {
     s_shared = LinkModels{};
     s_sharedLoaded = false;
     s_files = Files{};
-    // A mounted archive is linked into JKR's global volume list. Unlink it before freeing
-    // its heap, or the next archive lookup/reload can follow a dangling list node.
-    if (s_animArchive != nullptr) {
-        s_animArchive->unmount();
-        s_animArchive = nullptr;
-    }
+    s_animArchive = Raw{};
     s_animArchiveRetryAt = 0;
     if (s_heap != nullptr) {
         s_heap->destroy();

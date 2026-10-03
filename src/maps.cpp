@@ -1,30 +1,15 @@
 #include "maps.hpp"
 
-#include <random>
 #include <algorithm>
+#include <cmath>
+#include <random>
 #include <vector>
 
 namespace hs {
 
 namespace {
 
-constexpr MapInfo kMaps[] = {
-    {"Ordon Village", "F_SP103", 0, 13, -950.0f, 326.0f, 5400.0f},
-    {"Ordon Ranch", "F_SP00", 0, 2, -4250.0f, 15302.0f, -19700.0f},
-    {"Ordon Spring", "F_SP104", 1, 200, -2250.0f, 259.0f, -9600.0f},
-    {"South Faron Woods", "F_SP108", 0, 3, -15600.0f, 0.0f, 200.0f, true},
-    {"Kakariko Village", "F_SP109", 0, 14, -1885.0f, 0.0f, 7754.0f},
-    {"Kakariko Graveyard", "F_SP111", 0, 4, 13867.0f, 100.0f, 920.0f},
-    {"Death Mountain Trail", "F_SP110", 3, 0, 1545.0f, -450.0f, -253.0f, true},
-    {"Zora's Domain", "F_SP113", 0, 0, -986.0f, 25.0f, -240.0f, true},
-    {"Upper Zora's River", "F_SP126", 0, 1, 3622.0f, 222.0f, 434.0f, true},
-    {"Lake Hylia", "F_SP115", 0, 0, -105752.0f, -18482.0f, 51996.0f, true},
-    {"Castle Town", "F_SP116", 0, 0, 2.0f, 0.0f, -2231.0f},
-    {"Sacred Grove", "F_SP117", 1, 10, -8.0f, 1625.0f, -2153.0f},
-    {"Hidden Village", "F_SP128", 0, 5, 5400.0f, 0.0f, -4000.0f},
-    {"Gerudo Desert", "F_SP124", 0, 1, 4321.0f, -733.0f, 35341.0f, true},
-    {"Hyrule Field", "F_SP121", 0, 8, 13950.0f, 1523.0f, 18650.0f, true},
-};
+#include "arena_data.inc"
 
 std::mt19937& rng() {
     static std::mt19937 engine{std::random_device{}()};
@@ -55,6 +40,19 @@ int recommended_hunters(int players, int map) {
     if (players < 2) return 0;
     const int perHunter = map_info(map).large ? 3 : 4;
     return std::clamp((players + perHunter - 1) / perHunter, 1, players - 1);
+}
+
+float area_edge_distance(const MapInfo& map, float x, float z) {
+    float best = -1e30f;
+    for (int i = 0; i < map.areaCount; ++i) {
+        const Circle& c = map.area[i];
+        best = std::max(best, c.radius - std::hypot(x - c.x, z - c.z));
+    }
+    return map.areaCount == 0 ? 1e30f : best;
+}
+
+bool in_area(const MapInfo& map, float x, float z, float margin) {
+    return area_edge_distance(map, x, z) >= margin;
 }
 
 }  // namespace hs

@@ -39,7 +39,10 @@ namespace {
 
 constexpr const char* kModeId = "com.i12bp8.hyrule_hide_and_seek.mode";
 constexpr const char* kSaveName = "hyrule-hide-and-seek";
-constexpr int kLobbyMap = 0;  // Ordon Village
+// The game mode's lobby: Ordon Village at its native start beside the village square.
+constexpr const char* kLobbyStage = "F_SP103";
+constexpr int16_t kLobbyPoint = 13;
+constexpr int8_t kLobbyRoom = 0;
 constexpr uint64_t kSettleMs = 1500;
 constexpr f32 kNoon = 180.0f;
 
@@ -321,7 +324,7 @@ void init() {
     }
     GameModeDesc desc = GAME_MODE_DESC_INIT;
     desc.game_mode_id = kModeId;
-    desc.full_name = "Hide & Seek";
+    desc.full_name = "Prop Hunt";
     std::strncpy(const_cast<char*>(desc.save_name), kSaveName, sizeof(desc.save_name) - 1);
     desc.on_activated = on_activated;
     desc.on_deactivated = on_deactivated;
@@ -378,9 +381,8 @@ void update() {
     // Skip the story: a loaded Hide & Seek file starts in Ordon Village, unless a round is on.
     if (s_warpPending || (!match::in_round() && !is_play_map(local::stage()))) {
         s_warpPending = false;
-        const MapInfo& lobby = map_info(kLobbyMap);
-        if (!match::in_round() && std::strncmp(local::stage(), lobby.stage, 8) != 0) {
-            arena::warp(lobby);
+        if (!match::in_round() && std::strncmp(local::stage(), kLobbyStage, 8) != 0) {
+            arena::warp_native(kLobbyStage, kLobbyPoint, kLobbyRoom);
             s_inWorldSince = 0;
             return;
         }

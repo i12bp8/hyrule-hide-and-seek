@@ -14,7 +14,9 @@
 #include "JSystem/J3DGraphAnimator/J3DJoint.h"
 #include "JSystem/J3DGraphAnimator/J3DModel.h"
 #include "JSystem/J3DGraphAnimator/J3DModelData.h"
+#include "JSystem/J3DGraphBase/J3DSys.h"
 #include "JSystem/JKernel/JKRExpHeap.h"
+#include "JSystem/JKernel/JKRSolidHeap.h"
 #include "SSystem/SComponent/c_lib.h"
 #include "SSystem/SComponent/c_math.h"
 #include "d/d_bg_s_gnd_chk.h"
@@ -22,13 +24,14 @@
 #include "d/d_cc_d.h"
 #include "d/d_com_inf_game.h"
 #include "d/d_kankyo.h"
+#include "d/d_kankyo_wether.h"
 #include "f_op/f_op_actor_mng.h"
 #include "m_Do/m_Do_ext.h"
 #include "m_Do/m_Do_mtx.h"
 
+#include <array>
 #include <cmath>
 #include <cstring>
-#include <vector>
 #ifdef HS_STOCK_RENDER_TEST
 #include <cstdio>
 #endif
@@ -46,11 +49,17 @@ constexpr u32 kRupeeFlag = 0x400;
 constexpr u32 kPropShift = 16;
 constexpr u32 kDecoyIdShift = 24;
 constexpr u32 kPuppetHeapSize = 640 * 1024;
-constexpr u32 kPropHeapSize = 128 * 1024;
+// Room to build any prop: model instance, animations and collision mesh. The heap shrinks to what
+// was used right after loading (JKRSolidHeap::adjustSize), as native actors' solid heaps do.
+constexpr u32 kPropHeapSize = 256 * 1024;
 constexpr uint64_t kStaleMs = 4000;
 constexpr float kSnapDistance = 600.0f;
 constexpr float kLinkRadius = 40.0f;
 constexpr float kLinkHeight = 150.0f;
+// Only meshes near our own Link participate in walking collision. The game's fixed 256-entry
+// background table also holds the stage and native scenery; distant decoys must leave it room.
+constexpr float kMeshReach = 600.0f;
+constexpr uint64_t kMeshRetryMs = 250;
 // After our sword hits a decoy it stays hidden this long while the host confirms. A confirmed hit
 // deletes it; a rejected one (hunter too far away by the host's account) brings it back.
 constexpr uint64_t kDecoyHitHideMs = 1500;
@@ -64,6 +73,19 @@ constexpr u16 kJointHandR = 14;
 constexpr u16 kJointItemR = 15;
 constexpr u16 kJointLegs = 16;
 
+// daObjYobikusa_c::M_attr: the leaves swing with the wind and bend away from whoever walks
+// through them, just like the real grass next to the disguise.
+constexpr float kSwayWind = 1000.0f;
+constexpr float kSwayGust = 200.0f;
+constexpr float kSwayInnerCalm = 500.0f;
+constexpr float kSwayInnerWind = 1500.0f;
+constexpr float kSwayInnerGust = 400.0f;
+constexpr float kSwaySpeedCalm = 512.0f;
+constexpr float kSwaySpeedWind = 1152.0f;
+constexpr s16 kSwayGustSpeed = 64;
+constexpr float kSwayPush = 4000.0f;
+constexpr float kSwayPushReach = 65.0f;
+
 ProfileName s_procName = -1;
 ActorHandle s_handle = 0;
 bool s_registered = false;
@@ -74,7 +96,7 @@ struct Slot {
     // Written by the actor every frame, read by the HUD.
     bool visible = false;
     // A model can fail to draw while its fresh network position is still useful for hunter
-    // markers, taunt clues and Hide & Seek touch tags.
+    // markers, taunt clues and whistles.
     bool tracked = false;
     cXyz feet{0.0f, 0.0f, 0.0f};
     float height = 0.0f;
@@ -85,6 +107,7 @@ struct DecoySlot {
     Slot slot;
     uint8_t id = 0;
     uint8_t kind = 0;
+    float x = 0.0f, z = 0.0f;
 };
 DecoySlot s_decoys[match::kMaxActiveDecoys];
 struct RupeeSlot { Slot slot; uint16_t id = 0; };
@@ -130,20 +153,21 @@ struct HeapScope {
 
 // Prop models share their data with the real objects in the world, which put their own joint
 // callbacks and animations on it. Swap those out around our calc() and put them back after.
+// Fixed storage: this runs twice a frame for every puppet, decoy and treasure in the room.
 class JointGuard {
 public:
+    static constexpr u16 kMaxJoints = 256;
     explicit JointGuard(J3DModelData* data) : m_data(data) {
-        const u16 n = data->getJointNum();
-        m_saved.reserve(n);
-        for (u16 i = 0; i < n; ++i) {
+        m_count = std::min<u16>(data->getJointNum(), kMaxJoints);
+        for (u16 i = 0; i < m_count; ++i) {
             J3DJoint* j = data->getJointNodePointer(i);
-            m_saved.push_back({j->getCallBack(), j->getMtxCalc()});
+            m_saved[i] = {j->getCallBack(), j->getMtxCalc()};
             j->setCallBack(nullptr);
             j->setMtxCalc(nullptr);
         }
     }
     ~JointGuard() {
-        for (u16 i = 0; i < m_saved.size(); ++i) {
+        for (u16 i = 0; i < m_count; ++i) {
             J3DJoint* j = m_data->getJointNodePointer(i);
             j->setCallBack(m_saved[i].first);
             j->setMtxCalc(m_saved[i].second);
@@ -152,11 +176,25 @@ public:
 
 private:
     J3DModelData* m_data;
-    std::vector<std::pair<J3DJointCallBack, J3DMtxCalc*>> m_saved;
+    u16 m_count = 0;
+    std::array<std::pair<J3DJointCallBack, J3DMtxCalc*>, kMaxJoints> m_saved;
 };
 
 bool same_stage_as_me(const PlayerState& s) {
     return (s.flags & STATE_IN_WORLD) != 0 && std::strncmp(s.stage, local::stage(), 8) == 0;
+}
+
+// Per-instance material state the native actor's animations need (daNi/daDo create flags).
+u32 diff_flags(const PropInfo& info) {
+    u32 flags = 0x11000084;
+    if (info.btk.set()) flags |= 0x200;
+    if (info.btp.set()) flags |= 0x20000;
+    return flags;
+}
+
+void* resource(const char* arc, const PropRes& res) {
+    if (res.name != nullptr) return dComIfG_getObjectRes(arc, res.name);
+    return res.index >= 0 ? dComIfG_getObjectRes(arc, res.index) : nullptr;
 }
 
 class Puppet : public fopAc_ac_c {
@@ -168,17 +206,25 @@ public:
     int draw();
     int destroy();
 
+    // Wind sway, applied by sway_callback while our own calc() runs.
+    csXyz mLeaf[3]{};
+
 private:
     bool buildLink(uint8_t color);
     void freeLink();
     bool poseLink(const PlayerState& s, bool moving);
+    bool loadProp(int kind);
     bool updateProp(int kind, bool moving);
     void releaseProp();
     void updateGround();
+    void updateSway(int owner);
+    void updateBob(int owner);
+    float drawY() const;
     void armHitbox(const match::Player& p, bool disguised, int kind);
     void armDecoyHitbox(int kind);
     void armSolid(int kind);
     void releaseSolid();
+    void drawProp();
     void publish(bool visible, float height, bool tracked = false);
     Slot& slot() {
         return mRupee ? s_rupees[mSlot - 1].slot : mDecoy ? s_decoys[mSlot - 1].slot : (mLocal ? s_localProp : s_slots[mSlot]);
@@ -225,17 +271,29 @@ private:
     bool mAnimationRequested = false;
     request_of_phase_process_class mAnimationPhase;
     request_of_phase_process_class mPropPhase;
-    JKRExpHeap* mPropHeap = nullptr;
+    JKRSolidHeap* mPropHeap = nullptr;
     J3DModel* mPropModel = nullptr;
+    J3DModel* mExtraModel = nullptr;
     mDoExt_bckAnm* mPropIdle = nullptr;
     mDoExt_bckAnm* mPropMove = nullptr;
+    mDoExt_btkAnm* mBtk = nullptr;
+    mDoExt_btpAnm* mBtp = nullptr;
+    mDoExt_btkAnm* mExtraBtk = nullptr;
     mDoExt_brkAnm* mRupeeColor = nullptr;
     bool mPropMoving = false;
     int mWantedProp = -1;
+    u32 mShadowKey = 0;
+    s16 mSwayPhase = 0;
+    s16 mSwayGustPhase = 0;
+    float mBobAmplitude = 0.0f;
+    s16 mBobPhase = 0;
+    cXyz mLastNear{0.0f, 0.0f, 0.0f};
 
-    // Ground, shadow and the hunters' target
+    // Ground, water surface, shadow and the hunters' target
     dBgS_ObjGndChk mGndChk;
+    dBgS_ObjGndChk_Spl mSurfaceChk;
     f32 mGroundY = -G_CM3D_F_INF;
+    f32 mSurfaceY = -G_CM3D_F_INF;
     dCcD_Stts mStts;
     dCcD_Cyl mCyl;
     bool mCylArmed = false;
@@ -245,9 +303,26 @@ private:
     dBgW* mBgW = nullptr;
     Mtx mBgMtx;
     bool mBgRegistered = false;
-    bool mBgFailed = false;
+    uint64_t mBgRetryAt = 0;
     uint64_t mHiddenUntil = 0;
 };
+
+// daObjYobikusa nodeCallBack: rotate the first three joints by the current leaf angles.
+int sway_callback(J3DJoint* joint, int param) {
+    if (param != 0) return 1;
+    const u16 jnt = joint->getJntNo();
+    J3DModel* model = j3dSys.getModel();
+    auto* self = reinterpret_cast<Puppet*>(model->getUserArea());
+    if (self == nullptr || jnt >= 3) return 1;
+    const csXyz& angle = self->mLeaf[jnt];
+    cMtx_copy(model->getAnmMtx(jnt), mDoMtx_stack_c::get());
+    if (angle.x != 0) mDoMtx_stack_c::XrotM(angle.x);
+    if (angle.z != 0) mDoMtx_stack_c::ZrotM(angle.z);
+    if (angle.y != 0) mDoMtx_stack_c::YrotM(angle.y);
+    model->setAnmMtx(jnt, mDoMtx_stack_c::get());
+    mDoMtx_copy(mDoMtx_stack_c::get(), J3DSys::mCurrentMtx);
+    return 1;
+}
 
 int Puppet::create() {
     fopAcM_ct(this, Puppet);
@@ -280,6 +355,8 @@ int Puppet::create() {
     mCyl.SetStts(&mStts);
     mSolidCyl.Set(kSolidSrc);
     mSolidCyl.SetStts(&mStts);
+    mSwayPhase = static_cast<s16>(cM_rndF(65535.0f));
+    mSwayGustPhase = static_cast<s16>(cM_rndF(65535.0f));
     fopAcM_setCullSizeBox(this, -160.0f, -20.0f, -160.0f, 160.0f, 260.0f, 160.0f);
     return cPhs_COMPLEATE_e;
 }
@@ -425,10 +502,99 @@ bool Puppet::poseLink(const PlayerState& s, bool moving) {
     return true;
 }
 
+// Builds the prop's model, animations and collision into one solid heap, then shrinks the heap to
+// what was used. Returns false while the archive is still loading or on failure (mPropFailed).
+bool Puppet::loadProp(int kind) {
+    const PropInfo& info = prop_info(kind);
+    mPropArc = info.arc;
+    const cPhs_Step step = static_cast<cPhs_Step>(dComIfG_resLoad(&mPropPhase, mPropArc));
+    mPropRequested = true;
+    if (step == cPhs_ERROR_e) {
+        mods::log::warn("puppet: could not load {}", mPropArc);
+        mPropFailed = true;
+        return false;
+    }
+    if (step != cPhs_COMPLEATE_e) return false;
+    mAnimationArc = info.animArc;
+    if (mAnimationArc != nullptr) {
+        mAnimationRequested = true;
+        const auto animationStep = dComIfG_resLoad(&mAnimationPhase, mAnimationArc);
+        if (animationStep == cPhs_ERROR_e) { mPropFailed = true; return false; }
+        if (animationStep != cPhs_COMPLEATE_e) return false;
+    }
+    auto* data = static_cast<J3DModelData*>(resource(mPropArc, info.model));
+    if (data == nullptr) {
+        mods::log::warn("puppet: {} has no model {}", mPropArc,
+            info.model.name != nullptr ? info.model.name : std::to_string(info.model.index));
+        mPropFailed = true;
+        return false;
+    }
+    mPropHeap = JKRSolidHeap::create(kPropHeapSize, linkkit::heap(), false);
+    if (mPropHeap == nullptr) {
+        mPropFailed = true;
+        return false;
+    }
+    HeapScope scope(mPropHeap);
+    mPropModel = mDoExt_J3DModel__create(data, 0x80000, diff_flags(info));
+    if (mPropModel == nullptr) {
+        mods::log::warn("puppet: could not create {} model", info.name);
+        mPropFailed = true;
+        return false;
+    }
+    mPropModel->setUserArea(reinterpret_cast<uintptr_t>(this));
+    if (info.extra.set()) {
+        if (auto* extra = static_cast<J3DModelData*>(resource(mPropArc, info.extra))) {
+            mExtraModel = mDoExt_J3DModel__create(extra, 0x80000, 0x11000284);
+            auto* btk = static_cast<J3DAnmTextureSRTKey*>(resource(mPropArc, info.extraBtk));
+            if (mExtraModel != nullptr && btk != nullptr) {
+                mExtraBtk = JKR_NEW mDoExt_btkAnm();
+                if (mExtraBtk != nullptr && !mExtraBtk->init(extra, btk, TRUE, J3DFrameCtrl::EMode_LOOP, 1.0f, 0, -1)) mExtraBtk = nullptr;
+            }
+        }
+    }
+    const char* animArc = mAnimationArc != nullptr ? mAnimationArc : mPropArc;
+    const auto bck = [&](const PropRes& res) -> mDoExt_bckAnm* {
+        auto* anim = static_cast<J3DAnmTransform*>(resource(animArc, res));
+        if (anim == nullptr) return nullptr;
+        auto* anm = JKR_NEW mDoExt_bckAnm();
+        if (anm == nullptr || !anm->init(anim, TRUE, J3DFrameCtrl::EMode_LOOP, 1.0f, 0, -1, false)) return nullptr;
+        return anm;
+    };
+    mPropIdle = bck(info.idle);
+    mPropMove = bck(info.move);
+    if (auto* btk = static_cast<J3DAnmTextureSRTKey*>(resource(mPropArc, info.btk))) {
+        mBtk = JKR_NEW mDoExt_btkAnm();
+        if (mBtk != nullptr && !mBtk->init(data, btk, TRUE, J3DFrameCtrl::EMode_LOOP, 1.0f, 0, -1)) mBtk = nullptr;
+    }
+    if (auto* btp = static_cast<J3DAnmTexPattern*>(resource(mPropArc, info.btp))) {
+        mBtp = JKR_NEW mDoExt_btpAnm();
+        if (mBtp != nullptr && !mBtp->init(data, btp, TRUE, J3DFrameCtrl::EMode_LOOP, 1.0f, 0, -1)) mBtp = nullptr;
+    }
+    if (mRupee) {
+        auto* color = static_cast<J3DAnmTevRegKey*>(dComIfG_getObjectRes(mPropArc, 7));
+        mRupeeColor = color != nullptr ? JKR_NEW mDoExt_brkAnm() : nullptr;
+        if (mRupeeColor != nullptr && !mRupeeColor->init(data, color, FALSE, J3DFrameCtrl::EMode_LOOP, 0.0f, 0, -1)) mRupeeColor = nullptr;
+    }
+    // The collision mesh must live in this heap too, so build it before the heap shrinks.
+    const PropSolid& solid = info.solid;
+    if (!mLocal && !mRupee && solid.kind == Solid::Background) {
+        auto* dzb = static_cast<cBgD_t*>(resource(mPropArc, solid.dzb));
+        mBgW = dzb != nullptr ? JKR_NEW dBgW() : nullptr;
+        // Set() returns true on failure. A prop without its collision is still a usable disguise.
+        if (mBgW == nullptr || mBgW->Set(dzb, dBgW::MOVE_BG_e, &mBgMtx)) {
+            mods::log::warn("puppet: no collision for {}", info.name);
+            mBgW = nullptr;
+        } else {
+            mBgW->SetCrrFunc(dBgS_MoveBGProc_TypicalRotY);
+        }
+    }
+    mPropHeap->adjustSize();
+    return true;
+}
+
 bool Puppet::updateProp(int kind, bool moving) {
-    // Disabled legacy IDs can still arrive from an older peer or saved local state. Keep packet
-    // numbering stable but display the known-good pot instead of a broken composite/world model.
-    if (!prop_on_map(kind, -1) && !(mRupee && kind == rupee_prop())) kind = 0;
+    // Unknown IDs can still arrive from a modified peer. Show the known-good pot instead.
+    if (!prop_selectable(kind) && !(mRupee && kind == kTreasureRupee)) kind = kPot;
     if (kind != mWantedProp) {
         releaseProp();
         mWantedProp = kind;
@@ -438,85 +604,49 @@ bool Puppet::updateProp(int kind, bool moving) {
     // Never make a player disappear because one optional model failed. Retry the known
     // good first catalogue entry (the small Ordon pot) until the player chooses another prop.
     if (mPropFailed) {
-        if (mPropKind == 0) return false;
+        if (mPropKind == kPot) return false;
         mods::log::warn("puppet: {} failed; showing Pot instead", prop_info(mPropKind).name);
         releaseProp();
-        mPropKind = 0;
+        mPropKind = kPot;
     }
-    mPropArc = prop_info(mPropKind).arc;
-    if (mPropModel == nullptr) {
-        const cPhs_Step step = static_cast<cPhs_Step>(dComIfG_resLoad(&mPropPhase, mPropArc));
-        mPropRequested = true;
-        if (step == cPhs_ERROR_e) {
-            mods::log::warn("puppet: could not load {}", mPropArc);
-            mPropFailed = true;
-            return false;
-        }
-        if (step != cPhs_COMPLEATE_e) return false;
-        const PropInfo& info = prop_info(mPropKind);
-        mAnimationArc = info.animationArc;
-        if (mAnimationArc != nullptr) {
-            mAnimationRequested = true;
-            const auto animationStep = dComIfG_resLoad(&mAnimationPhase, mAnimationArc);
-            if (animationStep == cPhs_ERROR_e) { mPropFailed = true; return false; }
-            if (animationStep != cPhs_COMPLEATE_e) return false;
-        }
-        auto* data = static_cast<J3DModelData*>(info.bmd != nullptr
-                ? dComIfG_getObjectRes(mPropArc, info.bmd)
-                : dComIfG_getObjectRes(mPropArc, info.bmdIndex));
-        if (data == nullptr) {
-            if (info.bmd != nullptr) mods::log::warn("puppet: {} has no {}", mPropArc, info.bmd);
-            else mods::log::warn("puppet: {} has no model #{}", mPropArc, info.bmdIndex);
-            mPropFailed = true;
-            return false;
-        }
-        mPropHeap = JKRExpHeap::create(kPropHeapSize, linkkit::heap(), false);
-        if (mPropHeap == nullptr) {
-            mPropFailed = true;
-            return false;
-        }
-        HeapScope scope(mPropHeap);
-        mPropModel = mDoExt_J3DModel__create(data, 0x80000, 0x11000084);
-        const auto bck = [&](const char* name) -> mDoExt_bckAnm* {
-            if (name == nullptr) return nullptr;
-            auto* res = static_cast<J3DAnmTransform*>(dComIfG_getObjectRes(mAnimationArc != nullptr ? mAnimationArc : mPropArc, name));
-            if (res == nullptr) return nullptr;
-            auto* anm = JKR_NEW mDoExt_bckAnm();
-            if (anm == nullptr || !anm->init(res, TRUE, J3DFrameCtrl::EMode_LOOP, 1.0f, 0, -1, false)) return nullptr;
-            return anm;
-        };
-        mPropIdle = bck(info.idleBck);
-        mPropMove = bck(info.moveBck);
-        if (mRupee) {
-            auto* color = static_cast<J3DAnmTevRegKey*>(dComIfG_getObjectRes(mPropArc, 7));
-            mRupeeColor = color != nullptr ? JKR_NEW mDoExt_brkAnm() : nullptr;
-            if (mRupeeColor != nullptr && !mRupeeColor->init(data, color, FALSE, J3DFrameCtrl::EMode_LOOP, 0.0f, 0, -1)) mRupeeColor = nullptr;
-        }
-        if (mPropModel == nullptr) {
-            mods::log::warn("puppet: could not create {} model", info.name);
-            mPropFailed = true;
-            return false;
-        }
-    }
+    if (mPropModel == nullptr && !loadProp(mPropKind)) return false;
 
     const PropInfo& info = prop_info(mPropKind);
-    mDoMtx_stack_c::transS(current.pos.x, current.pos.y, current.pos.z);
+    mDoMtx_stack_c::transS(current.pos.x, drawY(), current.pos.z);
     mDoMtx_stack_c::YrotM(shape_angle.y);
+    if (info.motion == Motion::LilyPad && mBobAmplitude > 0.5f) {
+        // obj_lp hasu_action: the pad rocks while the ripple passes.
+        mDoMtx_stack_c::XrotM(static_cast<s16>(mBobAmplitude * cM_ssin(mBobPhase) * -200.0f));
+    }
     mDoMtx_stack_c::scaleM(info.scale, info.scale, info.scale);
-    mDoMtx_stack_c::transM(info.offsetX, info.offsetY, info.offsetZ);
+    mDoMtx_stack_c::transM(0.0f, info.offsetY, 0.0f);
     mPropModel->setBaseTRMtx(mDoMtx_stack_c::get());
+    if (mExtraModel != nullptr) mExtraModel->setBaseTRMtx(mPropModel->getBaseTRMtx());
     fopAcM_SetMtx(this, mPropModel->getBaseTRMtx());
 
     mDoExt_bckAnm* anm = moving && mPropMove != nullptr ? mPropMove : mPropIdle;
     if (anm != nullptr) anm->play();
+    if (mBtk != nullptr) mBtk->play();
+    if (mBtp != nullptr) mBtp->play();
+    if (mExtraBtk != nullptr) mExtraBtk->play();
     mPropMoving = moving;
     // Calculate on the simulation tick, while our animation and callback overrides are active.
     // Drawing uses modelEntryDL: presentation frames reuse the simulation's packets instead of
     // registering them again in the still-live draw buffers.
     {
-        JointGuard guard(mPropModel->getModelData());
-        if (anm != nullptr) anm->entry(mPropModel->getModelData());
+        J3DModelData* data = mPropModel->getModelData();
+        JointGuard guard(data);
+        if (info.motion == Motion::Sway) {
+            for (u16 i = 0; i < std::min<u16>(3, data->getJointNum()); ++i) {
+                data->getJointNodePointer(i)->setCallBack(sway_callback);
+            }
+        }
+        if (anm != nullptr) anm->entry(data);
         mPropModel->calc();
+    }
+    if (mExtraModel != nullptr) {
+        JointGuard guard(mExtraModel->getModelData());
+        mExtraModel->calc();
     }
     return true;
 }
@@ -525,14 +655,17 @@ void Puppet::releaseProp() {
     // The collision mesh lives in the prop heap: unregister it before the heap goes.
     releaseSolid();
     mBgW = nullptr;
-    mBgFailed = false;
+    mBgRetryAt = 0;
     if (mPropHeap != nullptr) {
         mPropHeap->destroy();
         mPropHeap = nullptr;
     }
-    mPropModel = nullptr;
+    mPropModel = mExtraModel = nullptr;
     mPropIdle = mPropMove = nullptr;
+    mBtk = mExtraBtk = nullptr;
+    mBtp = nullptr;
     mRupeeColor = nullptr;
+    mShadowKey = 0;
     if (mAnimationRequested && mAnimationArc != nullptr) dComIfG_resDelete(&mAnimationPhase, mAnimationArc);
     mAnimationRequested = false;
     mAnimationArc = nullptr;
@@ -552,6 +685,87 @@ void Puppet::updateGround() {
         tevStr.YukaCol = dComIfG_Bgsp().GetPolyColor(mGndChk);
         tevStr.room_no = dComIfG_Bgsp().GetRoomId(mGndChk);
     }
+    // Lily pads rest on the water surface (obj_lp uses dBgS_ObjGndChk_Spl the same way). A
+    // swimming hider is a little below it, so probe from above.
+    mSurfaceY = -G_CM3D_F_INF;
+    if (mPropKind >= 0 && prop_info(mPropKind).motion == Motion::LilyPad) {
+        cXyz above = current.pos;
+        above.y += 150.0f;
+        mSurfaceChk.SetPos(&above);
+        const f32 surface = dComIfG_Bgsp().GroundCross(&mSurfaceChk);
+        if (surface != -G_CM3D_F_INF && surface > current.pos.y - 100.0f) mSurfaceY = surface;
+    }
+}
+
+float Puppet::drawY() const {
+    if (mSurfaceY != -G_CM3D_F_INF) {
+        // hasu_action: y + bob, the bob easing out as the ripple fades.
+        return mSurfaceY + (mBobAmplitude - mBobAmplitude * cM_scos(mBobPhase));
+    }
+    return current.pos.y;
+}
+
+// The players standing in or moving past this disguise, excluding the one wearing it.
+bool nearest_other(const cXyz& at, int owner, cXyz& out, float& distance) {
+    distance = 1e9f;
+    if (fopAc_ac_c* me = dComIfGp_getPlayer(0)) {
+        if (owner != net::self_id()) {
+            const float d = std::hypot(me->current.pos.x - at.x, me->current.pos.z - at.z);
+            if (d < distance && std::fabs(me->current.pos.y - at.y) < 150.0f) { distance = d; out = me->current.pos; }
+        }
+    }
+    for (int id = 1; id <= kMaxPlayers; ++id) {
+        if (id == owner || id == net::self_id() || !s_slots[id].visible) continue;
+        const cXyz& feet = s_slots[id].feet;
+        const float d = std::hypot(feet.x - at.x, feet.z - at.z);
+        if (d < distance && std::fabs(feet.y - at.y) < 150.0f) { distance = d; out = feet; }
+    }
+    return distance < 1e9f;
+}
+
+void Puppet::updateSway(int owner) {
+    cXyz near{0.0f, 0.0f, 0.0f};
+    float distance = 0.0f;
+    if (nearest_other(current.pos, owner, near, distance) && distance < 30.0f + kLinkRadius) {
+        // executePushDown: the leaves bend away from whoever is standing in them.
+        const s16 angle = cLib_targetAngleY(&current.pos, &near);
+        const float push = std::max(0.0f, kSwayPush - distance * (kSwayPush / kSwayPushReach));
+        mLeaf[0].y = static_cast<s16>(push * cM_scos(angle));
+        mLeaf[0].z = static_cast<s16>(push * cM_ssin(angle));
+        return;
+    }
+    // executeSwingWind
+    cXyz wind(0.0f, 0.0f, 0.0f);
+    f32 power = 0.0f;
+    dKyw_get_AllWind_vec(&current.pos, &wind, &power);
+    float outer = std::max(0.0f, cM_ssin(mSwayGustPhase) * kSwayGust + power * kSwayWind);
+    float swing = outer * cM_ssin(mSwayPhase);
+    mLeaf[0].y = static_cast<s16>(swing * wind.z);
+    mLeaf[0].z = static_cast<s16>(swing * wind.x);
+    float inner = std::max(0.0f, kSwayInnerGust * cM_ssin(mSwayGustPhase) +
+                                 (kSwayInnerCalm + power * (kSwayInnerWind - kSwayInnerCalm)));
+    swing = inner * cM_ssin(mSwayPhase);
+    mLeaf[1].y = static_cast<s16>(swing * wind.z);
+    mLeaf[1].z = static_cast<s16>(swing * wind.x);
+    mLeaf[2] = csXyz(0, 0, 0);
+    mSwayPhase = static_cast<s16>(mSwayPhase + static_cast<int>(kSwaySpeedCalm + power * (kSwaySpeedWind - kSwaySpeedCalm)));
+    mSwayGustPhase = static_cast<s16>(mSwayGustPhase + kSwayGustSpeed);
+}
+
+void Puppet::updateBob(int owner) {
+    // A ripple from someone moving nearby sets the pad bobbing, then it settles (0.985 a frame).
+    cXyz near{0.0f, 0.0f, 0.0f};
+    float distance = 0.0f;
+    const bool hasNeighbor = nearest_other(current.pos, owner, near, distance);
+    if (hasNeighbor && distance < 250.0f &&
+        (near - mLastNear).abs() > 3.0f && mBobAmplitude < 2.0f) {
+        mBobAmplitude = 6.0f * (1.0f - distance / 250.0f) + 2.0f;
+        mBobPhase = 0;
+    }
+    if (hasNeighbor) mLastNear = near;
+    mBobPhase = static_cast<s16>(mBobPhase + 0x9C4);
+    mBobAmplitude *= 0.985f;
+    if (mBobAmplitude < 0.05f) mBobAmplitude = 0.0f;
 }
 
 void Puppet::armHitbox(const match::Player& p, bool disguised, int kind) {
@@ -561,12 +775,12 @@ void Puppet::armHitbox(const match::Player& p, bool disguised, int kind) {
     if (!mCylArmed) return;
     const float r = disguised ? prop_info(kind).radius : kLinkRadius;
     const float h = disguised ? prop_info(kind).height : kLinkHeight;
-    // This cylinder is a sword target only. Network-owned correction cylinders push Link at stale
-    // positions and behave badly for thin/offset models, so disguises never register as solids.
+    // This cylinder is a sword target only. It sits on the drawn model (a lily pad floats above
+    // its swimming hider), so a hunter hits exactly what they see.
     mCyl.SetCoSPrm(0);
-    mCyl.SetC(current.pos);
+    mCyl.SetC(cXyz(current.pos.x, disguised ? std::min(drawY(), current.pos.y) : current.pos.y, current.pos.z));
     mCyl.SetR(r);
-    mCyl.SetH(h);
+    mCyl.SetH(disguised ? std::max(h, drawY() - current.pos.y + h) : h);
     dComIfG_Ccsp()->Set(&mCyl);
 }
 
@@ -575,7 +789,7 @@ void Puppet::armDecoyHitbox(int kind) {
     mCylArmed = m.phase == Phase::Seek && match::my_role() == Role::Hunter && match::my_hunter_life() != 0;
     if (!mCylArmed) return;
     mCyl.SetCoSPrm(0);
-    mCyl.SetC(current.pos);
+    mCyl.SetC(cXyz(current.pos.x, drawY(), current.pos.z));
     mCyl.SetR(prop_info(kind).radius);
     mCyl.SetH(prop_info(kind).height);
     dComIfG_Ccsp()->Set(&mCyl);
@@ -588,41 +802,39 @@ void Puppet::armSolid(int kind) {
         return;
     }
     const PropInfo& info = prop_info(kind);
-    const PropSolid& solid = prop_solid(kind);
-    // The model's origin, after the catalogue's offset corrections, is where the native actor
-    // would stand. Collision is placed around it rather than around the network position.
+    const PropSolid& solid = info.solid;
     const MtxP model = mPropModel->getBaseTRMtx();
-    if (solid.kind == Solid::Cylinder) {
-        releaseSolid();
-        mSolidCyl.SetC(cXyz(model[0][3], current.pos.y, model[2][3]));
+    const auto cylinder = [&] {
+        mSolidCyl.SetC(cXyz(current.pos.x, drawY(), current.pos.z));
         mSolidCyl.SetR(solid.radius > 0.0f ? solid.radius : info.radius);
         mSolidCyl.SetH(info.height);
         dComIfG_Ccsp()->Set(&mSolidCyl);
-        return;
-    }
-    if (solid.kind != Solid::Background || mBgFailed) {
+    };
+    if (solid.kind == Solid::Cylinder) {
         releaseSolid();
+        cylinder();
         return;
     }
-
-    mDoMtx_stack_c::copy(model);
-    mDoMtx_stack_c::scaleM(solid.bgScaleX, solid.bgScaleY, solid.bgScaleZ);
-    MTXCopy(mDoMtx_stack_c::get(), mBgMtx);
-    if (mBgW == nullptr) {
-        auto* dzb = static_cast<cBgD_t*>(solid.dzb != nullptr
-                ? dComIfG_getObjectRes(mPropArc, solid.dzb)
-                : dComIfG_getObjectRes(mPropArc, solid.dzbIndex));
-        HeapScope scope(mPropHeap);
-        mBgW = dzb != nullptr ? JKR_NEW dBgW() : nullptr;
-        // Set() returns true on failure. A prop without its collision is still a usable disguise.
-        if (mBgW == nullptr || mBgW->Set(dzb, dBgW::MOVE_BG_e, &mBgMtx)) {
-            mods::log::warn("puppet: no collision for {}", info.name);
-            mBgW = nullptr;
-            mBgFailed = true;
+    if (solid.kind != Solid::Background || mBgW == nullptr) {
+        releaseSolid();
+        if (solid.kind == Solid::Background) cylinder();
+        return;
+    }
+    if (const auto* player = dComIfGp_getPlayer(0)) {
+        const cXyz& at = player->current.pos;
+        const float reach = info.radius + kMeshReach;
+        if (std::hypot(at.x - model[0][3], at.z - model[2][3]) > reach ||
+            at.y > drawY() + info.height + kMeshReach || at.y + kLinkHeight + kMeshReach < drawY()) {
+            releaseSolid();
             return;
         }
-        mBgW->SetCrrFunc(dBgS_MoveBGProc_TypicalRotY);
     }
+    // The mesh follows the model without its offset and scale: the native actors register their
+    // .dzb at the actor's own matrix.
+    mDoMtx_stack_c::transS(current.pos.x, drawY(), current.pos.z);
+    mDoMtx_stack_c::YrotM(shape_angle.y);
+    mDoMtx_stack_c::scaleM(solid.bgScale, solid.bgScale, solid.bgScale);
+    MTXCopy(mDoMtx_stack_c::get(), mBgMtx);
     if (mBgRegistered) {
         mBgW->Move();
         return;
@@ -638,11 +850,20 @@ void Puppet::armSolid(int kind) {
                            at.y + kLinkHeight < current.pos.y;
         if (!clear) return;
     }
-    if (dComIfG_Bgsp().Regist(mBgW, this)) {
-        mods::log::warn("puppet: could not register collision for {}", info.name);
-        mBgFailed = true;
+    if (now_ms() < mBgRetryAt) {
+        cylinder();
         return;
     }
+    int available = 0;
+    for (const auto& entry : dComIfG_Bgsp().m_chk_element) available += !entry.ChkUsed();
+    if (available <= 8 || dComIfG_Bgsp().Regist(mBgW, this)) {
+        // Keep the mesh and retry after space is freed. A temporary push cylinder prevents an
+        // overloaded room from turning solid furniture permanently walk-through.
+        mBgRetryAt = now_ms() + kMeshRetryMs;
+        cylinder();
+        return;
+    }
+    mBgRetryAt = 0;
     mBgRegistered = true;
     mBgW->Move();
 }
@@ -692,11 +913,14 @@ int Puppet::execute() {
         }
         const bool moving = (player->current.pos - current.pos).abs() > 1.0f;
         current.pos = player->current.pos;
-        shape_angle.y = player->shape_angle.y;
+        shape_angle.y = local::prop_yaw();
         updateGround();
+        const int kind = local::prop();
+        if (prop_info(kind).motion == Motion::Sway) updateSway(net::self_id());
+        if (prop_info(kind).motion == Motion::LilyPad) updateBob(net::self_id());
         // Keep the selected prop loaded while we are in the room. When Hide begins, the prop can
         // replace Link in the same frame instead of leaving an invisible archive-loading gap.
-        const bool ready = updateProp(local::prop(), local::disguised() && moving);
+        const bool ready = updateProp(kind, local::disguised() && moving);
         mVisible = local::disguised() && ready;
         publish(mVisible, mVisible ? prop_info(mPropKind).height : 0.0f, mVisible);
         return 1;
@@ -705,7 +929,7 @@ int Puppet::execute() {
     if (mRupee) {
         mDisguised = true;
         shape_angle.y = static_cast<int16_t>((now_ms() % 2400) * 65536 / 2400);
-        mVisible = updateProp(rupee_prop(), false);
+        mVisible = updateProp(kTreasureRupee, false);
         publish(mVisible, 60.0f);
         return 1;
     }
@@ -714,7 +938,9 @@ int Puppet::execute() {
         mDisguised = true;
         old.pos = current.pos;
         updateGround();
-        const int kind = prop_on_map(mFixedProp, -1) ? mFixedProp : 0;
+        const int kind = prop_selectable(mFixedProp) ? mFixedProp : kPot;
+        if (prop_info(kind).motion == Motion::Sway) updateSway(0);
+        if (prop_info(kind).motion == Motion::LilyPad) updateBob(0);
         mVisible = updateProp(kind, false) && now_ms() >= mHiddenUntil;
         const int shownKind = mPropKind >= 0 ? mPropKind : kind;
         if (mVisible) {
@@ -750,10 +976,11 @@ int Puppet::execute() {
     old.pos = before;
     updateGround();
 
-    mDisguised = (s.flags & STATE_DISGUISED) != 0;
-    const int kind = prop_on_map(s.prop, -1) ? s.prop : 0;
+    const int kind = prop_selectable(s.prop) ? s.prop : kPot;
     const bool moving = (current.pos - before).abs() > 1.0f;
     if (mDisguised) {
+        if (prop_info(kind).motion == Motion::Sway) updateSway(mSlot);
+        if (prop_info(kind).motion == Motion::LilyPad) updateBob(mSlot);
         mVisible = updateProp(kind, moving);
     } else {
         if (mPropModel != nullptr || mPropRequested) releaseProp();
@@ -770,70 +997,88 @@ int Puppet::execute() {
     if (mDisguised && mVisible && !p.found) armSolid(shownKind);
     else releaseSolid();
     publish(mVisible, mDisguised ? prop_info(shownKind).height : kLinkHeight, true);
-#ifdef HS_STOCK_RENDER_TEST
-    if (mSlot == 2 && !mDisguised) {
-        static uint64_t last = 0;
-        if (now_ms() - last > 3000) {
-            last = now_ms();
-            mods::log::info("HUNTER_DEBUG: visible={} body={} condition={} pos=({},{},{})", mVisible,
-                mBody != nullptr, static_cast<int>(actor_condition), current.pos.x, current.pos.y, current.pos.z);
-            std::fflush(nullptr);
-        }
-    }
-#endif
     return 1;
+}
+
+void Puppet::drawProp() {
+    const PropInfo& info = prop_info(mPropKind);
+    cXyz at(current.pos.x, drawY(), current.pos.z);
+    g_env_light.settingTevStruct(info.light, &at, &tevStr);
+    g_env_light.setLightTevColorType_MAJI(mPropModel, &tevStr);
+    if (mExtraModel != nullptr) g_env_light.setLightTevColorType_MAJI(mExtraModel, &tevStr);
+    if (info.bgList) dComIfGd_setListBG();
+    J3DModelData* data = mPropModel->getModelData();
+    {
+        // Keep shared resource callbacks away from our model. Its matrices were calculated in
+        // execute(); EntryDL refreshes materials on presentation frames without re-entering the
+        // packets that Dusklight retained from the last simulation tick.
+        JointGuard guard(data);
+        mDoExt_bckAnm* anm = mPropMoving && mPropMove != nullptr ? mPropMove : mPropIdle;
+        if (anm != nullptr) anm->entry(data);
+        // The material animations go on the shared model data, as the native actor does it,
+        // and come off again so real objects keep their own frames.
+        if (mBtk != nullptr) mBtk->entry(data);
+        if (mBtp != nullptr) mBtp->entry(data);
+        if (mRupeeColor != nullptr) mRupeeColor->entry(data, match::rupee_points() == 2 ? 4.0f : 0.0f);
+        mDoExt_modelEntryDL(mPropModel);
+        if (mBtk != nullptr) mBtk->remove(data);
+        if (mBtp != nullptr) mBtp->remove(data);
+        if (mRupeeColor != nullptr) mRupeeColor->remove(data);
+    }
+    if (mExtraModel != nullptr) {
+        J3DModelData* extra = mExtraModel->getModelData();
+        if (mExtraBtk != nullptr) mExtraBtk->entry(extra);
+        mDoExt_modelEntryDL(mExtraModel);
+        if (mExtraBtk != nullptr) mExtraBtk->remove(extra);
+    }
+    if (info.bgList) dComIfGd_setList();
+
+    if (mGroundY == -G_CM3D_F_INF) return;
+    switch (info.shadow) {
+    case Shadow::None: break;
+    case Shadow::Round:
+        dComIfGd_setSimpleShadow(&current.pos, mGroundY, info.shadowSize, mGndChk, 0,
+            info.shadowAlpha, dDlst_shadowControl_c::getSimpleTex());
+        break;
+    case Shadow::Square:
+        dComIfGd_setSimpleShadow(&current.pos, mGroundY, info.shadowSize, mGndChk, shape_angle.y,
+            info.shadowAlpha, nullptr);
+        break;
+    case Shadow::Real: {
+        // Projected from the model like the native actor's; the shadow system keeps only the
+        // nearest few, exactly as it does for the real objects around us.
+        cXyz from(current.pos.x, current.pos.y + info.shadowLift, current.pos.z);
+        mShadowKey = dComIfGd_setShadow(mShadowKey, 1, mPropModel, &from, info.shadowSize, 0.0f,
+            current.pos.y, mGroundY, mGndChk, &tevStr, 0, 1.0f, dDlst_shadowControl_c::getSimpleTex());
+        break;
+    }
+    }
 }
 
 int Puppet::draw() {
     if (!mVisible) return 1;
-    g_env_light.settingTevStruct(0, &current.pos, &tevStr);
-    float shadow = kLinkRadius;
     if (mDisguised || mLocal) {
         if (mPropModel == nullptr) return 1;
-        g_env_light.setLightTevColorType_MAJI(mPropModel, &tevStr);
-        if (mRupeeColor != nullptr) mRupeeColor->entry(mPropModel->getModelData(), match::rupee_points() == 2 ? 4.0f : 0.0f);
-        // Keep shared resource callbacks away from our model. Its matrices were calculated in
-        // execute(); EntryDL refreshes materials on presentation frames without re-entering the
-        // packets that Dusklight retained from the last simulation tick.
-        J3DModelData* data = mPropModel->getModelData();
-        JointGuard guard(data);
-        mDoExt_bckAnm* anm = mPropMoving && mPropMove != nullptr ? mPropMove : mPropIdle;
-        if (anm != nullptr) anm->entry(data);
-        mDoExt_modelEntryDL(mPropModel);
-        if (mRupeeColor != nullptr) mRupeeColor->remove(data);
-        // Never use model-projected shadows here: those redraw the prop's geometry into the shadow
-        // pass. A metadata-sized simple quad is cheap and cannot double a complex model's indices.
-        shadow = prop_info(mPropKind).simpleShadowSize;
-    } else {
-#ifdef HS_STOCK_RENDER_TEST
-        if (mSlot == 2) {
-            static uint64_t last = 0;
-            if (now_ms() - last > 3000) {
-                last = now_ms();
-                mods::log::info("HUNTER_DEBUG: draw body joints={} mtxY={} shapes={} rootY={}",
-                    mBody->getModelData()->getJointNum(), mBody->getBaseTRMtx()[1][3],
-                    mBody->getModelData()->getShapeNum(), mBody->getAnmMtx(0)[1][3]);
-                std::fflush(nullptr);
-            }
-        }
-#endif
-        // poseLink() has already calculated the body and every attachment. Only enter their
-        // packets on simulation frames: UpdateDL's locked-model path also enters on presentation
-        // frames, creating cycles in the retained material list and an unbounded geometry stream.
-        if (mPoseAnim != nullptr) mPoseAnim->setFrame(mPoseFrame);
-        J3DModel* updated[] = {mBody, mFace, mHead, mSheath, mSword, mShield};
-        for (J3DModel* model : updated) {
-            if (model == nullptr) continue;
-            g_env_light.setLightTevColorType_MAJI(model, &tevStr);
-            mDoExt_modelEntryDL(model);
-        }
-        if (mHands != nullptr) {
-            g_env_light.setLightTevColorType_MAJI(mHands, &tevStr);
-            mDoExt_modelEntryDL(mHands);
-        }
+        drawProp();
+        return 1;
     }
-    if (mGroundY != -G_CM3D_F_INF && shadow > 0.0f) {
-        dComIfGd_setSimpleShadow(&current.pos, mGroundY, shadow, mGndChk, shape_angle.y, 1.0f,
+    g_env_light.settingTevStruct(0, &current.pos, &tevStr);
+    // poseLink() has already calculated the body and every attachment. Only enter their
+    // packets on simulation frames: UpdateDL's locked-model path also enters on presentation
+    // frames, creating cycles in the retained material list and an unbounded geometry stream.
+    if (mPoseAnim != nullptr) mPoseAnim->setFrame(mPoseFrame);
+    J3DModel* updated[] = {mBody, mFace, mHead, mSheath, mSword, mShield};
+    for (J3DModel* model : updated) {
+        if (model == nullptr) continue;
+        g_env_light.setLightTevColorType_MAJI(model, &tevStr);
+        mDoExt_modelEntryDL(model);
+    }
+    if (mHands != nullptr) {
+        g_env_light.setLightTevColorType_MAJI(mHands, &tevStr);
+        mDoExt_modelEntryDL(mHands);
+    }
+    if (mGroundY != -G_CM3D_F_INF) {
+        dComIfGd_setSimpleShadow(&current.pos, mGroundY, kLinkRadius, mGndChk, shape_angle.y, 1.0f,
             dDlst_shadowControl_c::getSimpleTex());
     }
     return 1;
@@ -926,10 +1171,18 @@ bool register_actor() {
 
 bool unregister_actor() {
     if (!s_registered) return true;
+    // Remove every puppet first: the actor service refuses to unregister a profile that still
+    // has live actors, which used to leak their heaps on every shutdown.
+    const auto drop = [](Slot& slot) {
+        if (slot.actor != fpcM_ERROR_PROCESS_ID_e) svc_actor->delete_actor(mod_ctx, slot.actor);
+        slot = Slot{};
+    };
+    for (Slot& s : s_slots) drop(s);
+    drop(s_localProp);
+    for (DecoySlot& s : s_decoys) drop(s.slot);
+    for (auto& s : s_rupees) drop(s.slot);
     if (svc_actor->unregister_actor(mod_ctx, s_handle) != MOD_OK) return false;
     s_registered = false;
-    for (Slot& s : s_slots) s = Slot{};
-    s_localProp = Slot{};
     for (DecoySlot& s : s_decoys) s = DecoySlot{};
     for (auto& s : s_rupees) s = {};
     return true;
@@ -959,7 +1212,7 @@ void update() {
         player != nullptr ? player->current.pos : cXyz(0.0f, 0.0f, 0.0f));
 
     const match::Match& game = match::get();
-    const bool decoyWorld = online && settled && game.settings.mode == Mode::PropHunt &&
+    const bool decoyWorld = online && settled &&
                             (game.phase == Phase::Hide || game.phase == Phase::Seek) &&
                             std::strncmp(local::stage(), map_info(game.map).stage, 8) == 0;
     for (int i = 0; i < match::kMaxActiveDecoys; ++i) {
@@ -967,7 +1220,8 @@ void update() {
         const bool exists = i < match::decoy_count();
         const match::Decoy& d = match::decoy(i);
         const bool want = decoyWorld && exists;
-        const bool changed = want && (live.id != d.id || live.kind != d.prop);
+        // A swapped decoy keeps its id but moves: respawn it at its new spot.
+        const bool changed = want && (live.id != d.id || live.kind != d.prop || live.x != d.x || live.z != d.z);
         if (changed) {
             manage(live.slot, false, i + 1, false, cXyz(0.0f, 0.0f, 0.0f));
             if (live.slot.actor != fpcM_ERROR_PROCESS_ID_e) continue;
@@ -975,6 +1229,8 @@ void update() {
         if (want) {
             live.id = d.id;
             live.kind = d.prop;
+            live.x = d.x;
+            live.z = d.z;
             manage(live.slot, true, i + 1, false, cXyz(d.x, d.y, d.z), true, d.prop, d.id,
                 d.yaw);
         } else {

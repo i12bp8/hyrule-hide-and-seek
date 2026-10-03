@@ -3,5 +3,5 @@
   "name": "Hyrule Hide & Seek",
   "version": "@PROJECT_VERSION@",
   "author": "i12bp8",
-  "description": "Online Prop Hunt and Hide & Seek for 2-16 players. Host, share the room code, play. Props hide, hunters swing swords before time runs out."
+  "description": "Online Prop Hunt for 2-16 players. Host, share the room code, play. Props hide, hunters swing swords before time runs out."
 }

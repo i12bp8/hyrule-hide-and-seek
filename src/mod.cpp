@@ -1,4 +1,4 @@
-// Hyrule Hide & Seek: online Prop Hunt and Hide & Seek for Dusklight.
+// Hyrule Hide & Seek: online Prop Hunt for Dusklight.
 //
 //   net       relay connection (server/)            match     the rules, run by the room's host
 //   local     the local Link: state, warp, controls puppet    other players and props in the world
@@ -12,6 +12,7 @@
 #include "mods/svc/hook.h"
 #include "mods/svc/http.h"
 #include "mods/svc/log.hpp"
+#include "mods/svc/stage.h"
 #include "mods/svc/texture.h"
 #include "mods/svc/ui.h"
 #include "mods/svc/websocket.h"
@@ -39,10 +40,24 @@ IMPORT_SERVICE(UiService, svc_ui);
 IMPORT_SERVICE(ActorService, svc_actor);
 IMPORT_OPTIONAL_SERVICE(TextureService, svc_texture);
 IMPORT_OPTIONAL_SERVICE(GameModeService, svc_game_mode);
+// Adds the arenas' central spawns and scenery and removes event triggers for a round.
+IMPORT_OPTIONAL_SERVICE(StageService, svc_stage);
 
 #ifdef HS_STOCK_RENDER_TEST
 namespace hs::testing {
 void stock_render_update();
+}
+#endif
+
+#ifdef HS_SHOWCASE
+namespace hs::showcase {
+void update();
+}
+#endif
+
+#ifdef HS_LAB
+namespace hs::lab {
+void update();
 }
 #endif
 
@@ -96,12 +111,20 @@ MOD_EXPORT ModResult mod_update(ModError*) {
     hs::treasure::update();
     hs::puppet::update();
     hs::game_mode::update();
+    hs::arena::update();
+#ifdef HS_SHOWCASE
+    hs::showcase::update();
+#endif
+#ifdef HS_LAB
+    hs::lab::update();
+#endif
     return MOD_OK;
 }
 
 MOD_EXPORT ModResult mod_shutdown(ModError*) {
     hs::net::leave_room();
     hs::local::shutdown();
+    hs::arena::shutdown();
     hs::ui::shutdown();
     // The puppets use memory from linkkit's heap, so they must be gone before it is freed.
     if (hs::puppet::unregister_actor()) {

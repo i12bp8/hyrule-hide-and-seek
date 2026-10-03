@@ -6,7 +6,7 @@ endif ()
 
 # The version shown in the mod manager. Players need the same protocol version (src/protocol.hpp)
 # to play together; the mod version itself may differ.
-project(hyrule_hide_and_seek VERSION 0.3.7 LANGUAGES CXX)
+project(hyrule_hide_and_seek VERSION 0.4.0 LANGUAGES CXX)
 
 # The Dusklight version to build against: a release tag or a commit SHA.
 if (NOT DUSKLIGHT_VERSION)
@@ -58,4 +58,20 @@ if (HS_STOCK_RENDER_TEST)
     target_sources(hyrule_hide_and_seek PRIVATE tests/stock_render_driver.cpp)
     target_include_directories(hyrule_hide_and_seek PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
     target_compile_definitions(hyrule_hide_and_seek PRIVATE HS_STOCK_RENDER_TEST=1)
+endif ()
+
+# Local in-game test harness (tools/lab); never included in the release build.
+option(HS_LAB "Enable the local in-game test harness" OFF)
+if (HS_LAB)
+    target_sources(hyrule_hide_and_seek PRIVATE tools/lab/lab.cpp)
+    target_include_directories(hyrule_hide_and_seek PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
+    target_compile_definitions(hyrule_hide_and_seek PRIVATE HS_LAB=1)
+endif ()
+
+# Local filming tools; never included in the release build.
+option(HS_SHOWCASE "Enable the local bot-session filming director" OFF)
+if (HS_SHOWCASE)
+    target_sources(hyrule_hide_and_seek PRIVATE tools/showcase/director.cpp)
+    target_include_directories(hyrule_hide_and_seek PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
+    target_compile_definitions(hyrule_hide_and_seek PRIVATE HS_SHOWCASE=1)
 endif ()

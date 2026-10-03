@@ -18,12 +18,14 @@
 #include "Z2AudioLib/Z2SeMgr.h"
 #include "d/actor/d_a_alink.h"
 #include "d/actor/d_a_obj_carry.h"
+#include "d/actor/d_a_obj_yobikusa.h"
 #include "d/d_com_inf_game.h"
 #include "d/d_meter2.h"
 #include "f_op/f_op_actor_iter.h"
 #include "f_op/f_op_actor_mng.h"
 #include "m_Do/m_Do_audio.h"
 #include "m_Do/m_Do_controller_pad.h"
+#include "m_Do/m_Do_ext.h"
 #include "m_Do/m_Do_lib.h"
 
 #include <cmath>
@@ -43,10 +45,11 @@ namespace hs::local {
 namespace {
 
 constexpr uint64_t kDecoyCooldownMs = 750;
+constexpr uint64_t kSwapHoldMs = 450;  // hold D-pad up this long to swap instead of placing
 constexpr uint64_t kSettleMs = 1500;
 constexpr uint64_t kWarpRetryMs = 12000;
-constexpr float kTouchDistance = 90.0f;
 constexpr float kSwimTagBodyRadius = 45.0f;
+constexpr float kYawUnlockDistance = 40.0f;
 constexpr float kSwimTagVerticalMargin = 80.0f;
 constexpr float kCopyDistance = 300.0f;
 constexpr u32 kRoundDpadMask =
@@ -77,6 +80,13 @@ int s_prop = 0;
 uint64_t s_lastTaunt = 0;
 ClueKind s_myClueKind = ClueKind::Manual;
 uint64_t s_lastDecoy = 0;
+uint64_t s_upHeldSince = 0;  // D-pad up: tap places a decoy, hold swaps with it
+bool s_upHandled = false;
+// A copied object keeps the facing of the one it copies until the hider walks away, so a crate
+// lines up with the crates beside it instead of turning with Link.
+bool s_yawLocked = false;
+int16_t s_lockedYaw = 0;
+cXyz s_lockedAt{0.0f, 0.0f, 0.0f};
 
 struct TauntPing {
     uint64_t at = 0;
@@ -134,10 +144,6 @@ bool live_clue(int id, SearchClue& clue) {
     clue = search_clue_from_view(delta.x, delta.z,
         view->viewMtx[0][2], -view->viewMtx[0][0], delta.abs());
     return true;
-}
-
-bool playing_prop_hunt() {
-    return match::get().settings.mode == Mode::PropHunt;
 }
 
 const MapInfo& round_map() {
@@ -280,7 +286,7 @@ void read_state(daAlink_c* l, PlayerState& s) {
     s.z = l->current.pos.z;
     s.yaw = l->shape_angle.y;
     s.prop = static_cast<uint8_t>(s_prop);
-    s.propYaw = l->shape_angle.y;
+    s.propYaw = prop_yaw();
     const auto slot = [](daPy_anmHeap_c& heap, mDoExt_AnmRatioPack& pack, AnimSlot& out) {
         // Animations from cutscene archives (arc no. set) aren't in AlAnm; skip them.
         const u16 idx = heap.checkNoSetPriIdx() ? heap.getIdx() : heap.mPriIdx;
@@ -295,30 +301,71 @@ void read_state(daAlink_c* l, PlayerState& s) {
     }
 }
 
-// The carryable object nearest to Link, as a prop kind, or -1.
+// The native actor class a disguise can copy, with its sub-type (carry type, grass type...).
+Native native_of(fopAc_ac_c* a, int& subtype) {
+    subtype = -1;
+    switch (fopAcM_GetName(a)) {
+    case fpcNm_Obj_Carry_e: subtype = static_cast<daObjCarry_c*>(a)->getType(); return Native::Carry;
+    case fpcNm_OBJ_PUMPKIN_e: return Native::Pumpkin;
+    case fpcNm_OBJ_PLEAF_e: return Native::PumpkinLeaves;
+    case fpcNm_NI_e: return Native::Cucco;
+    case fpcNm_COW_e: return Native::Goat;
+    case fpcNm_Obj_Yobikusa_e: subtype = static_cast<daObjYobikusa_c*>(a)->getType(); return Native::CallGrass;
+    case fpcNm_OBJ_KANBAN2_e: return Native::Sign;
+    case fpcNm_Obj_NamePlate_e: return Native::NamePlate;
+    case fpcNm_Obj_Stone_e: subtype = static_cast<int>(fopAcM_GetParam(a) & 0xF); return Native::Stone;
+    case fpcNm_OBJ_LP_e: return Native::LilyPad;
+    case fpcNm_NPC_KAKASHI_e: return Native::Scarecrow;
+    case fpcNm_OBJ_ITAMATO_e: return Native::BoardTarget;
+    case fpcNm_OBJ_BOUMATO_e: return Native::PoleTarget;
+    case fpcNm_Obj_GraveStone_e: return Native::GraveStone;
+    case fpcNm_NPC_NE_e: return Native::Cat;
+    case fpcNm_DO_e: return Native::Dog;
+    case fpcNm_Obj_BarDesk_e: return Native::BarDesk;
+    case fpcNm_Obj_CRVLH_DW_e: return Native::LanternPost;
+    case fpcNm_Obj_HFtr_e: subtype = static_cast<int>(fopAcM_GetParam(a) & 0xF); return Native::Furniture;
+    case fpcNm_Obj_HBarrel_e: return Native::YetoBarrel;
+    case fpcNm_Obj_Table_e: return Native::MapTable;
+    case fpcNm_Obj_Chest_e: return Native::Dresser;
+    case fpcNm_Obj_CRVFENCE_e: return Native::CaravanFence;
+    case fpcNm_Obj_InoBone_e: return Native::BoarBones;
+    case fpcNm_OBJ_OILTUBO_e: return Native::OilJar;
+    case fpcNm_Obj_GpTaru_e: return Native::BigBarrel;
+    default: return Native::None;
+    }
+}
+
+// The real object nearest to Link that this map's palette can copy, as a prop kind, or -1.
 struct NearSearch {
     cXyz from;
     float best;
     int kind;
+    int16_t yaw;
+    int map;
 };
 
-void* judge_carry(void* actor, void* data) {
+void* judge_native(void* actor, void* data) {
     auto* a = static_cast<fopAc_ac_c*>(actor);
     auto* n = static_cast<NearSearch*>(data);
-    if (fopAcM_GetName(a) != fpcNm_Obj_Carry_e) return nullptr;
+    if (a == dComIfGp_getPlayer(0)) return nullptr;
     const float d = (a->current.pos - n->from).abs();
     if (d >= n->best) return nullptr;
-    const int kind = prop_for_carry_type(static_cast<daObjCarry_c*>(a)->getType());
-    if (kind >= 0) {
+    int subtype = -1;
+    const Native native = native_of(a, subtype);
+    if (native == Native::None) return nullptr;
+    const int kind = prop_for_native(native, subtype);
+    if (kind >= 0 && prop_on_map(kind, n->map)) {
         n->best = d;
         n->kind = kind;
+        n->yaw = a->shape_angle.y;
     }
     return nullptr;
 }
 
-int nearby_prop(const cXyz& pos) {
-    NearSearch n{pos, kCopyDistance, -1};
-    fopAcIt_Judge(judge_carry, &n);
+int nearby_prop(const cXyz& pos, int map, int16_t& yaw) {
+    NearSearch n{pos, kCopyDistance, -1, 0, map};
+    fopAcIt_Judge(judge_native, &n);
+    yaw = n.yaw;
     return n.kind;
 }
 
@@ -345,9 +392,9 @@ void follow_round(daAlink_c* l) {
     const uint64_t now = now_ms();
     const bool busy = dComIfGp_isEnableNextStage() || dComIfGp_event_runCheck();
     if (s_warpPending && l != nullptr && (!busy || now - s_warpedAt > kWarpRetryMs)) {
-        mods::log::info("warping to {} ({} room {} point {})", map.name, map.stage, map.room, map.point);
+        mods::log::info("warping to {} ({} room {})", map.name, map.stage, map.room);
         game_mode::prepare_stage();
-        arena::warp(map);
+        arena::warp(m.map);
         s_warpPending = false;
         s_warpedAt = now;
         s_arrivedAt = 0;
@@ -376,16 +423,17 @@ void on_phase_change(Phase from, Phase to) {
         for (TauntPing& ping : s_tauntPings) ping = TauntPing{};
         for (FinalMarker& marker : s_finalMarkers) marker = FinalMarker{};
     }
-    if (to == Phase::Gather && playing_prop_hunt()) {
+    if (to == Phase::Gather) {
         // Choose during the gathering/warp phase so the replacement model is already loaded when
         // the hider becomes disguised at the start of Hide.
         s_prop = random_prop(match::get().map);
         s_lastDecoy = 0;
+        s_yawLocked = false;
     }
     if (to == Phase::Hide) {
         if (s_roundHealth) dComIfGs_setLife(kArenaLife);
         // A late join can first learn about a round after Gather has already ended.
-        if (from != Phase::Gather && playing_prop_hunt()) s_prop = random_prop(match::get().map);
+        if (from != Phase::Gather) s_prop = random_prop(match::get().map);
     }
     if (to == Phase::Seek) {
         s_lastTaunt = now_ms();
@@ -406,10 +454,10 @@ void hunter_controls(daAlink_c* l) {
     }
     if (s_swinging && now - s_swingAt > kSwingWindowMs) {
         s_swinging = false;
-        if (!s_swingHit && m.settings.missPenaltyQuarters != 0 && playing_prop_hunt() && m.phase == Phase::Seek) {
+        if (!s_swingHit && m.phase == Phase::Seek) {
             match::report_miss();
             sync_hunter_life();
-            play_at(Z2SE_SY_CURSOR_CANCEL, &l->current.pos);
+            if (m.settings.missPenaltyQuarters != 0) play_at(Z2SE_SY_CURSOR_CANCEL, &l->current.pos);
         }
     }
     if (m.phase != Phase::Seek || match::my_role() != Role::Hunter || match::my_hunter_life() == 0) return;
@@ -440,7 +488,11 @@ void hunter_controls(daAlink_c* l) {
             play_at(Z2SE_SY_HINT_BUTTON_BLINK, nullptr);
         } else play_at(Z2SE_SY_CURSOR_CANCEL, nullptr);
     }
-    if (playing_prop_hunt()) {
+    if (mDoCPd_c::getTrigUp(PAD_1) && m.settings.whistle) {
+        if (match::whistle_cooldown_ms() == 0) match::request_whistle();
+        else play_at(Z2SE_SY_CURSOR_CANCEL, nullptr);
+    }
+    {
         // Link cannot draw a sword while swimming. In that one state B becomes a short-range tag,
         // using the same authoritative distance check as sword hits. It is deliberately not
         // consumed, so normal swimming controls continue to work.
@@ -474,38 +526,65 @@ void hunter_controls(daAlink_c* l) {
                 play_at(Z2SE_SY_CURSOR_OK, &l->current.pos);
             }
         }
-        return;
     }
-    // Hide & Seek: touching a hider finds them.
-    for (int id = 1; id <= kMaxPlayers; ++id) {
-        const match::Player& p = match::player(id);
-        if (id == net::self_id() || !p.present || p.role != Role::Hider || p.found) continue;
-        cXyz feet;
-        float height;
-        if (puppet::anchor(id, feet, height) && (feet - l->current.pos).abs() < kTouchDistance) {
-            match::report_hit(static_cast<uint8_t>(id));
-        }
+}
+
+void try_place_decoy(daAlink_c* l, uint64_t now) {
+    if (match::can_place_decoy() && now - s_lastDecoy >= kDecoyCooldownMs) {
+        s_lastDecoy = now;
+        match::place_decoy();
+        play_at(Z2SE_SY_CURSOR_OK, &l->current.pos);
+    } else {
+        play_at(Z2SE_SY_CURSOR_CANCEL, &l->current.pos);
     }
 }
 
 void hider_controls(daAlink_c* l) {
     const match::Match& m = match::get();
     const uint64_t now = now_ms();
+    // Walking away from a copied object hands the facing back to Link.
+    if (s_yawLocked && (l->current.pos - s_lockedAt).abs() > kYawUnlockDistance) s_yawLocked = false;
     if (s_disguised) {
+        // D-pad up: a tap places a decoy; holding it swaps places with your newest decoy.
+        const bool swapAllowed = m.settings.decoySwap && m.phase == Phase::Seek;
         if (mDoCPd_c::getTrigUp(PAD_1)) {
-            if (match::can_place_decoy() && now - s_lastDecoy >= kDecoyCooldownMs) {
-                s_lastDecoy = now;
-                match::place_decoy();
-                play_at(Z2SE_SY_CURSOR_OK, &l->current.pos);
-            } else {
-                play_at(Z2SE_SY_CURSOR_CANCEL, &l->current.pos);
+            s_upHeldSince = now;
+            s_upHandled = false;
+            if (!swapAllowed) {
+                s_upHandled = true;
+                try_place_decoy(l, now);
             }
-        } else if (mDoCPd_c::getTrigRight(PAD_1)) {
-            const int near = nearby_prop(l->current.pos);
-            s_prop = near >= 0 && near != s_prop ? near : step_prop(s_prop, m.map, 1);
+        } else if (s_upHeldSince != 0 && !s_upHandled) {
+            if (!mDoCPd_c::getHoldUp(PAD_1)) {
+                s_upHandled = true;
+                try_place_decoy(l, now);
+            } else if (now - s_upHeldSince >= kSwapHoldMs) {
+                s_upHandled = true;
+                if (match::can_swap()) {
+                    match::request_swap();
+                    play_at(Z2SE_SY_HINT_BUTTON_BLINK, &l->current.pos);
+                } else {
+                    play_at(Z2SE_SY_CURSOR_CANCEL, &l->current.pos);
+                }
+            }
+        }
+        if (!mDoCPd_c::getHoldUp(PAD_1) && s_upHandled) s_upHeldSince = 0;
+        if (mDoCPd_c::getTrigRight(PAD_1)) {
+            int16_t yaw = 0;
+            const int near = nearby_prop(l->current.pos, m.map, yaw);
+            if (near >= 0 && (near != s_prop || !s_yawLocked)) {
+                s_prop = near;
+                s_yawLocked = true;
+                s_lockedYaw = yaw;
+                s_lockedAt = l->current.pos;
+            } else {
+                s_prop = step_prop(s_prop, m.map, 1);
+                s_yawLocked = false;
+            }
             play_at(Z2SE_SY_CURSOR_OK, &l->current.pos);
         } else if (mDoCPd_c::getTrigLeft(PAD_1)) {
             s_prop = step_prop(s_prop, m.map, -1);
+            s_yawLocked = false;
             play_at(Z2SE_SY_CURSOR_OK, &l->current.pos);
         }
     }
@@ -540,7 +619,7 @@ bool init() {
     s_meterHooked = meterPre && meterPost;
     if (!s_meterHooked) mods::log::warn("life-meter hook unavailable: zero-life hunters still spectate");
     if (!s_hooked) mods::log::warn("Link hooks unavailable: hunters won't be held and props stay visible");
-    match::set_hooks({.taunt = play_taunt, .roundStarted = nullptr, .foundMe = nullptr});
+    match::set_hooks({.taunt = play_taunt, .whistle = play_whistle, .teleport = teleport});
     return true;
 }
 
@@ -597,7 +676,7 @@ void update() {
     if (freeze && !s_frozen && l != nullptr) s_holdPos = l->current.pos;
     s_frozen = freeze;
 
-    s_disguised = online && s_inWorld && playing_prop_hunt() && role == Role::Hider &&
+    s_disguised = online && s_inWorld && role == Role::Hider &&
                   !match::player(net::self_id()).found &&
                   (m.phase == Phase::Hide || m.phase == Phase::Seek) && l != nullptr && !l->checkWolf();
 
@@ -651,6 +730,24 @@ bool disguised() {
 
 int prop() {
     return s_prop;
+}
+
+void set_prop(int kind) {
+    if (prop_selectable(kind)) s_prop = kind;
+    s_yawLocked = false;
+}
+
+int16_t prop_yaw() {
+    if (s_yawLocked) return s_lockedYaw;
+    const daAlink_c* l = link();
+    return l != nullptr ? l->shape_angle.y : 0;
+}
+
+bool swap_charging(float& progress) {
+    if (s_upHeldSince == 0 || s_upHandled || !match::get().settings.decoySwap ||
+        match::get().phase != Phase::Seek || !s_disguised) return false;
+    progress = std::min(1.0f, static_cast<float>(now_ms() - s_upHeldSince) / kSwapHoldMs);
+    return progress > 0.15f;
 }
 
 bool blindfolded() {
@@ -708,6 +805,43 @@ ClueKind taunt_kind() { return s_myClueKind; }
 
 void note_hit() {
     s_swingHit = true;
+}
+
+void teleport(float x, float y, float z, int16_t yaw) {
+    daAlink_c* l = link();
+    if (l == nullptr) return;
+    const cXyz to(x, y, z);
+    l->current.pos = l->old.pos = l->field_0x3798 = to;
+    l->shape_angle.y = l->current.angle.y = yaw;
+    l->speedF = 0.0f;
+    l->speed.set(0.0f, 0.0f, 0.0f);
+    s_yawLocked = true;
+    s_lockedYaw = yaw;
+    s_lockedAt = to;
+    play_at(Z2SE_SY_HINT_BUTTON_BLINK, nullptr);
+}
+
+void play_whistle(uint8_t hunter) {
+    // The hunter's whistle, then every hidden prop squeaks where it really is. Hunters must
+    // listen: there are no arrows, names or markers.
+    if (fopAc_ac_c* h = hunter == net::self_id() ? dComIfGp_getPlayer(0) : nullptr) {
+        play_at(Z2SE_AL_V_JUMP_L, &h->current.pos);
+    }
+    for (int id = 1; id <= kMaxPlayers; ++id) {
+        const auto& p = match::player(id);
+        if (!p.present || p.role != Role::Hider || p.found) continue;
+        cXyz feet;
+        float height;
+        if (id == net::self_id()) {
+            const daAlink_c* l = link();
+            if (l == nullptr) continue;
+            feet = l->current.pos;
+        } else if (!puppet::anchor(id, feet, height)) {
+            if (!p.hasState || std::strncmp(p.state.stage, stage(), 8) != 0) continue;
+            feet.set(p.state.x, p.state.y, p.state.z);
+        }
+        play_at(kTaunts[id % kTauntCount], &feet);
+    }
 }
 
 void play_taunt(uint8_t from, uint8_t sound, ClueKind kind) {

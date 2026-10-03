@@ -20,6 +20,9 @@ bool in_world();           // Link exists and the stage is loaded
 const char* stage();       // "" when not in the world
 bool disguised();          // drawn as a prop right now
 int prop();                // current prop kind
+void set_prop(int kind);   // choose a disguise directly (test harness)
+int16_t prop_yaw();        // the disguise's facing: a copied object's, or Link's
+bool swap_charging(float& progress);  // D-pad up held towards a decoy swap
 bool blindfolded();        // hunter waiting during the hide phase
 float taunt_cooldown();    // 0..1, for the HUD
 bool has_sword();
@@ -39,5 +42,9 @@ void note_hit();
 
 // Plays and records a taunt at a player's position (hooked up to match).
 void play_taunt(uint8_t from, uint8_t sound, ClueKind kind);
+// A hunter whistled: every hidden prop makes a sound where it is.
+void play_whistle(uint8_t hunter);
+// A confirmed decoy swap moves the local Link.
+void teleport(float x, float y, float z, int16_t yaw);
 
 }  // namespace hs::local

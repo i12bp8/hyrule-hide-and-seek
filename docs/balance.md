@@ -1,109 +1,77 @@
-# Balance and search rules in v0.3.5
+# Prop Hunt balance in v0.4.0
 
-Before v0.3.1, the default round awarded a survivor 18 passive points plus 5 for surviving, before
-manual taunts, 3-point treasure, the 5-point pickup challenge and 5-point Treasure Rush pickups.
-A hunter earned only 5 per find. Loot also spawned only 650–1,800 units from players, with a
-2,500-unit host proximity requirement: an empty region could never get treasure.
+## Score budgets
 
-## References
+Both starting roles have a **26-point ceiling**: 12 objective, 8 gross bonus and 6 win points.
+Survival earns hiders objective points in proportion to the chosen hunt duration. Every confirmed
+find advances all starting hunters' shared objective progress: `12 * found / startingHiders`,
+rounded down cumulatively. This reaches exactly 12 even with uneven team sizes.
 
-- [Call of Duty: Black Ops Cold War's official Prop Hunt guide](https://www.callofduty.com/au/en/blog/2020/12/black-ops-cold-war-prop-hunt-mode-spotlight-guide)
-  uses a hiding head start, 30-second whistles, decoys and a time limit for hunters to eliminate
-  all props. Props also have limited shape changes and a stun. The useful lesson here is to give
-  hunters intermittent information and give props time and tools to respond between clues.
-- [Fortnite's official Prop Hunt description](https://www.fortnite.com/news/prop-hunt?lang=en-US)
-  gives props a survival objective and hunters an elimination objective within the same timer.
-- [Epic's UEFN Prop Hunt template](https://www.fortnite.com/news/create-a-prop-hunt-game-with-uefn)
-  and [gameplay setup](https://dev.epicgames.com/documentation/fortnite/prop-hunt-10-customizing-the-gameplay-in-unreal-editor-for-fortnite?lang=en-US)
-  use a heartbeat for props that remain stationary. That supports stationary clues as pressure
-  to relocate, rather than awarding unlimited points for staying in one profitable corner.
+A personal find gives 3 bonus points, or 8 if only one prop started, making the full budget
+available in a two-player game. Loot gives 1 point, or 2 every third round, plus up to 2 for a
+third pickup. These awards and the following style rewards share the 8-point gross allowance:
 
-These are design references, not evidence that Twilight Princess maps should copy their exact
-timings or team sizes. None establishes equal difficulty for this mod. The score budgets below
-are our design choice; win-rate balance must be assessed in play.
+| Award | Points | Condition / limit |
+| --- | --- | --- |
+| Manual taunt | 1 | At least 10 s between scoring taunts |
+| Bold taunt | 2 instead of 1 | A living hunter within 1,500 units |
+| Decoy fooled | 1 | Hunter strikes your decoy; at most three per round |
+| Close call | 1 | Hunter misses within 400 units; at most two, at least 8 s apart |
+| Last standing | 2 | Only survivor when time expires; more than one starting prop |
+| First blood | 1 | Round's first confirmed find |
+| Quick find | 1 | Another personal find within 20 s |
 
-## Applied rules
+Spending 3 points on a decoy reduces retained points, without resetting the gross allowance.
+Automatic clues earn no points. Found hiders keep survival points and can earn personal find
+bonuses from their remaining allowance, but receive no starting-hunter objective or win award.
+Late joiners help hunt and earn personal bonuses; they join the starting teams next round.
 
-Both starting roles can earn at most 12 objective points, 6 bonus points and 6 win points.
-Hiders earn their objective points in proportion to elapsed hunt time. Every confirmed capture
-awards all starting hunters the newly earned fraction of their 12-point objective budget. This
-supports cooperation and avoids making the scoreboard depend on how many targets each hunter
-can personally take in a large lobby. Integer rounding is cumulative, so the full capture earns
-exactly 12 objective points even when the starting hider count does not divide 12.
+## Search and escape
 
-Personal finds earn 3 bonus points; a round with one starting hider awards 6 for that find so a
-two-player game offers both roles the full budget. Hider treasure gives 1 point (2 every third
-round), with up to 2 more at the third pickup. Manual taunts give 1 at most every 10 seconds.
-These optional actions share a 6-point gross allowance. Buying decoys reduces points kept, not
-points already earned, so spending cannot restart farming. Automatic clues earn no points.
+Recommended rules retain 30 s to hide, 180 s to hunt, three free decoys, infection, five hearts
+and a half-heart miss penalty. Auto hunter counts use one per four players on compact maps and
+one per three on large maps, rounded up with at least one prop. Random avoids large arenas with
+fewer than six players.
 
-Found hiders can still help hunt, using their remaining personal bonus allowance. They do not
-receive starting-hunter progress or the hunter win award, so deliberately getting found cannot
-combine both roles' objective or win rewards. Late joiners have no starting role until the next
-round. Starting roles, objective counters, bonus counters and capture progress travel with the
-round snapshots and survive host migration. Custom hunt durations keep the same maximum score.
+- Tracking gives hunters three seconds of direction and rough range every 25 s.
+- A hunter can force every hidden prop to make a positional sound every 40 s. It provides no arrows or markers.
+- Props can hold Up for 0.45 s to swap with their newest decoy, twice per round, 15 s apart.
+- There are no recurring or stationary clues by default. Manual taunts and loot give three-second
+  bearing clues. Each remaining prop gives one exact location marker with 20 s left; the host
+  can set 0–60 s, with short hunts capped at half their duration.
+- A hunter at zero hearts is eliminated. If every hunter is out, props win. Only a confirmed
+  find restores one heart, capped at five; vanilla healing cannot refill round health.
 
-The 30-second hiding head start, map-aware hunter counts, hunter tracking and three free decoys
-remain recommended. The score budgets introduced in v0.3.1 are unchanged.
+Ordinary clues follow the current horizontal bearing, without an exact distance, name or world
+marker. The final marker stays at the position revealed. A later pickup cannot erase or prolong
+it. Swapping leaves a decoy at the old location, offering an escape without unlimited teleports.
 
-Player feedback on v0.3.2 identified too much free, precise information for hunters: regular
-clues, stationary clues, accelerated last-hider clues and tracking all operated together.
-An exact marker also made a risky treasure pickup nearly a guaranteed encounter. The new
-default has no recurring clues and no stationary timer. Each remaining hider gives one final
-exact location marker for three seconds at 20 seconds left, so the end still gives hunters a chance without repeatedly exposing
-the last survivor. The host can move this window from 0–60 seconds or turn it Off. In a short
-custom hunt the window is capped at half the hunt. The finale bypasses the ordinary clue
-cooldown to fire on time; a host change does not repeat it. Its position stays where the hider
-was revealed, and a later pickup cannot erase or prolong the marker.
+## Arenas and treasure
 
-Treasure and manual taunts keep their existing limited rewards. Their three-second arrow now
-shows the exact horizontal bearing around the hunter, updating with the current camera heading
-and both players' positions. The text gives a broad direction sector and one of three distance
-bands. Hunter tracking uses the same feedback for its selected hider. This increases the
-information hunters can gain during a clue; paired playtests should assess the effect on finds.
-No exact distance, height, name or world marker is displayed for ordinary clues. The final
-marker alone marks a precise world position, leaving a chance to relocate afterward.
-Positional audio remains a
-useful nearby cue. This makes a pickup a choice between score/decoy funding and giving away a
-search area; a good stationary disguise can simply choose safety.
+The 13 arenas have individual bounded areas, standing spawns, prop palettes and added native
+scenery. Ordon Ranch, Bulblin Camp and Hyrule Castle Grounds are marked large. Removed open water
+and field maps are replaced by more contained outdoor and interior spaces.
 
-Misses, including decoys, cost half a heart by default; the host can choose Off or quarter-heart
-steps up to one heart. Hunters start with five hearts and only a confirmed find restores one,
-capped at five. At zero they spectate until the next round; the remaining hiders win immediately
-when no hunters remain. Spring water, pickups and other vanilla healing cannot change room life.
-The room host owns life and acknowledges cumulative misses, so repeats cannot charge twice and
-pending misses survive a host change. The native meter displays the real life, including zero;
-Link retains one internal quarter outside the meter update to keep eliminated players in the
-match instead of triggering a story game over. Hunters can sheathe their sword normally so Horse Grass
-and other interactions remain available.
+Treasure exploration uses loaded native collision and visited player routes. Up to 24 pickups
+are separated by 1,200 horizontal units, live 90 s, and exclude collected/expired areas for 30 s.
+New pickups stay 600 units from live props. Walls, steep slopes, cliffs, deep water and loading
+exits reject candidates. Tight maps can support fewer pickups.
 
-Treasure capacity rises from 8 to 24 with 1,200-unit horizontal spacing. Connected ground is
-explored during Hide and Hunt, with a bounded native-collision budget per frame. Candidates
-favor distance from existing pickups and do not require a nearby player. Floor, slope, wall,
-cliff, deep-water, footprint and loading-exit checks run before placement, and placements are checked again
-when used. Rupees live 90 seconds to give distant objectives time to be reached. Tight terrain
-can support fewer pickups. Rooms whose collision is not loaded cannot be explored until they
-load; visited player routes supplement the spawn-connected area, including separate elevations.
+## Authority and verification
 
-## Verification and playtesting
+The host validates finds, misses, swaps, decoys and pickups. Snapshots carry starting roles,
+objective and gross-bonus counters, style limits, health and remaining ability/style cooldowns.
+Cooldowns are relative durations, so a migrated host with a different clock preserves them.
+Duplicate requests and stale-round packets cannot grant repeated points or extra ability uses.
 
-Automated checks cover a large open area with players at the centre, distant routes around a
-corner, rejection of an unreachable island, pickup spacing, shared progress for 2–16 players,
-short and long round durations, duplicate claims, infection, spending and host migration.
-New checks cover quiet hiding until the finale, one final clue in both modes on compact/large
-maps, firing on time despite recent taunts, separate exact-reveal feedback, voluntary-only and optional stationary rules, rule migration and every
-miss-cost choice down to elimination, multiple hunters, find-only healing, client prediction and
-health/acknowledgement migration. Native meter and world-healing behavior still need game playtests.
-These tests do not validate the real maps' collision or prove a 50% win rate.
+The rules suite checks budgets for 2–16 players, infection, spending, style caps, two-player
+scoring, ability limits, late joins and host migration. The Linux game checks cover rendering,
+loading and collision behavior. These checks do not establish equal win rates or validate every
+route's treasure reachability. See [the recorded checks and device checklist](testing.md).
 
-For each map, play paired sessions where the same players swap starting roles. Record the
-starting hunter/hider counts, side that won, hunt time used, finds, surviving hiders and gross
-points before decoy spending. Compare each map and lobby size separately. Aim for roughly equal
-wins with comparable players, while avoiding frequent instant captures or whole rounds with no
-finds. Do not tune based on a handful of rounds or compare raw team totals with unequal sizes.
-
-If props keep winning, first assess map size and how often clues produce an actual encounter;
-try a longer hunt or another starting hunter. If hunters keep winning, try fewer starting
-hunters, disabling the final clue or turning infection off. Keep score rewards comparable
-while changing search pressure. The host's Rules tab supports these changes. The new defaults
-are a starting point for this playtesting, not a guarantee of equal difficulty.
+For each arena, play paired sessions where the same players exchange starting roles. Record team
+sizes, winner, hunt duration, finds, surviving props and gross points before spending. Compare
+maps and lobby sizes separately. If props consistently win, assess arena size and actual clue
+encounters before adjusting time or hunter count. If hunters consistently win, reduce hunters,
+disable the final clue or turn infection off. Keep the score budgets comparable while changing
+search pressure.

@@ -11,8 +11,9 @@
 
 namespace hs {
 
-// v10 adds host-owned hunter life, acknowledged misses and elimination.
-constexpr int kProtocolVersion = 10;
+// v11: Prop Hunt only, the new disguise catalogue and arenas, decoy swaps, hunter whistles and
+// score awards.
+constexpr int kProtocolVersion = 11;
 
 enum MsgType : uint8_t {
     MSG_STATE = 1,     // everyone -> everyone, 10 Hz
@@ -35,11 +36,25 @@ enum MsgType : uint8_t {
     MSG_HIT_DECOY = 25,   // hunter -> host: remove the struck decoy
     MSG_COLLECT_RUPEE = 26, // hider -> host: round, pickup id
     MSG_MISS = 27,     // hunter -> host: round, cumulative missed swings (u16)
+    MSG_SWAP = 28,     // hider -> host: round; swap places with my newest decoy
+    MSG_TELEPORT = 29, // host -> one player: round, x, y, z, yaw (a confirmed swap)
+    MSG_WHISTLE = 30,  // hunter -> host: round. host -> all: round, hunter
+    MSG_AWARD = 31,    // host -> all: round, player, award kind, points
+};
+
+// Score feedback the host announces with MSG_AWARD.
+enum class Award : uint8_t {
+    DecoyFooled,   // a hunter struck your decoy
+    CloseCall,     // a hunter swung and missed right next to you
+    BoldTaunt,     // a taunt with a hunter close by
+    FirstBlood,    // the round's first find
+    QuickFind,     // another find soon after your last
+    LastStanding,  // the only prop left when time ran out
+    Count
 };
 
 enum class ClueKind : uint8_t { Manual, Final, Stationary, Treasure };
 
-enum class Mode : uint8_t { PropHunt = 0, HideAndSeek = 1, Count };
 enum class Phase : uint8_t { Lobby = 0, Gather = 1, Hide = 2, Seek = 3, Results = 4 };
 enum class Role : uint8_t { None = 0, Hider = 1, Hunter = 2, Spectator = 3 };
 

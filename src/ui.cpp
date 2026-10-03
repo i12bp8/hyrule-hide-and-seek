@@ -44,7 +44,6 @@ std::vector<net::PublicRoom> s_rooms;
 bool s_roomsLoading = false;
 std::string s_error;
 
-const char* const kModes[] = {"Prop Hunt", "Hide & Seek"};
 const char* const kHunters[] = {"Auto (map-aware)", "1", "2", "3", "4", "5", "6", "7", "8"};
 const char* const kIdleTaunts[] = {
     "Off", "15 seconds", "20 seconds", "30 seconds", "45 seconds", "60 seconds", "90 seconds", "120 seconds"};
@@ -79,7 +78,6 @@ void toast(const std::string& title, const std::string& body, const char* type =
 // ---- rules -----------------------------------------------------------------------------------
 
 enum Field : intptr_t {
-    F_MODE,
     F_MAP,
     F_HIDE,
     F_SEEK,
@@ -90,6 +88,8 @@ enum Field : intptr_t {
     F_TAUNT,
     F_TRACKING,
     F_TREASURE,
+    F_SWAP,
+    F_WHISTLE,
     F_IDLE_TAUNT,
     F_NEXT,
     F_PUBLIC
@@ -109,7 +109,6 @@ match::Settings current_rules() {
 void get_rule(ModContext*, void* user, UiControlValue* out) {
     const match::Settings s = current_rules();
     switch (static_cast<Field>(reinterpret_cast<intptr_t>(user))) {
-    case F_MODE: out->int_value = static_cast<int>(s.mode); break;
     case F_MAP: out->int_value = s.map == kRandomMap ? 0 : s.map + 1; break;
     case F_HIDE: out->int_value = s.hideSecs; break;
     case F_SEEK: out->int_value = s.seekSecs; break;
@@ -120,6 +119,8 @@ void get_rule(ModContext*, void* user, UiControlValue* out) {
     case F_TAUNT: out->int_value = s.finalClueSecs; break;
     case F_TRACKING: out->bool_value = s.trackingPulse; break;
     case F_TREASURE: out->bool_value = s.treasure; break;
+    case F_SWAP: out->bool_value = s.decoySwap; break;
+    case F_WHISTLE: out->bool_value = s.whistle; break;
     case F_IDLE_TAUNT: out->int_value = idle_taunt_option(s.idleTauntSecs); break;
     case F_NEXT: out->bool_value = s.autoNext; break;
     case F_PUBLIC: out->bool_value = s.isPublic; break;
@@ -129,7 +130,6 @@ void get_rule(ModContext*, void* user, UiControlValue* out) {
 void set_rule(ModContext*, void* user, const UiControlValue* v) {
     match::Settings s = current_rules();
     switch (static_cast<Field>(reinterpret_cast<intptr_t>(user))) {
-    case F_MODE: s.mode = v->int_value == 1 ? Mode::HideAndSeek : Mode::PropHunt; break;
     case F_MAP: s.map = v->int_value <= 0 ? kRandomMap : static_cast<uint8_t>(v->int_value - 1); break;
     case F_HIDE: s.hideSecs = static_cast<uint16_t>(v->int_value); break;
     case F_SEEK: s.seekSecs = static_cast<uint16_t>(v->int_value); break;
@@ -140,6 +140,8 @@ void set_rule(ModContext*, void* user, const UiControlValue* v) {
     case F_TAUNT: s.finalClueSecs = static_cast<uint16_t>(std::clamp<int64_t>(v->int_value, 0, 60)); break;
     case F_TRACKING: s.trackingPulse = v->bool_value; break;
     case F_TREASURE: s.treasure = v->bool_value; break;
+    case F_SWAP: s.decoySwap = v->bool_value; break;
+    case F_WHISTLE: s.whistle = v->bool_value; break;
     case F_IDLE_TAUNT: {
         const int option = std::clamp<int>(static_cast<int>(v->int_value), 0,
             static_cast<int>(std::size(kIdleTauntValues)) - 1);
@@ -181,12 +183,7 @@ ModResult build_rules(ModContext*, UiWindowHandle, UiElementHandle left, UiEleme
     svc_ui->elem_set_class(mod_ctx, left, "hs-main", true);
     svc_ui->elem_set_class(mod_ctx, right, "hs-help", true);
     svc_ui->pane_add_section(mod_ctx, left, "Round");
-    add_rule(left, UI_CONTROL_DROPDOWN, "Mode",
-        "<b>Prop Hunt</b>: hiders turn into objects and furniture. Hunters must hit them with a "
-        "sword before time runs out.<br/><b>Hide &amp; Seek</b>: everyone stays Link; hunters tag "
-        "hiders by touching them.",
-        F_MODE, kModes, 2);
-    add_rule(left, UI_CONTROL_DROPDOWN, "Map", "Random picks a new map every round and uses compact maps with fewer than six players. Any map can be chosen explicitly.",
+    add_rule(left, UI_CONTROL_DROPDOWN, "Map", "Random picks a new arena every round and skips the large ones with fewer than six players. Any arena can be chosen explicitly.",
         F_MAP, map_options().data(), map_options().size());
     add_rule(left, UI_CONTROL_NUMBER, "Hiding time", "How long hunters wait with a black screen.", F_HIDE,
         nullptr, 0, 15, 180, 5, " s");
@@ -198,6 +195,9 @@ ModResult build_rules(ModContext*, UiWindowHandle, UiElementHandle left, UiEleme
         "A disguised hider can place these during hiding or hunting with D-pad up. After using them, "
         "extra decoys cost 3 points earned in the current round and can only be bought during the hunt.",
         F_DECOYS, nullptr, 0, 0, 10, 1);
+    add_rule(left, UI_CONTROL_TOGGLE, "Decoy swap",
+        "Props hold D-pad up to trade places with their newest decoy: they appear where it stood and "
+        "it takes their old spot. Two swaps a round, 15 seconds apart.", F_SWAP);
     add_rule(left, UI_CONTROL_TOGGLE, "Found hiders become hunters",
         "On: a found prop becomes a hunter. Off: they watch until the next round.", F_JOIN);
     add_rule(left, UI_CONTROL_DROPDOWN, "Miss penalty",
@@ -206,7 +206,7 @@ ModResult build_rules(ModContext*, UiWindowHandle, UiElementHandle left, UiEleme
         F_PENALTY, kMissPenalties, std::size(kMissPenalties));
     add_rule(left, UI_CONTROL_DROPDOWN, "Stationary clue",
         "A hider that has not moved this long automatically taunts. Moving resets the timer. "
-        "Works in both modes. Off by default, so a convincing hiding spot is safe.",
+        "Off by default, so a convincing hiding spot is safe.",
         F_IDLE_TAUNT, kIdleTaunts, std::size(kIdleTaunts));
     add_rule(left, UI_CONTROL_NUMBER, "Final clue",
         "One exact location marker per remaining hider for three seconds, this many seconds before the hunt ends. "
@@ -215,11 +215,13 @@ ModResult build_rules(ModContext*, UiWindowHandle, UiElementHandle left, UiEleme
         nullptr, 0, 0, 60, 5, "seconds remaining (0 = Off)");
     add_rule(left, UI_CONTROL_TOGGLE, "Hunter tracking",
         "D-pad down gives a three-second direction and rough range to the nearest hider. "
-        "25-second cooldown; no name or exact world marker. Direction is relative to your view "
-        "when the pulse starts and stays fixed.", F_TRACKING);
+        "25-second cooldown; no name or exact world marker.", F_TRACKING);
+    add_rule(left, UI_CONTROL_TOGGLE, "Hunter whistle",
+        "D-pad up makes every hidden prop squeak where it is. Only the sound: no arrows, names or "
+        "markers. 40-second cooldown per hunter.", F_WHISTLE);
     add_rule(left, UI_CONTROL_TOGGLE, "Treasure rupees",
         "Up to 24 rupees spread across reachable ground. Pickups give 1 point (2 in Treasure Rush); "
-        "the third adds up to 2. Loot and taunts share a 6-point round bonus limit. Each pickup "
+        "the third adds up to 2. Loot, taunts and style awards share an 8-point round bonus limit. Each pickup "
         "gives hunters a rough direction and range for three seconds; no exact marker.", F_TREASURE);
     svc_ui->pane_add_section(mod_ctx, left, "Lobby");
     add_rule(left, UI_CONTROL_TOGGLE, "Automatic rounds",
@@ -240,7 +242,6 @@ ModResult build_rules(ModContext*, UiWindowHandle, UiElementHandle left, UiEleme
     recommended.on_pressed = [](ModContext*, void*) {
         const auto current = current_rules();
         match::Settings balanced;
-        balanced.mode = current.mode;
         balanced.map = current.map;
         balanced.isPublic = current.isPublic;
         settings::save_host_rules(balanced);
@@ -269,9 +270,9 @@ void refresh_rooms() {
             std::vector<UiListItem> items;
             labels.reserve(s_rooms.size());
             for (const net::PublicRoom& r : s_rooms) {
+                const std::string map = r.map >= 0 && r.map < map_count() ? map_info(r.map).name : "Random";
                 labels.push_back((r.label.empty() ? r.code : r.label) + "  |  " +
-                    std::to_string(r.players) + "/" + std::to_string(r.max) + "  |  " +
-                    kModes[r.mode == 1 ? 1 : 0]);
+                    std::to_string(r.players) + "/" + std::to_string(r.max) + "  |  " + map);
             }
             for (size_t i = 0; i < s_rooms.size(); ++i) {
                 UiListItem item = UI_LIST_ITEM_INIT;
@@ -303,9 +304,8 @@ UiElementHandle button(UiElementHandle pane, const char* label, UiPressedFn pres
 }
 
 std::string role_name(Role r) {
-    const bool props = match::get().settings.mode == Mode::PropHunt;
     switch (r) {
-    case Role::Hider: return props ? "Prop" : "Hider";
+    case Role::Hider: return "Prop";
     case Role::Hunter: return "Hunter";
     case Role::Spectator: return "Watching";
     default: return "In lobby";
@@ -553,34 +553,36 @@ ModResult build_help(ModContext*, UiWindowHandle, UiElementHandle left, UiElemen
     svc_ui->elem_set_class(mod_ctx, left, "hs-full", true);
     svc_ui->elem_set_class(mod_ctx, right, "hs-unused", true);
     svc_ui->pane_add_rml(mod_ctx, left,
-        "<div class='hs-guide'><h3>Hide</h3><p>Blend in as an object, animal or person. "
-        "D-pad right copies a nearby carryable or picks the next prop; left goes back. "
-        "D-pad up places a decoy. You start with three; extras cost 3 round points.</p></div>", nullptr);
+        "<div class='hs-guide'><h3>Hide</h3><p>Become something that belongs on the map. "
+        "Stand next to a real pot, crate, pumpkin, sign, cat, chair... and press D-pad right to "
+        "copy it, facing the same way. With nothing nearby, D-pad right and left cycle through "
+        "the map's objects. Nothing in the world answers the A button during a round, so a "
+        "disguise looks and behaves exactly like the real thing.</p></div>", nullptr);
     svc_ui->pane_add_rml(mod_ctx, left,
-        "<div class='hs-guide'><h3>Take a risk</h3><p>D-pad down taunts for a point. "
-        "Taunts and rupees give hunters a precise direction arrow and rough range for 3 seconds. "
-        "You can stay hidden safely until the final reveal: one exact location marker for 3 seconds, "
-        "with 20 seconds left by default. The host can adjust or disable it. "
-        "Watch the clue alert and relocate afterwards. Rupees give 1 point and a clue; "
-        "your third pickup adds up to 2. Every third round gives 2 points per rupee. "
-        "Loot and taunts share a 6-point bonus limit each round.</p></div>", nullptr);
+        "<div class='hs-guide'><h3>Decoys and swaps</h3><p>Tap D-pad up to leave a copy of your "
+        "disguise behind; you start with three, extras cost 3 round points. During the hunt, hold "
+        "D-pad up to swap places with your newest decoy: you appear where it stood and it takes "
+        "your spot (two swaps a round, 15 seconds apart). A hunter striking your decoy earns you a "
+        "point, up to three times per round.</p></div>", nullptr);
     svc_ui->pane_add_rml(mod_ctx, left,
-        "<div class='hs-guide'><h3>Hunt</h3><p>Use B to hit disguised hiders or tag nearby "
-        "props while swimming. Misses cost half a heart by default; the host can adjust it. "
-        "At zero hearts you watch until the next round; hiders win if every hunter is out. "
-        "Only finding someone restores a heart. Springs and heart pickups do not heal hunters. "
-        "Sheathe your sword to use Horse Grass and other interactions. D-pad down tracks "
-        "the nearest hider, with a 25-second cooldown. During a clue, the arrow around you points "
-        "toward the hider and updates as you turn or either player moves. "
-        "Ordinary clues do not place a marker on the prop.</p></div>", nullptr);
+        "<div class='hs-guide'><h3>Take a risk</h3><p>D-pad down taunts: 1 point, or 2 with a "
+        "hunter close by. A hunter's sword missing right next to you is a close call, also worth a "
+        "point. Rupees give points too. Taunts and rupees show hunters a direction arrow for "
+        "3 seconds; near the end everyone left is revealed once. Style bonuses are capped at "
+        "8 points a round.</p></div>", nullptr);
     svc_ui->pane_add_rml(mod_ctx, left,
-        "<div class='hs-guide'><h3>Play again</h3><p>Hiders earn up to 12 points across the hunt "
-        "and 6 for surviving. Starting hunters share up to 12 capture-progress points and get "
-        "6 for finding every hider. Personal finds give 3 bonus points, up to 6 "
-        "(6 for the find when only one hider started). "
-        "Hunters rotate each round. Hide &amp; Seek mode "
-        "keeps everyone as Link and uses touch tags. Start from the Hide &amp; Seek game "
-        "mode for matching worlds. On mobile, use Dusklight's touch D-pad and B button.</p></div>", nullptr);
+        "<div class='hs-guide'><h3>Hunt</h3><p>B swings your sword; while swimming it tags a "
+        "nearby prop. Misses cost half a heart by default and decoys count as misses. At zero "
+        "hearts you watch until the next round; only finding a prop restores a heart. D-pad down "
+        "tracks the nearest prop (25 s). D-pad up whistles: every hidden prop squeaks where it "
+        "is (40 s). The first find of the round and quick finds earn extra points.</p></div>", nullptr);
+    svc_ui->pane_add_rml(mod_ctx, left,
+        "<div class='hs-guide'><h3>Play again</h3><p>Props earn up to 12 points across the hunt "
+        "and 6 for surviving; the last prop standing gets 2 more. Starting hunters share up to 12 "
+        "capture points and get 6 for finding everyone. Results crown the MVP, best disguise, "
+        "sharpshooter and trickster. Hunters rotate each round. Start from the Prop Hunt "
+        "game mode for matching worlds. On mobile, use Dusklight's touch D-pad and B "
+        "button.</p></div>", nullptr);
     return MOD_OK;
 }
 
@@ -649,7 +651,7 @@ void open_window(ModContext*, void*) {
 
 ModResult build_mods_panel(ModContext*, UiElementHandle panel, void*, ModError*) {
     svc_ui->pane_add_text(mod_ctx, panel,
-        "Online Prop Hunt and Hide & Seek for 2-16 players. Open it from the Hide & Seek tab in the menu bar.",
+        "Online Prop Hunt for 2-16 players. Open it from the Hide & Seek tab in the menu bar.",
         nullptr);
     button(panel, "Open Hide & Seek", open_window);
     return MOD_OK;

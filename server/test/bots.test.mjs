@@ -4,7 +4,10 @@ import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
+import { readFileSync } from "node:fs";
 import { startServer } from "../node-server.mjs";
+
+const ARENAS = JSON.parse(readFileSync(new URL("../arenas.json", import.meta.url), "utf8"));
 
 let server;
 let base;
@@ -40,9 +43,10 @@ function stateBytes({ stage, x, y, z, flags = 1 }) {
   return new Uint8Array(b.buffer);
 }
 
-test("bots follow the host, get ready and turn into props", async () => {
-  const host = new WebSocket(`${base}/host?name=Human&v=10`);
+test("bots follow the host, get ready and turn into props", { timeout: 15000 }, async (t) => {
+  const host = new WebSocket(`${base}/host?name=Human&v=11`);
   host.binaryType = "arraybuffer";
+  t.after(() => host.close());
   const states = new Map(); // bot id -> latest decoded state
   const readies = new Set();
   let code = "";
@@ -68,9 +72,11 @@ test("bots follow the host, get ready and turn into props", async () => {
   });
 
   const bots = spawn(process.execPath, [fileURLToPath(new URL("../bots.mjs", import.meta.url)), "--room", code, "--count", "2", "--server", base], { stdio: "ignore" });
+  t.after(() => bots.kill());
+  let tick;
   try {
     const send = (bytes) => host.send(bytes);
-    const tick = setInterval(() => send(stateBytes({ stage: "F_SP109", x: 1000, y: 0, z: 2000 })), 100);
+    tick = setInterval(() => send(stateBytes({ stage: "F_SP109", x: 1000, y: 0, z: 2000 })), 100);
     await new Promise((r) => setTimeout(r, 1500));
     assert.equal(states.size, 2);
     for (const s of states.values()) {
@@ -81,12 +87,16 @@ test("bots follow the host, get ready and turn into props", async () => {
     // Round 1: both bots are props (roster: host hunter, bots 2 and 3 hiders).
     const roster = new Uint8Array([
       0, 11, 3,
-      1, 2, 0, 0, 0, 0, 0, 4, 1, 0, 0, 0, 0, 0, 20, 0, 0,
-      2, 1, 1, 0, 0, 0, 0, 8, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-      3, 1, 2, 0, 0, 0, 0, 8, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+      ...[1, 2, 3].flatMap((id) => [
+        id, id === 1 ? 2 : 1, id - 1, 0, 0, 0, 0, id === 1 ? 4 : 8,
+        id === 1 ? 1 : 0, 0, 0, 0, 0, 0, id === 1 ? 20 : 0, 0, 0,
+        ...Array(5).fill(0), // round stats
+        ...Array(8).fill(0), // four remaining cooldowns (u16)
+      ]),
     ]);
+    assert.equal(roster.length, 3 + 3 * 30);
     send(roster);
-    send(new Uint8Array([0, 12, 1, 0, 0, 0, 0, 4, 45, 0, 240, 0, 2, 0])); // ROUND 1, prop hunt, map 4
+    send(new Uint8Array([0, 12, 1, 0, 0, 0, 2, 30, 0, 180, 0, 2, 0])); // ROUND 1 on map 2 (Kakariko)
     send(new Uint8Array([0, 13, 1, 0, 0, 0, 1, 0x10, 0x27, 0, 0])); // PHASE gather
     await new Promise((r) => setTimeout(r, 400));
     assert.deepEqual([...readies].sort(), [2, 3]);
@@ -94,10 +104,11 @@ test("bots follow the host, get ready and turn into props", async () => {
     await new Promise((r) => setTimeout(r, 400));
     for (const s of states.values()) {
       assert.ok(s.flags & 4, "disguised during the hide phase");
-      assert.ok(s.prop < 59);
+      assert.ok(ARENAS[2].palette.includes(s.prop), "a disguise from the round's map");
     }
     clearInterval(tick);
   } finally {
+    clearInterval(tick);
     bots.kill();
     host.close();
   }

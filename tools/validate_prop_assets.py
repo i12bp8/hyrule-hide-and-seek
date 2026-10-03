@@ -1,146 +1,121 @@
 #!/usr/bin/env python3
-"""Validate every prop archive/model name against an extracted game disc.
-
-Twilight Princess resource lookup is case-sensitive on some platforms. A typo can therefore turn
-a hider completely invisible even though the same prop works on another machine. This checks both
-named resources and numeric model IDs without modifying the disc:
+"""Check every disguise's models, animations and collision against an extracted disc.
 
     python tools/validate_prop_assets.py /path/to/disc/files
-"""
 
+Requires the C++20 compiler used to build the mod. The catalogue is read from the compiled C++
+definitions, including carry/citizen helpers, so validation cannot silently skip new disguises.
+Nothing is written to the disc; the temporary catalogue exporter is removed after the check.
+"""
 from __future__ import annotations
 
 import argparse
-import re
+import os
+import shlex
 import struct
+import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
-from find_spawns import rarc_files, yaz0
+from find_spawns import yaz0
+
+ROOT = Path(__file__).resolve().parents[1]
+FIELDS = (("model", ".bmd"), ("extra", ".bmd"), ("extraBtk", ".btk"),
+          ("idle", ".bck"), ("move", ".bck"), ("btk", ".btk"),
+          ("btp", ".btp"), ("dzb", (".dzb", ".kcl")))
+DUMP_SOURCE = r'''
+#include "props.hpp"
+#include <iostream>
+void resource(hs::PropRes r) {
+    std::cout << "\t";
+    if (r.name) std::cout << r.name;
+    else if (r.index >= 0) std::cout << "#" << r.index;
+}
+int main() {
+    for (int i = 0; i < hs::prop_count(); ++i) {
+        const auto& p = hs::prop_info(i);
+        std::cout << p.name << "\t" << p.arc << "\t" << (p.animArc ? p.animArc : p.arc);
+        for (auto r : {p.model, p.extra, p.extraBtk, p.idle, p.move, p.btk, p.btp, p.solid.dzb}) resource(r);
+        std::cout << "\n";
+    }
+}
+'''
 
 
-RESOURCE = r'(?:nullptr|"[^"]+")'
-NUMBER = r'-?(?:\d+(?:\.\d*)?|\.\d+)f?'
-PROP_ENTRY = re.compile(
-    rf'\{{\s*"([^"]+)"\s*,\s*"([^"]+)"\s*,\s*({RESOURCE})\s*,\s*'
-    rf'({RESOURCE})\s*,\s*({RESOURCE})\s*,\s*{NUMBER}\s*,\s*{NUMBER}\s*,\s*'
-    rf'{NUMBER}\s*,\s*(-?\d+)',
-    re.MULTILINE,
-)
+def catalogue():
+    with tempfile.TemporaryDirectory(prefix="hs-prop-catalogue-") as tmp:
+        source = Path(tmp) / "catalogue.cpp"
+        executable = Path(tmp) / "catalogue"
+        source.write_text(DUMP_SOURCE)
+        subprocess.run([*shlex.split(os.environ.get("CXX", "c++")), "-std=c++20", "-O0",
+                        "-I" + str(ROOT / "src"), str(ROOT / "src/props.cpp"),
+                        str(ROOT / "src/maps.cpp"), str(source), "-o", str(executable)], check=True)
+        return [line.split("\t") for line in subprocess.check_output([str(executable)], text=True).splitlines()]
 
 
-def token_value(token: str) -> str | None:
-    return None if token == "nullptr" else token[1:-1]
-
-
-def resources_by_id(data: bytes) -> dict[int, str]:
-    """Return the exact path of each file-ID resource in a RARC archive."""
-
-    data = yaz0(data)
+def resources_by_index(raw: bytes):
+    """Match JKRArchive::findIdxResource: indices are entry ordinals, not file IDs."""
+    data = yaz0(raw)
     if data[:4] != b"RARC":
         raise ValueError("not a RARC archive")
-    info = 0x20
-    _nodes, node_off, _entries, entry_off, _strsize, str_off = struct.unpack_from(
-        ">IIIIII", data, info
-    )
-    node_off += info
-    entry_off += info
-    str_off += info
-
-    def name_at(offset: int) -> str:
-        end = data.index(b"\0", str_off + offset)
-        return data[str_off + offset : end].decode("shift_jis", "replace")
-
-    found: dict[int, str] = {}
-
-    def walk(node: int, prefix: str) -> None:
-        _kind, _name, _hash, count, first = struct.unpack_from(
-            ">4sIHHI", data, node_off + node * 16
-        )
-        for ordinal in range(count):
-            entry = entry_off + (first + ordinal) * 20
-            file_id, _hash, attr, name_offset, data_offset, _size = struct.unpack_from(
-                ">HHHHII", data, entry
-            )
-            name = name_at(name_offset)
-            if name in {".", ".."}:
-                continue
-            if (attr >> 8) & 0x02:
-                walk(data_offset, f"{prefix}{name}/")
-            else:
-                found[file_id] = f"{prefix}{name}"
-
-    walk(0, "")
-    return found
+    header = struct.unpack_from(">I", data, 8)[0]
+    count, entries, _, strings = struct.unpack_from(">IIII", data, header + 8)
+    entries += header
+    strings += header
+    result = {}
+    for index in range(count):
+        _, _, flags_and_name, _, _ = struct.unpack_from(">HHIII", data, entries + index * 20)
+        flags = flags_and_name >> 24
+        if flags & 2 or not flags & 1:
+            continue
+        start = strings + (flags_and_name & 0xFFFFFF)
+        end = data.index(b"\0", start)
+        result[index] = data[start:end].decode("shift_jis", "replace")
+    return result
 
 
-def main() -> None:
+def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("disc", type=Path, help="extracted disc folder containing res/Object")
     args = parser.parse_args()
-
-    object_root = args.disc / "res" / "Object"
-    if not object_root.exists():
-        object_root = args.disc / "files" / "res" / "Object"
-    if not object_root.exists():
+    objects = args.disc / "res/Object"
+    if not objects.is_dir():
+        objects = args.disc / "files/res/Object"
+    if not objects.is_dir():
         sys.exit(f"no res/Object under {args.disc}")
-
-    source = (Path(__file__).parents[1] / "src" / "props.cpp").read_text()
-    start = source.find("constexpr PropInfo kProps[]")
-    end = source.find("struct CarryMap", start)
-    if start < 0 or end < 0:
-        sys.exit("could not find kProps in src/props.cpp")
-    entries = PROP_ENTRY.findall(source[start:end])
-    if not entries:
-        sys.exit("could not parse any prop entries")
-
-    animation_archives = {}
-    for row in re.findall(r'\{[^{}]*"(?:Mgeneral|Wgeneral)"\s*\}', source[start:end]):
-        names = re.findall(r'"([^"\n]+)"', row)
-        animation_archives[names[0]] = names[-1]
-
-    errors: list[str] = []
-    cache: dict[str, tuple[set[str], dict[int, str]]] = {}
-    for name, archive, bmd_token, idle_token, move_token, index_text in entries:
-        archive_path = object_root / f"{archive}.arc"
-        if not archive_path.is_file():
-            errors.append(f"{name}: archive not found with exact case: {archive_path.name}")
-            continue
-        if archive not in cache:
-            raw = archive_path.read_bytes()
-            exact_names = {Path(path).name for path in rarc_files(raw)}
-            cache[archive] = exact_names, resources_by_id(raw)
-        exact_names, by_id = cache[archive]
-
-        bmd = token_value(bmd_token)
-        if bmd is not None:
-            if bmd not in exact_names:
-                errors.append(f"{name}: {archive}.arc has no exact-case resource {bmd}")
-        else:
-            index = int(index_text)
-            indexed_name = by_id.get(index)
-            if indexed_name is None:
-                errors.append(f"{name}: {archive}.arc has no resource ID {index}")
-            elif not indexed_name.casefold().endswith(".bmd"):
-                errors.append(
-                    f"{name}: {archive}.arc resource ID {index} is {indexed_name}, not a model"
-                )
-
-        animation_arc = animation_archives.get(name, archive)
-        animation_names = exact_names if animation_arc == archive else {Path(path).name for path in rarc_files((object_root / f"{animation_arc}.arc").read_bytes())}
-        for label, token in (("idle", idle_token), ("move", move_token)):
-            resource = token_value(token)
-            if resource is not None and resource not in animation_names:
-                errors.append(
-                    f"{name}: {animation_arc}.arc has no exact-case {label} animation {resource}"
-                )
-
+    cache = {}
+    errors = []
+    checked = 0
+    entries = catalogue()
+    for row in entries:
+        name, archive, animation_arc, *resources = row
+        if len(resources) != len(FIELDS):
+            sys.exit(f"invalid catalogue row: {name}")
+        for (label, extensions), resource in zip(FIELDS, resources):
+            if not resource:
+                continue
+            arc = animation_arc if label in {"idle", "move"} else archive
+            if arc not in cache:
+                path = objects / f"{arc}.arc"
+                if not path.is_file():
+                    errors.append(f"{name}: missing exact-case archive {path.name}")
+                    cache[arc] = {}
+                else:
+                    cache[arc] = resources_by_index(path.read_bytes())
+            by_index = cache[arc]
+            resolved = by_index.get(int(resource[1:])) if resource.startswith("#") else resource
+            if resolved not in by_index.values():
+                errors.append(f"{name}: {arc}.arc has no exact-case {label} resource {resource}")
+            elif not resolved.endswith(extensions):
+                errors.append(f"{name}: {arc}.arc {label} {resource} resolves to {resolved}")
+            checked += 1
     if errors:
         print("prop asset validation failed:")
         for error in errors:
             print(f"  - {error}")
         raise SystemExit(1)
-    print(f"validated {len(entries)} props across {len(cache)} exact-case archives")
+    print(f"validated {len(entries)} catalogue entries, {checked} resources and {len(cache)} exact-case archives")
 
 
 if __name__ == "__main__":

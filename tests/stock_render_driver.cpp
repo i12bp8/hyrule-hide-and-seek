@@ -24,6 +24,7 @@
 #include "f_op/f_op_actor_iter.h"
 #include "JSystem/J3DGraphAnimator/J3DAnimation.h"
 #include "JSystem/JKernel/JKRArchive.h"
+#include "JSystem/JKernel/JKRDvdRipper.h"
 #include "JSystem/JKernel/JKRExpHeap.h"
 #include "JSystem/JKernel/JKRHeap.h"
 #include "f_op/f_op_actor.h"
@@ -44,10 +45,16 @@ using ExternalHeapCreateFn = JKRExpHeap* (*)(void*, u32, JKRHeap*, bool);
 using ArchiveMountFn = JKRArchive* (*)(const char*, JKRArchive::EMountMode, JKRHeap*, JKRArchive::EMountDirection);
 DEFINE_HOOK((static_cast<ExternalHeapCreateFn>(&JKRExpHeap::create)), ExternalHeapCreate);
 DEFINE_HOOK((static_cast<ArchiveMountFn>(&JKRArchive::mount)), ArchiveMount);
+using ArchiveReadFn = void* (*)(const char*, u8*, JKRExpandSwitch, u32, JKRHeap*,
+    JKRDvdRipper::EAllocDirection, u32, JKRCompression*, u32*);
+DEFINE_HOOK((static_cast<ArchiveReadFn>(&JKRDvdRipper::loadToMainRAM)), ArchiveRead);
+DEFINE_HOOK(&dBgS::Regist, BackgroundRegister);
 uint64_t s_start = 0;
 uint64_t s_joined = 0;
 bool s_round = false;
 int s_kind = -1;
+const dBgW_Base* s_failedMesh = nullptr;
+bool s_collisionRecovered = false;
 int s_checks = 0;
 bool s_left = false;
 const bool s_hunterOnly = std::getenv("HS_STOCK_HUNTER_TEST") != nullptr;
@@ -64,6 +71,18 @@ void require(bool condition, const char* message) {
     std::_Exit(2);
 }
 
+HookAction fail_collision_once(ModContext*, void* args, void* retval, void*) {
+    if (s_kind != kPushGrave || s_failedMesh != nullptr) return HOOK_CONTINUE;
+    s_failedMesh = mods::arg<const dBgW_Base*>(args, 1);
+    *static_cast<bool*>(retval) = true;
+    return HOOK_SKIP_ORIGINAL;
+}
+
+void check_collision_retry(ModContext*, void* args, void* retval, void*) {
+    if (s_failedMesh != nullptr && mods::arg<const dBgW_Base*>(args, 1) == s_failedMesh &&
+        !*static_cast<bool*>(retval)) s_collisionRecovered = true;
+}
+
 bool s_failHeapCreate = false;
 bool s_failModelMount = false;
 bool s_failAnimMount = false;
@@ -78,9 +97,16 @@ HookAction fail_heap_create(ModContext*, void*, void* retval, void*) {
 HookAction fail_archive_mount(ModContext*, void* args, void* retval, void*) {
     const auto* path = mods::arg<const char*>(args, 0);
     if (s_failModelMount && std::strcmp(path, "/res/Object/Kmdl.arc") == 0) s_failModelMount = false;
-    else if (s_failAnimMount && std::strcmp(path, "/res/Object/AlAnm.arc") == 0) s_failAnimMount = false;
     else return HOOK_CONTINUE;
     *static_cast<JKRArchive**>(retval) = nullptr;
+    return HOOK_SKIP_ORIGINAL;
+}
+
+HookAction fail_animation_read(ModContext*, void* args, void* retval, void*) {
+    const auto* path = mods::arg<const char*>(args, 0);
+    if (!s_failAnimMount || std::strcmp(path, "/res/Object/AlAnm.arc") != 0) return HOOK_CONTINUE;
+    s_failAnimMount = false;
+    *static_cast<void**>(retval) = nullptr;
     return HOOK_SKIP_ORIGINAL;
 }
 
@@ -101,6 +127,7 @@ bool check_heap() {
                 "animation archive did not recover after mount failure");
             require(mods::hook::uninstall<ExternalHeapCreate>() == MOD_OK, "heap test hook cleanup failed");
             require(mods::hook::uninstall<ArchiveMount>() == MOD_OK, "archive test hook cleanup failed");
+            require(mods::hook::uninstall<ArchiveRead>() == MOD_OK, "archive read test hook cleanup failed");
             mods::log::info("HEAP_TEST: transient heap/model/animation failures recovered without restart");
         }
         ++phase;
@@ -137,6 +164,7 @@ bool check_heap() {
         rootFree / 1024);
     require(mods::hook::add_pre<ExternalHeapCreate>(fail_heap_create) == MOD_OK, "heap failure hook unavailable");
     require(mods::hook::add_pre<ArchiveMount>(fail_archive_mount) == MOD_OK, "archive failure hook unavailable");
+    require(mods::hook::add_pre<ArchiveRead>(fail_animation_read) == MOD_OK, "animation read failure hook unavailable");
     s_failHeapCreate = s_failModelMount = s_failAnimMount = true;
     require(!linkkit::ready() && !s_failHeapCreate, "heap failure not exercised");
     require(root->getHeapTree().getNumChildren() == children, "failed heap left dangling tree node");
@@ -253,7 +281,7 @@ void arena_test_update(uint64_t now) {
     if (s_arenaMap == -1 || s_arenaLoaded == UINT64_MAX) {
         ++s_arenaMap;
         if (s_arenaMap == map_count()) {
-            mods::log::info("STOCK_RENDER_TEST PASS: all 15 maps, camera, exits, five hearts, animation; {} draw checks", s_checks);
+            mods::log::info("STOCK_RENDER_TEST PASS: all {} maps, camera, exits, five hearts, animation; {} draw checks", map_count(), s_checks);
             std::fflush(nullptr);
             std::_Exit(0);
         }
@@ -325,6 +353,8 @@ void roster(int hunter = 2, int count = kMaxPlayers) {
         w.u16(0); w.u16(0);
         w.u8(id == hunter ? 6 : 10); w.u8(0); w.u8(0); w.u8(0); w.u8(0); w.u8(0); w.u8(0);
         w.u8(id == hunter ? kArenaLife : 0); w.u16(0);
+        for (int stat = 0; stat < 5; ++stat) w.u8(0);
+        for (int timer = 0; timer < 4; ++timer) w.u16(0);
     }
     apply(net::self_id(), w);
 }
@@ -371,7 +401,7 @@ void direction_test_update(uint64_t now) {
         match::on_joined(2);
         roster(1, 2);
         Writer round(MSG_ROUND);
-        round.u32(1); round.u8(0); round.u8(0); round.u16(600); round.u16(600);
+        round.u32(1); round.u8(0); round.u16(600); round.u16(600);
         round.u8(1); round.u8(0); apply(net::self_id(), round);
         Writer phase(MSG_PHASE);
         phase.u32(1); phase.u8(static_cast<uint8_t>(Phase::Seek)); phase.u32(600000);
@@ -446,6 +476,8 @@ void stock_render_update() {
         s_start = now;
         if (mods::hook::add_pre<DrawHead>(check_packets) != MOD_OK) std::exit(2);
         if (mods::hook::add_pre<MatDraw>(check_shapes) != MOD_OK) std::exit(2);
+        require(mods::hook::add_pre<BackgroundRegister>(fail_collision_once) == MOD_OK, "collision failure hook unavailable");
+        require(mods::hook::add_post<BackgroundRegister>(check_collision_retry) == MOD_OK, "collision retry hook unavailable");
     }
     if (s_hudTest && s_joined != 0 && now - s_joined > 60000) {
         mods::log::info("HUD_INSPECTION: finished; {} draw-list checks", s_checks);
@@ -469,7 +501,7 @@ void stock_render_update() {
     }
     if (s_left) {
         if (now - s_joined > 2000) {
-            mods::log::info("STOCK_RENDER_TEST PASS: lobby, all selectable prop kinds, 160 decoys, 8 rupees, cleanup; {} draw-list checks", s_checks);
+            mods::log::info("STOCK_RENDER_TEST PASS: lobby, all selectable prop kinds, 160 decoys, 24 rupees, cleanup; {} draw-list checks", s_checks);
             // This is an in-frame test, not application shutdown: exit() runs game globals'
             // destructors while the engine is still active. Gameplay actor cleanup ran above.
             std::fflush(nullptr);
@@ -523,7 +555,7 @@ void stock_render_update() {
     if (!s_round && now - s_joined > 8000) {
         roster();
         Writer round(MSG_ROUND);
-        round.u32(1); round.u8(0); round.u8(0); round.u16(600); round.u16(600);
+        round.u32(1); round.u8(0); round.u16(600); round.u16(600);
         round.u8(kMaxPlayers - 1); round.u8(0);
         apply(net::self_id(), round);
         Writer phase(MSG_PHASE);
@@ -560,6 +592,10 @@ void stock_render_update() {
     static uint64_t changedAt = 0;
     if (now < changedAt || now - changedAt < 2000) return;
     changedAt = now;
+    if (s_kind == kPushGrave) {
+        require(s_failedMesh != nullptr && s_collisionRecovered, "collision registration did not recover");
+        mods::log::info("STOCK_RENDER_TEST: temporary collision registration failure recovered");
+    }
     int next = s_kind + 1;
     while (next < prop_count() && !prop_on_map(next, -1)) ++next;
     if (next == prop_count()) {

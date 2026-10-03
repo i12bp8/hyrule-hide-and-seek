@@ -1,6 +1,7 @@
 #include "hud.hpp"
 #include "hud_layout.hpp"
 
+#include "arena.hpp"
 #include "common.hpp"
 #include "local.hpp"
 #include "maps.hpp"
@@ -222,16 +223,27 @@ void draw_role(Painter& p, const Screen& s) {
     if (me.role == Role::Hunter) {
         title = "HUNTER";
         if (match::my_hunter_life() == 0) { title = "OUT OF HEARTS"; detail = "Watching until next round"; }
-        else if (m.phase == Phase::Seek && m.settings.trackingPulse) {
-            const auto seconds = local::tracking_cooldown_secs();
-            detail = seconds == 0 ? "Tracking ready" : "Tracking  " + std::to_string(seconds) + "s";
-        } else detail = "Find every hider";
+        else if (m.phase == Phase::Seek) {
+            if (m.settings.trackingPulse) {
+                const auto seconds = local::tracking_cooldown_secs();
+                detail = seconds == 0 ? "Track ready" : "Track " + std::to_string(seconds) + "s";
+            }
+            if (m.settings.whistle) {
+                const auto seconds = (match::whistle_cooldown_ms() + 999) / 1000;
+                if (!detail.empty()) detail += "  |  ";
+                detail += seconds == 0 ? "Whistle ready" : "Whistle " + std::to_string(seconds) + "s";
+            }
+            if (detail.empty()) detail = "Find every prop";
+        } else detail = "Find every prop";
     } else if (me.role == Role::Hider && !me.found) {
         title = local::disguised() ? prop_info(local::prop()).name : "HIDING";
         if (local::disguised()) detail = "Decoys " + std::to_string(match::my_decoys_left());
+        if (local::disguised() && m.phase == Phase::Seek && m.settings.decoySwap) {
+            detail += "  |  Swaps " + std::to_string(match::my_swaps_left());
+        }
         if (m.phase == Phase::Seek && m.settings.treasure) {
             if (!detail.empty()) detail += "  |  ";
-            detail += me.rupeesCollected < 3 ? "Loot " + std::to_string(me.rupeesCollected) + "/3" : "Loot complete";
+            detail += me.rupeesCollected < 3 ? "Loot " + std::to_string(me.rupeesCollected) + "/3" : "Loot done";
         }
         if (detail.empty()) detail = m.phase == Phase::Hide ? "Find your spot" : "Stay alert";
     } else { title = me.eliminated ? "OUT OF HEARTS" : "WATCHING"; detail = "Next round soon"; }
@@ -244,8 +256,10 @@ void draw_role(Painter& p, const Screen& s) {
     p.centred_fit(detail, card.x + card.w * 0.5f, card.y + 25, 10, card.w - 20, rgba(225, 225, 225));
     if (settings::control_hints()) {
         const char* hint = me.role == Role::Spectator ? "Watching until next round" : me.role == Role::Hunter
-            ? (m.settings.mode == Mode::PropHunt ? "B: sword / swim tag  |  Down: track" : "Touch hiders  |  Down: track")
-            : (m.settings.mode == Mode::PropHunt ? "D-pad: < > prop, up decoy, down taunt" : "Hide and relocate  |  D-pad down: taunt");
+            ? "B: sword  |  D-pad up: whistle, down: track"
+            : (m.phase == Phase::Seek && m.settings.decoySwap
+                   ? "D-pad: < > prop, up decoy (hold: swap), down taunt"
+                   : "D-pad: < > prop (> copies nearby), up decoy");
         p.centred_fit(hint, s.x + s.w * 0.5f, card.y - 16, 10, std::min(s.w - 24, 320.0f), rgba(225, 225, 225));
     }
 }
@@ -354,8 +368,7 @@ void draw_name_tags(Painter& p, const Screen& s) {
         if (!puppet::anchor(id, feet, height)) continue;
         cXyz head = feet; head.y += height + 28;
         const float distance = (head - view->lookat.eye).abs();
-        if (match::in_round() && player.role == Role::Hider && !player.found && mine != Role::Hider &&
-            m.settings.mode == Mode::PropHunt) continue;
+        if (match::in_round() && player.role == Role::Hider && !player.found && mine != Role::Hider) continue;
         tags.push_back({id, head, distance, hunter});
     }
     std::sort(tags.begin(), tags.end(), [](const Tag& a, const Tag& b) {
@@ -459,17 +472,19 @@ void draw_scoreboard(Painter& p, const Screen& s) {
     const auto layout = score_layout(s.x, s.y, s.w, s.h, ids.size());
     const auto& card = layout.card;
     p.card(card, rgba(0, 0, 0, 215));
-    const char* title = m.winner == 1 ? "Hunters win" : m.settings.mode == Mode::PropHunt ? "Props win" : "Hiders win";
+    const char* title = m.winner == 1 ? "Hunters win" : "Props win";
     p.centred_fit(title, card.x + card.w * 0.5f, card.y + 9, 18, card.w - 24,
         m.winner == 1 ? rgba(255, 110, 90) : rgba(130, 235, 130));
-    const float loot = card.x + card.w * 0.51f, finds = card.x + card.w * 0.62f;
-    const float round = card.x + card.w * 0.75f, total = card.x + card.w * 0.89f;
+    const float loot = card.x + card.w * 0.46f, finds = card.x + card.w * 0.56f;
+    const float tricks = card.x + card.w * 0.66f;
+    const float round = card.x + card.w * 0.77f, total = card.x + card.w * 0.90f;
     const auto cell = [&](const std::string& text, float x, float y, float size, JUtility::TColor color) {
-        p.centred_fit(text, x, y, size, card.w * 0.10f, color);
+        p.centred_fit(text, x, y, size, card.w * 0.09f, color);
     };
     p.text("Player", card.x + 12, card.y + 36, 10, rgba(180, 180, 180));
     cell("Loot", loot, card.y + 36, 10, rgba(180, 180, 180));
     cell("Finds", finds, card.y + 36, 10, rgba(180, 180, 180));
+    cell("Tricks", tricks, card.y + 36, 10, rgba(180, 180, 180));
     cell("Round", round, card.y + 36, 10, rgba(180, 180, 180));
     cell("Total", total, card.y + 36, 10, rgba(180, 180, 180));
     float y = card.y + 54;
@@ -477,14 +492,71 @@ void draw_scoreboard(Painter& p, const Screen& s) {
     for (int id : ids) {
         const auto& player = match::player(id);
         if (id == net::self_id()) p.box(card.x + 6, y - 1, card.x + card.w - 6, y + layout.rowHeight - 2, rgba(255, 230, 140, 25));
-        const auto name = p.shortened(name_of(id), size, card.w * 0.44f - 20);
+        const auto name = p.shortened(name_of(id), size, card.w * 0.40f - 20);
         p.text(name, card.x + 12, y + 1, size, player_color(id));
         cell(std::to_string(player.rupeesCollected), loot, y + 1, size, rgba(200, 215, 205));
         cell(std::to_string(player.finds), finds, y + 1, size, rgba(200, 215, 205));
+        cell(std::to_string(player.decoyFools + player.closeCalls), tricks, y + 1, size, rgba(200, 215, 205));
         cell(std::to_string(player.roundPoints), round, y + 1, size, rgba(255, 230, 140));
         cell(std::to_string(player.score), total, y + 1, size, rgba(240, 240, 240));
         y += layout.rowHeight;
     }
+
+    // Round awards: a few names to brag about, if there is room under the table.
+    const auto best = [&](auto score, auto eligible) {
+        int winner = 0, top = 0;
+        for (int id : ids) {
+            const auto& player = match::player(id);
+            if (!eligible(player)) continue;
+            const int value = score(player);
+            if (value > top) { top = value; winner = id; }
+        }
+        return winner;
+    };
+    struct Award { const char* title; int id; };
+    const Award awards[] = {
+        {"MVP", best([](const match::Player& q) { return static_cast<int>(q.roundPoints); },
+                     [](const match::Player&) { return true; })},
+        {"Best disguise", best([](const match::Player& q) { return static_cast<int>(q.roundPoints) + 1; },
+                               [](const match::Player& q) { return q.startingRole == Role::Hider && !q.found; })},
+        {"Sharpshooter", best([](const match::Player& q) { return q.finds * 10 - std::min<int>(q.misses, 9); },
+                              [](const match::Player& q) { return q.finds > 0; })},
+        {"Trickster", best([](const match::Player& q) { return q.decoyFools * 2 + q.closeCalls; },
+                           [](const match::Player& q) { return q.decoyFools + q.closeCalls > 0; })},
+    };
+    std::string line;
+    for (const Award& a : awards) {
+        if (a.id == 0) continue;
+        if (!line.empty()) line += "   ";
+        line += std::string(a.title) + ": " + name_of(a.id);
+    }
+    const float top = card.y + card.h + 6;
+    if (!line.empty() && top + 22 < s.y + s.h - 8) {
+        const Rect strip{card.x, top, card.w, 22};
+        p.card(strip, rgba(0, 0, 0, 190));
+        p.centred_fit(line, card.x + card.w * 0.5f, top + 5, 11, card.w - 20, rgba(255, 220, 120));
+    }
+}
+
+void draw_edge_warning(Painter& p, const Screen& s) {
+    if (!match::in_round() || !arena::locked() || local::blindfolded()) return;
+    const auto* player = dComIfGp_getPlayer(0);
+    if (player == nullptr) return;
+    const float edge = arena::edge_distance(player->current.pos.x, player->current.pos.z);
+    if (edge > 350.0f) return;
+    const auto card = centre_card(s.x, s.y, s.w, s.h - 140, 21, 230);
+    const uint8_t alpha = static_cast<uint8_t>(edge < 60.0f ? 220 : 150);
+    p.card(card, rgba(70, 20, 10, alpha));
+    p.centred_fit("Edge of the play area", card.x + card.w * 0.5f, card.y + 5, 10, card.w - 16, rgba(255, 200, 150));
+}
+
+void draw_swap_charge(Painter& p, const Screen& s) {
+    float progress = 0.0f;
+    if (!local::swap_charging(progress)) return;
+    const auto card = centre_card(s.x, s.y, s.w, s.h - 116, 12, 180);
+    p.card(card, rgba(0, 0, 0, 170));
+    p.box(card.x + 3, card.y + 3, card.x + 3 + (card.w - 6) * progress, card.y + card.h - 3,
+        match::can_swap() ? rgba(120, 210, 255) : rgba(160, 160, 160));
 }
 
 class HudDlst : public dDlst_base_c {
@@ -505,6 +577,8 @@ public:
         draw_top(p, s);
         draw_role(p, s);
         draw_hider_feedback(p, s);
+        draw_edge_warning(p, s);
+        draw_swap_charge(p, s);
         draw_feed(p, s);
         if (match::get().phase == Phase::Results) draw_scoreboard(p, s);
         draw_banner(p, s);
