@@ -9,7 +9,7 @@ namespace hs::settings {
 
 // ---- current format (rules version 6) --------------------------------------------------------
 // "map,hide,seek,hunters,flags,idle-seconds,free-decoys,miss-quarters,final-seconds"
-// flags: 1 found hiders hunt, 2 decoy swap, 4 hunter whistle, 8 automatic rounds, 16 public,
+// flags: 1 found hiders hunt, 2 decoy swap, 8 automatic rounds, 16 public,
 //        32 hunter tracking, 64 treasure.
 
 inline match::Settings parse_rules(const std::string& text) {
@@ -24,7 +24,6 @@ inline match::Settings parse_rules(const std::string& text) {
     s.hunters = static_cast<uint8_t>(std::clamp(v[3], 0, 8));
     s.foundJoinHunters = v[4] & 1;
     s.decoySwap = v[4] & 2;
-    s.whistle = v[4] & 4;
     s.autoNext = v[4] & 8;
     s.isPublic = v[4] & 16;
     s.trackingPulse = v[4] & 32;
@@ -37,7 +36,7 @@ inline match::Settings parse_rules(const std::string& text) {
 }
 
 inline std::string format_rules(const match::Settings& s) {
-    const int flags = (s.foundJoinHunters ? 1 : 0) | (s.decoySwap ? 2 : 0) | (s.whistle ? 4 : 0) |
+    const int flags = (s.foundJoinHunters ? 1 : 0) | (s.decoySwap ? 2 : 0) |
                       (s.autoNext ? 8 : 0) | (s.isPublic ? 16 : 0) | (s.trackingPulse ? 32 : 0) |
                       (s.treasure ? 64 : 0);
     char text[80];
@@ -134,13 +133,12 @@ inline std::string upgrade_search_rules(const std::string& text, bool legacy = f
 }
 
 // v0.4: Prop Hunt only. Drop the mode, reset the map to Random (the map list changed) and turn on
-// the new decoy swap and hunter whistle, keeping every other custom choice.
+// the new decoy swap, keeping every other custom choice.
 inline std::string upgrade_prop_hunt_rules(const std::string& text) {
     if (text.empty()) return text;
     auto s = parse_legacy_rules(text);
     s.map = kRandomMap;
     s.decoySwap = true;
-    s.whistle = true;
     return format_rules(s);
 }
 }  // namespace hs::settings

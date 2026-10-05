@@ -1,4 +1,4 @@
-# Hyrule Hide & Seek: v0.4.0 design
+# Hyrule Hide & Seek: v0.4.1 design
 
 Online Prop Hunt for Twilight Princess on Dusklight. A room has 2–16 players, a host that runs
 match rules, and a relay that forwards messages. Players install one `.dusk` bundle, host a room
@@ -24,8 +24,8 @@ from the user's extracted disc. Its checked-in outputs are `src/arena_data.inc` 
 `server/arenas.json`. The generated file includes only coordinates, actor parameters and hashes;
 models, textures and animations remain in the player's own game files.
 
-The 13 maps have independent unions of circular play areas, themed disguise palettes and selected
-post-story layers. Scripted actor records are filtered before creation; native clutter is added
+The 13 maps are played whole (every room the game loads with the spawn room; loading exits closed,
+no invisible fence), with themed disguise palettes and selected post-story layers. Scripted actor records are filtered before creation; native clutter is added
 through the optional StageService. Arena hooks stop exits, scene changes and compulsory events,
 keep the field camera free, and prevent void transitions. Interaction attention is cleared during
 rounds so real pots, pumpkins and grass do not expose disguises through A/Z prompts.
@@ -37,7 +37,7 @@ restored on leaving. Arena protections apply during online rounds without rewrit
 
 ## Disguises and decoys
 
-There are 67 selectable disguises plus a renderer-only treasure rupee. The catalogue records each
+There are 75 selectable disguises plus a renderer-only treasure rupee. The catalogue records each
 native model, secondary model, resource entry/name, idle/walk animation, material animations,
 light type, draw list, shadow type/size/lift, scale, offset and collision. Map palettes constrain
 normal selection; copying a nearby native object uses the same catalogue.
@@ -56,7 +56,7 @@ Three free decoys are recommended; the host can choose 0–10. Further placement
 3 points. Each player retains up to ten decoys; an eleventh replaces their own oldest, with a
 structural room capacity of 160. Hunter hits remove decoys and count as misses. During Hunt a
 prop can swap with their newest decoy twice, at least 15 s apart. Up taps place decoys; a 0.45 s
-hold requests a swap. Hunters use Up for a whistle that makes every hidden prop squeak, at least 40 s apart.
+hold requests a swap.
 
 ## Multiplayer and authority
 
@@ -81,12 +81,11 @@ payloads use little-endian numbers, as defined in `src/protocol.hpp`.
 | --- | --- |
 | STATE | Animated Link state (70 bytes), or compact prop/loading state (28), including type |
 | SETTINGS | Map, times and options; no mode field |
-| ROSTER | Count plus 30-byte player rows: roles, colour, scores, counters, health, style stats and four remaining timers |
+| ROSTER | Count plus 28-byte player rows: roles, colour, scores, counters, health, style stats and three remaining timers |
 | ROUND / PHASE | Round id, map, times, starting prop count/capture progress; phase and remaining time |
 | READY / HIT / FOUND / RESULTS | Loading acknowledgement, find request, confirmed find and winner |
 | DECOYS / PLACE_DECOY / HIT_DECOY | Complete bounded snapshot, placement request and strike request |
 | SWAP / TELEPORT | Swap request and host-confirmed position/yaw |
-| WHISTLE | Hunter request and host-confirmed positional sound |
 | AWARD | Player, award type and granted points |
 | RUPEES / COLLECT_RUPEE / PICKUP | Treasure snapshot, validated claim and score/challenge feedback |
 | TAUNT / CLUE | Sound request; manual, final, stationary or treasure clue |

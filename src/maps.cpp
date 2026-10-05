@@ -42,17 +42,4 @@ int recommended_hunters(int players, int map) {
     return std::clamp((players + perHunter - 1) / perHunter, 1, players - 1);
 }
 
-float area_edge_distance(const MapInfo& map, float x, float z) {
-    float best = -1e30f;
-    for (int i = 0; i < map.areaCount; ++i) {
-        const Circle& c = map.area[i];
-        best = std::max(best, c.radius - std::hypot(x - c.x, z - c.z));
-    }
-    return map.areaCount == 0 ? 1e30f : best;
-}
-
-bool in_area(const MapInfo& map, float x, float z, float margin) {
-    return area_edge_distance(map, x, z) >= margin;
-}
-
 }  // namespace hs

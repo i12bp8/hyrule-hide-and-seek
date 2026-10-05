@@ -44,7 +44,7 @@ function stateBytes({ stage, x, y, z, flags = 1 }) {
 }
 
 test("bots follow the host, get ready and turn into props", { timeout: 15000 }, async (t) => {
-  const host = new WebSocket(`${base}/host?name=Human&v=11`);
+  const host = new WebSocket(`${base}/host?name=Human&v=12`);
   host.binaryType = "arraybuffer";
   t.after(() => host.close());
   const states = new Map(); // bot id -> latest decoded state
@@ -91,10 +91,10 @@ test("bots follow the host, get ready and turn into props", { timeout: 15000 }, 
         id, id === 1 ? 2 : 1, id - 1, 0, 0, 0, 0, id === 1 ? 4 : 8,
         id === 1 ? 1 : 0, 0, 0, 0, 0, 0, id === 1 ? 20 : 0, 0, 0,
         ...Array(5).fill(0), // round stats
-        ...Array(8).fill(0), // four remaining cooldowns (u16)
+        ...Array(6).fill(0), // three remaining cooldowns (u16)
       ]),
     ]);
-    assert.equal(roster.length, 3 + 3 * 30);
+    assert.equal(roster.length, 3 + 3 * 28);
     send(roster);
     send(new Uint8Array([0, 12, 1, 0, 0, 0, 2, 30, 0, 180, 0, 2, 0])); // ROUND 1 on map 2 (Kakariko)
     send(new Uint8Array([0, 13, 1, 0, 0, 0, 1, 0x10, 0x27, 0, 0])); // PHASE gather

@@ -114,22 +114,13 @@ void link_post(ModContext*, void* args, void*, void*) {
         const Point allowed = sweep(s_before, target, blocked);
         if (allowed.x != target.x || allowed.y != target.y || allowed.z != target.z) hold_back(link, allowed);
     }
-    // The play area: an invisible edge keeps the round on the interesting part of the map. A
-    // player who is somehow outside may still walk back in, never further out.
-    const MapInfo& map = round_map();
-    const float before = area_edge_distance(map, s_before.x, s_before.z);
-    const float after = area_edge_distance(map, link->current.pos.x, link->current.pos.z);
-    if (after < 0.0f && after < before) {
-        hold_back(link, {s_before.x, link->current.pos.y, s_before.z});
-    }
     // Void/lava/fog recovery remains within this loaded arena and preserves hunt health/time.
     if (s_haveSafe && (link->mGroundCode == 4 || link->mGroundCode == 9 || link->mGroundCode == 10)) {
         link->current.pos = link->old.pos = link->field_0x3798 = s_safe;
         link->speed.set(0.0f, 0.0f, 0.0f);
         link->speedF = 0.0f;
         link->procWaitInit();
-    } else if (link->mLinkAcch.ChkGroundHit() && !blocked({link->current.pos.x, link->current.pos.y, link->current.pos.z}) &&
-               in_area(map, link->current.pos.x, link->current.pos.z)) {
+    } else if (link->mLinkAcch.ChkGroundHit() && !blocked({link->current.pos.x, link->current.pos.y, link->current.pos.z})) {
         s_safe = link->current.pos;
         s_haveSafe = true;
     }
@@ -282,10 +273,6 @@ void shutdown() {
 bool overlaps_loading_exit(Point position, float radius) {
     for (const auto& exit : s_exits) if (overlaps_exit(exit, position, radius)) return true;
     return false;
-}
-
-float edge_distance(float x, float z) {
-    return area_edge_distance(round_map(), x, z);
 }
 
 void init() {

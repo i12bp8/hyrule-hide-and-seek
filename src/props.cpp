@@ -39,6 +39,32 @@ constexpr PropInfo citizen(const char* name, const char* arc, const char* bmd, c
         .radius = 45.0f, .height = 180.0f, .shadow = Shadow::Round, .shadowSize = 40.0f};
 }
 
+// daNi: base size 1.2, light 0, ni.btk frame = feather colour (white, black, brown; gold is the
+// rare golden cucco, not offered), real shadow 400 from 100 units up. A real cucco is pushed
+// aside rather than blocking Link, so the disguise is not solid either.
+constexpr PropInfo cucco(const char* name, int frame) {
+    return {.name = name, .arc = "Ni", .model = res(16), .idle = res(11), .move = res(12),
+        .btk = res(19), .btkFrame = static_cast<int8_t>(frame), .radius = 42.0f, .height = 72.0f,
+        .scale = 1.2f, .shadow = Shadow::Real, .shadowSize = 400.0f, .shadowLift = 100.0f,
+        .native = Native::Cucco, .nativeType = static_cast<int8_t>(frame)};
+}
+
+// daNpc_Ne / daDo: light 0, btk frame = one of four coats, btp = blinking eyes, real shadow 400
+// from 100 units up.
+constexpr PropInfo cat(const char* name, int frame) {
+    return {.name = name, .arc = "Npc_ne", .model = res(28), .idle = res(24), .move = res(25),
+        .btk = res(32), .btkFrame = static_cast<int8_t>(frame), .btp = res(35), .radius = 30.0f,
+        .height = 55.0f, .shadow = Shadow::Real, .shadowSize = 400.0f, .shadowLift = 100.0f,
+        .native = Native::Cat, .nativeType = static_cast<int8_t>(frame)};
+}
+
+constexpr PropInfo dog(const char* name, int frame) {
+    return {.name = name, .arc = "Do", .model = res(25), .idle = res(21), .move = res(22),
+        .btk = res(29), .btkFrame = static_cast<int8_t>(frame), .btp = res(32), .radius = 40.0f,
+        .height = 70.0f, .shadow = Shadow::Real, .shadowSize = 400.0f, .shadowLift = 100.0f,
+        .native = Native::Dog, .nativeType = static_cast<int8_t>(frame)};
+}
+
 constexpr PropInfo kProps[kPropCount] = {
     carry("Pot", "J_tubo_00", "j_tubo_00.bmd", 40, 75, 1.0f, 40, 30, 0),
     carry("Big Pot", "J_tubo_01", "j_tubo_01.bmd", 50, 110, 1.0f, 50, 50, 1),
@@ -56,11 +82,7 @@ constexpr PropInfo kProps[kPropCount] = {
     {.name = "Pumpkin Leaves", .arc = "J_Hatake", .model = res(3), .radius = 90.0f,
         .height = 50.0f, .shadow = Shadow::Real, .shadowSize = 900.0f, .shadowLift = 20.0f,
         .native = Native::PumpkinLeaves},
-    // daNi: base size 1.2, light 0, blinking ni.btk, real shadow 400 from 100 units up. A real
-    // cucco is pushed aside rather than blocking Link, so the disguise is not solid either.
-    {.name = "Cucco", .arc = "Ni", .model = res(16), .idle = res(11), .move = res(12),
-        .btk = res(19), .radius = 42.0f, .height = 72.0f, .scale = 1.2f, .shadow = Shadow::Real,
-        .shadowSize = 400.0f, .shadowLift = 100.0f, .native = Native::Cucco},
+    cucco("White Cucco", 0),
     // daCow_c: light 0, cow.btp, real shadow 800.
     {.name = "Goat", .arc = "Cow", .model = res(31), .idle = res(26), .move = res(27),
         .btp = res(34), .radius = 110.0f, .height = 170.0f, .shadow = Shadow::Real,
@@ -108,13 +130,8 @@ constexpr PropInfo kProps[kPropCount] = {
         .height = 225.0f, .light = 0x10, .bgList = true, .shadow = Shadow::Square,
         .shadowSize = 90.0f, .shadowAlpha = -0.4f, .solid = mesh(res(7))},
 
-    // daNpc_Ne / daDo: light 0, btk + btp, real shadow 400 from 100 units up.
-    {.name = "Cat", .arc = "Npc_ne", .model = res(28), .idle = res(24), .move = res(25),
-        .btk = res(32), .btp = res(35), .radius = 30.0f, .height = 55.0f, .shadow = Shadow::Real,
-        .shadowSize = 400.0f, .shadowLift = 100.0f, .native = Native::Cat},
-    {.name = "Dog", .arc = "Do", .model = res(25), .idle = res(21), .move = res(22),
-        .btk = res(29), .btp = res(32), .radius = 40.0f, .height = 70.0f, .shadow = Shadow::Real,
-        .shadowSize = 400.0f, .shadowLift = 100.0f, .native = Native::Dog},
+    cat("Black & White Cat", 0),
+    dog("Tan Dog", 0),
 
     citizen("Townsman", "MAN_a", "man_a.bmd", nullptr, false),
     citizen("Father", "MAD_a", "mad_a.bmd", nullptr, false),
@@ -186,6 +203,16 @@ constexpr PropInfo kProps[kPropCount] = {
     // daObjGpTaru_c: background light and list.
     {.name = "Big Barrel", .arc = "K_ktar00", .model = res(3), .radius = 70.0f, .height = 150.0f,
         .light = 0x10, .bgList = true, .solid = cyl(60.0f), .native = Native::BigBarrel},
+
+    // The other coats and feather colours, in btk frame order.
+    cucco("Black Cucco", 1),
+    cucco("Brown Cucco", 2),
+    cat("Calico Cat", 1),
+    cat("Tabby Cat", 2),
+    cat("Orange Cat", 3),
+    dog("Patched Dog", 1),
+    dog("Brown Dog", 2),
+    dog("Black Dog", 3),
 
     // Treasure only: daItem rupee look with its colour BRK, played by the treasure renderer.
     {.name = "Treasure Rupee", .arc = "F_gD_rupy", .model = res(4), .radius = 20.0f,

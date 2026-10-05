@@ -192,7 +192,6 @@ static void test_protocol_roundtrip() {
 
     match::Settings s;
     s.decoySwap = false;
-    s.whistle = false;
     s.map = kRandomMap;
     s.hideSecs = 5;      // clamps to 10
     s.seekSecs = 60000;  // clamps to 1800
@@ -210,7 +209,7 @@ static void test_protocol_roundtrip() {
     t.read(sr);
     CHECK(sr.ok());
     CHECK(!t.trackingPulse);
-    CHECK(!t.decoySwap && !t.whistle && t.map == kRandomMap && t.hunters == 2);
+    CHECK(!t.decoySwap && t.map == kRandomMap && t.hunters == 2);
     CHECK(t.hideSecs == 10 && t.seekSecs == 1800);
     CHECK(t.missPenaltyQuarters == 0 && t.isPublic && t.foundJoinHunters && t.finalClueSecs == 35 && t.autoNext);
     CHECK(t.idleTauntSecs == 90);
@@ -599,7 +598,7 @@ static void test_client_and_host_migration() {
         roster.u8(id == 1 ? kArenaLife : 0);
         roster.u16(0);
         for (int stat = 0; stat < 5; ++stat) roster.u8(0);
-        for (int cooldown = 0; cooldown < 4; ++cooldown) roster.u16(0);
+        for (int cooldown = 0; cooldown < 3; ++cooldown) roster.u16(0);
     }
     deliver(1, roster.bytes());
     Writer round(MSG_ROUND);
@@ -928,7 +927,7 @@ static void test_hunter_health_migration() {
         if (sent.bytes[0] == MSG_ROSTER) roster = sent.bytes;
         if (sent.bytes[0] == MSG_ROUND) round = sent.bytes;
     }
-    CHECK(roster.size() == 2 + 4 * 30);
+    CHECK(roster.size() == 2 + 4 * 28);
     reset_net(4); g_fake.self = living; g_fake.host = living == 1 ? 2 : 1;
     match::on_welcome();
     deliver(g_fake.host, roster); deliver(g_fake.host, round);
@@ -944,7 +943,7 @@ static void test_hunter_health_migration() {
     match::report_miss(); match::report_hit(hider_id()); match::report_decoy_hit(1);
     CHECK(count_sent(MSG_MISS) == 2 && count_sent(MSG_HIT) == 0 && count_sent(MSG_HIT_DECOY) == 0);
     // A partial acknowledgement leaves the last miss predicted, without double charging.
-    const auto offset = 2 + (living - 1) * 30;
+    const auto offset = 2 + (living - 1) * 28;
     roster[offset + 14] = 2; roster[offset + 15] = 9;
     deliver(g_fake.host, roster);
     CHECK(match::my_hunter_life() == 0 && match::player(living).missSequence == 9);
@@ -1536,7 +1535,7 @@ static void test_archive_bounds() {
 }
 
 static void test_prop_abilities() {
-    std::printf("authoritative swaps, whistles, limits and migration\n");
+    std::printf("authoritative swaps, limits and migration\n");
     host_room(3);
     auto rules = match::get().settings; rules.seekSecs = 300; match::set_settings(rules);
     match::start_round();
@@ -1574,16 +1573,14 @@ static void test_prop_abilities() {
     Writer stale(MSG_SWAP); stale.u32(match::get().round - 1);
     deliver(hider, stale.bytes()); CHECK(match::player(hider).swapsUsed == 2);
 
+    // The retired v11 whistle (message 30) is ignored, not answered.
     state(hunter, 200);
-    Writer whistle(MSG_WHISTLE); whistle.u32(match::get().round);
+    Writer whistle(30); whistle.u32(match::get().round);
     g_fake.sent.clear();
-    deliver(hider, whistle.bytes()); CHECK(count_sent(MSG_WHISTLE) == 0);
-    deliver(hunter, whistle.bytes()); CHECK(count_sent(MSG_WHISTLE) == 1);
-    CHECK(match::player(hunter).whistleReadyAt == s_now + match::kWhistleCooldownMs);
-    deliver(hunter, whistle.bytes()); CHECK(count_sent(MSG_WHISTLE) == 1);
-    CHECK(match::player(hider).revealedUntil == 0); // sound alone, no exact marker or score
+    deliver(hunter, whistle.bytes()); CHECK(g_fake.sent.empty());
+    CHECK(match::player(hider).revealedUntil == 0);
 
-    // A late joiner receives remaining cooldowns, using its own clock, and can become host.
+    // A late joiner receives the round's stats, using its own clock, and can become host.
     g_fake.add(4, "Late"); match::on_joined(4);
     std::vector<uint8_t> roster, round, phase;
     for (const auto& sent : g_fake.sent) {
@@ -1591,17 +1588,13 @@ static void test_prop_abilities() {
         if (sent.bytes[0] == MSG_ROUND) round = sent.bytes;
         if (sent.bytes[0] == MSG_PHASE) phase = sent.bytes;
     }
-    CHECK(roster.size() == 2 + 4 * 30);
+    CHECK(roster.size() == 2 + 4 * 28);
     reset_net(4); g_fake.self = 4; g_fake.host = other; match::on_welcome();
     s_now += 100'000;
     deliver(other, roster); deliver(other, round); deliver(other, phase);
     CHECK(match::player(hider).swapsUsed == 2);
-    CHECK(match::player(hunter).whistleReadyAt == s_now + match::kWhistleCooldownMs);
-    g_fake.host = 4; match::on_host_changed(4); state(hunter, 200);
-    g_fake.sent.clear(); deliver(hunter, whistle.bytes());
-    CHECK(count_sent(MSG_WHISTLE) == 0);
-    advance(match::kWhistleCooldownMs + 1); state(hunter, 200);
-    deliver(hunter, whistle.bytes()); CHECK(count_sent(MSG_WHISTLE) == 1);
+    g_fake.host = 4; match::on_host_changed(4); state(hider, 500);
+    deliver(hider, swap.bytes()); CHECK(match::player(hider).swapsUsed == 2);
 
     // A partial roster cannot apply its first rows and leave the rest with older rules/stats.
     const auto points = match::player(hider).roundPoints;

@@ -228,11 +228,6 @@ void draw_role(Painter& p, const Screen& s) {
                 const auto seconds = local::tracking_cooldown_secs();
                 detail = seconds == 0 ? "Track ready" : "Track " + std::to_string(seconds) + "s";
             }
-            if (m.settings.whistle) {
-                const auto seconds = (match::whistle_cooldown_ms() + 999) / 1000;
-                if (!detail.empty()) detail += "  |  ";
-                detail += seconds == 0 ? "Whistle ready" : "Whistle " + std::to_string(seconds) + "s";
-            }
             if (detail.empty()) detail = "Find every prop";
         } else detail = "Find every prop";
     } else if (me.role == Role::Hider && !me.found) {
@@ -256,7 +251,7 @@ void draw_role(Painter& p, const Screen& s) {
     p.centred_fit(detail, card.x + card.w * 0.5f, card.y + 25, 10, card.w - 20, rgba(225, 225, 225));
     if (settings::control_hints()) {
         const char* hint = me.role == Role::Spectator ? "Watching until next round" : me.role == Role::Hunter
-            ? "B: sword  |  D-pad up: whistle, down: track"
+            ? "B: sword  |  D-pad down: track"
             : (m.phase == Phase::Seek && m.settings.decoySwap
                    ? "D-pad: < > prop, up decoy (hold: swap), down taunt"
                    : "D-pad: < > prop (> copies nearby), up decoy");
@@ -538,18 +533,6 @@ void draw_scoreboard(Painter& p, const Screen& s) {
     }
 }
 
-void draw_edge_warning(Painter& p, const Screen& s) {
-    if (!match::in_round() || !arena::locked() || local::blindfolded()) return;
-    const auto* player = dComIfGp_getPlayer(0);
-    if (player == nullptr) return;
-    const float edge = arena::edge_distance(player->current.pos.x, player->current.pos.z);
-    if (edge > 350.0f) return;
-    const auto card = centre_card(s.x, s.y, s.w, s.h - 140, 21, 230);
-    const uint8_t alpha = static_cast<uint8_t>(edge < 60.0f ? 220 : 150);
-    p.card(card, rgba(70, 20, 10, alpha));
-    p.centred_fit("Edge of the play area", card.x + card.w * 0.5f, card.y + 5, 10, card.w - 16, rgba(255, 200, 150));
-}
-
 void draw_swap_charge(Painter& p, const Screen& s) {
     float progress = 0.0f;
     if (!local::swap_charging(progress)) return;
@@ -577,7 +560,6 @@ public:
         draw_top(p, s);
         draw_role(p, s);
         draw_hider_feedback(p, s);
-        draw_edge_warning(p, s);
         draw_swap_charge(p, s);
         draw_feed(p, s);
         if (match::get().phase == Phase::Results) draw_scoreboard(p, s);

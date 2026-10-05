@@ -354,7 +354,7 @@ void roster(int hunter = 2, int count = kMaxPlayers) {
         w.u8(id == hunter ? 6 : 10); w.u8(0); w.u8(0); w.u8(0); w.u8(0); w.u8(0); w.u8(0);
         w.u8(id == hunter ? kArenaLife : 0); w.u16(0);
         for (int stat = 0; stat < 5; ++stat) w.u8(0);
-        for (int timer = 0; timer < 4; ++timer) w.u16(0);
+        for (int timer = 0; timer < 3; ++timer) w.u16(0);
     }
     apply(net::self_id(), w);
 }

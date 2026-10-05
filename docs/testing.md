@@ -1,19 +1,19 @@
-# v0.4.0 verification and game checklist
+# v0.4.1 verification and game checklist
 
 ## Recorded checks
 
 On official Linux Dusklight 2.0.3:
 
-- 5,704 rules/protocol/settings/interpolation/layout/RARC assertions passed.
-- All 16 Node relay/bot tests passed, including protocol-11 roster parsing.
-- All 68 catalogue entries (67 selectable plus treasure) resolved: 179 resources in 70 exact-case
+- 5,847 rules/protocol/settings/interpolation/layout/RARC assertions passed.
+- All 16 Node relay/bot tests passed, including protocol-12 roster parsing.
+- All 76 catalogue entries (75 selectable plus treasure) resolved: 217 resources in 70 exact-case
   archives, including models, alternate animations, secondary models and collision meshes.
-- All 13 arenas loaded, followed by repeated Telma's Bar / Ordon / Telma's Bar loads, with two bots.
-- The final arena driver passed camera, event, exit and five-heart checks on all 13 maps,
-  with 85,954 draw-list checks. Exit-volume crossings were checked where those actors were loaded.
-- The stock renderer completed all 67 disguises with 160 decoys, 24 rupees and cleanup under
-  32 MiB free root-heap pressure. It checked 191,425 real draw lists and verified transient
+- The arena driver passed camera, event, exit and five-heart checks on all 13 whole maps with
+  their 452 added scenery objects. Exit-volume crossings were checked where those actors were loaded.
+- The stock renderer completed all 75 disguises with 160 decoys, 24 rupees and cleanup under
+  32 MiB free root-heap pressure. It checked 211,415 real draw lists and verified transient
   heap/model/animation failures, collision registration recovery and three heap destruction/recreation cycles.
+- Every cat, dog and cucco coat was rendered side by side and keeps its coat over time.
 
 These are Linux checks. Injected player states exercise real actors and rendering, not 16
 independent clients. Asset existence does not establish visual fidelity or balance. Other-platform
@@ -83,13 +83,13 @@ real clients on separate networks. Everyone must use protocol 11.
 ### Loading, saves and migration
 
 - [ ] Title-screen **Prop Hunt** creates a separate completed-story sandbox; existing dedicated saves work.
-- [ ] Log reports v0.4.0 / protocol 11 and no missing hook warnings.
+- [ ] Log reports v0.4.1 / protocol 12 and no missing hook warnings.
 - [ ] Both roles load every arena; repeat Telma's Bar after changing disguises and maps.
 - [ ] No story dialogue, cutscene, enemy, boss, item popup or forced camera starts in a round.
 - [ ] Roll, jump and swim toward exits/voids; no scene transition, fade or respawn occurs.
 - [ ] Leave an online round from a story save; its original heart capacity/life return.
 - [ ] Old stock rules migrate; old map choices reset to Random; custom timings/options persist.
-- [ ] Change host after spending, finds, swaps and whistles; scores, limits and remaining cooldowns persist.
+- [ ] Change host after spending, finds and swaps; scores, limits and remaining cooldowns persist.
 - [ ] Quit Dusklight normally after repeated rounds without a shutdown crash.
 
 ### Props and scenery
@@ -109,7 +109,9 @@ real clients on separate networks. Everyone must use protocol 11.
 
 - [ ] Tap Up places a decoy; hold Up for 0.45 s swaps with the newest one during Hunt only.
       Check twice-per-round limit, 15 s cooldown, yaw and the decoy at the old position.
-- [ ] Hunter Up whistles with a 40 s cooldown; hidden props make positional sounds for hunters, without arrows or markers.
+- [ ] Every cat, dog and cucco coat is selectable, keeps its coat while worn and as a decoy, and blinks;
+      D-pad right next to a real animal copies its coat.
+- [ ] Whole maps: walk to each loading exit (it holds you back), shut doors stay shut, no invisible fence elsewhere.
 - [ ] Down taunts as a prop or tracks as a hunter; clue arrows update with movement/camera.
 - [ ] Three free placements; later decoys cost 3 round/session points. Ten per player; replacing
       one player's oldest never removes another player's setup.

@@ -17,6 +17,9 @@
 
 #include "Z2AudioLib/Z2SeMgr.h"
 #include "d/actor/d_a_alink.h"
+#include "d/actor/d_a_do.h"
+#include "d/actor/d_a_ni.h"
+#include "d/actor/d_a_npc_ne.h"
 #include "d/actor/d_a_obj_carry.h"
 #include "d/actor/d_a_obj_yobikusa.h"
 #include "d/d_com_inf_game.h"
@@ -308,7 +311,7 @@ Native native_of(fopAc_ac_c* a, int& subtype) {
     case fpcNm_Obj_Carry_e: subtype = static_cast<daObjCarry_c*>(a)->getType(); return Native::Carry;
     case fpcNm_OBJ_PUMPKIN_e: return Native::Pumpkin;
     case fpcNm_OBJ_PLEAF_e: return Native::PumpkinLeaves;
-    case fpcNm_NI_e: return Native::Cucco;
+    case fpcNm_NI_e: subtype = static_cast<ni_class*>(a)->mColor; return Native::Cucco;
     case fpcNm_COW_e: return Native::Goat;
     case fpcNm_Obj_Yobikusa_e: subtype = static_cast<daObjYobikusa_c*>(a)->getType(); return Native::CallGrass;
     case fpcNm_OBJ_KANBAN2_e: return Native::Sign;
@@ -319,8 +322,8 @@ Native native_of(fopAc_ac_c* a, int& subtype) {
     case fpcNm_OBJ_ITAMATO_e: return Native::BoardTarget;
     case fpcNm_OBJ_BOUMATO_e: return Native::PoleTarget;
     case fpcNm_Obj_GraveStone_e: return Native::GraveStone;
-    case fpcNm_NPC_NE_e: return Native::Cat;
-    case fpcNm_DO_e: return Native::Dog;
+    case fpcNm_NPC_NE_e: subtype = static_cast<npc_ne_class*>(a)->mBtkFrame; return Native::Cat;
+    case fpcNm_DO_e: subtype = static_cast<do_class*>(a)->mBtkFrame; return Native::Dog;
     case fpcNm_Obj_BarDesk_e: return Native::BarDesk;
     case fpcNm_Obj_CRVLH_DW_e: return Native::LanternPost;
     case fpcNm_Obj_HFtr_e: subtype = static_cast<int>(fopAcM_GetParam(a) & 0xF); return Native::Furniture;
@@ -488,10 +491,6 @@ void hunter_controls(daAlink_c* l) {
             play_at(Z2SE_SY_HINT_BUTTON_BLINK, nullptr);
         } else play_at(Z2SE_SY_CURSOR_CANCEL, nullptr);
     }
-    if (mDoCPd_c::getTrigUp(PAD_1) && m.settings.whistle) {
-        if (match::whistle_cooldown_ms() == 0) match::request_whistle();
-        else play_at(Z2SE_SY_CURSOR_CANCEL, nullptr);
-    }
     {
         // Link cannot draw a sword while swimming. In that one state B becomes a short-range tag,
         // using the same authoritative distance check as sword hits. It is deliberately not
@@ -619,7 +618,7 @@ bool init() {
     s_meterHooked = meterPre && meterPost;
     if (!s_meterHooked) mods::log::warn("life-meter hook unavailable: zero-life hunters still spectate");
     if (!s_hooked) mods::log::warn("Link hooks unavailable: hunters won't be held and props stay visible");
-    match::set_hooks({.taunt = play_taunt, .whistle = play_whistle, .teleport = teleport});
+    match::set_hooks({.taunt = play_taunt, .teleport = teleport});
     return true;
 }
 
@@ -819,29 +818,6 @@ void teleport(float x, float y, float z, int16_t yaw) {
     s_lockedYaw = yaw;
     s_lockedAt = to;
     play_at(Z2SE_SY_HINT_BUTTON_BLINK, nullptr);
-}
-
-void play_whistle(uint8_t hunter) {
-    // The hunter's whistle, then every hidden prop squeaks where it really is. Hunters must
-    // listen: there are no arrows, names or markers.
-    if (fopAc_ac_c* h = hunter == net::self_id() ? dComIfGp_getPlayer(0) : nullptr) {
-        play_at(Z2SE_AL_V_JUMP_L, &h->current.pos);
-    }
-    for (int id = 1; id <= kMaxPlayers; ++id) {
-        const auto& p = match::player(id);
-        if (!p.present || p.role != Role::Hider || p.found) continue;
-        cXyz feet;
-        float height;
-        if (id == net::self_id()) {
-            const daAlink_c* l = link();
-            if (l == nullptr) continue;
-            feet = l->current.pos;
-        } else if (!puppet::anchor(id, feet, height)) {
-            if (!p.hasState || std::strncmp(p.state.stage, stage(), 8) != 0) continue;
-            feet.set(p.state.x, p.state.y, p.state.z);
-        }
-        play_at(kTaunts[id % kTauntCount], &feet);
-    }
 }
 
 void play_taunt(uint8_t from, uint8_t sound, ClueKind kind) {

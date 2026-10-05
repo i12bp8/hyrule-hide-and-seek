@@ -1,4 +1,4 @@
-# Prop Hunt balance in v0.4.0
+# Prop Hunt balance in v0.4.1
 
 ## Score budgets
 
@@ -48,8 +48,8 @@ it. Swapping leaves a decoy at the old location, offering an escape without unli
 
 ## Arenas and treasure
 
-The 13 arenas have individual bounded areas, standing spawns, prop palettes and added native
-scenery. Ordon Ranch, Bulblin Camp and Hyrule Castle Grounds are marked large. Removed open water
+The 13 arenas are whole maps with only their loading exits closed, standing spawns, prop
+palettes and added native scenery. Ordon Ranch, Bulblin Camp and Hyrule Castle Grounds are marked large. Removed open water
 and field maps are replaced by more contained outdoor and interior spaces.
 
 Treasure exploration uses loaded native collision and visited player routes. Up to 24 pickups

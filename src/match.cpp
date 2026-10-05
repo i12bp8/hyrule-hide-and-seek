@@ -140,7 +140,6 @@ Writer roster_msg() {
         w.u8(p.swapsUsed);
         w.u8(p.misses);
         w.u16(remaining(p.swapReadyAt));
-        w.u16(remaining(p.whistleReadyAt));
         w.u16(remaining(p.quickFindUntil));
         w.u16(remaining(p.closeCallReadyAt));
     }
@@ -512,19 +511,6 @@ void host_swap(int id) {
     announce(roster_msg());
 }
 
-// Every hidden prop makes a sound where it is. No arrows, names or points: hunters must listen.
-void host_whistle(int id) {
-    Player& p = P(id);
-    const uint64_t now = now_ms();
-    if (!s_match.settings.whistle || s_match.phase != Phase::Seek || p.role != Role::Hunter ||
-        p.eliminated || !fresh_on_map(p) ||
-        now < p.whistleReadyAt) return;
-    p.whistleReadyAt = now + kWhistleCooldownMs;
-    Writer w(MSG_WHISTLE);
-    w.u32(s_match.round); w.u8(static_cast<uint8_t>(id));
-    announce(w);
-}
-
 void finish(int winner) {
     const uint64_t now = now_ms();
     int survivors = 0;
@@ -750,7 +736,7 @@ void handle_roster(Reader& r) {
         const uint8_t taunts = r.u8();
         const uint8_t swapsUsed = r.u8();
         const uint8_t misses = r.u8();
-        const uint16_t swapLeft = r.u16(), whistleLeft = r.u16();
+        const uint16_t swapLeft = r.u16();
         const uint16_t findLeft = r.u16(), closeCallLeft = r.u16();
         if (!r.ok() || id < 1 || id > kMaxPlayers || listed[id] ||
             role > Role::Spectator) return;
@@ -780,7 +766,6 @@ void handle_roster(Reader& r) {
         p.swapsUsed = std::min<uint8_t>(swapsUsed, kSwapsPerRound);
         p.misses = misses;
         p.swapReadyAt = swapLeft ? now + std::min<uint64_t>(swapLeft, kSwapCooldownMs) : 0;
-        p.whistleReadyAt = whistleLeft ? now + std::min<uint64_t>(whistleLeft, kWhistleCooldownMs) : 0;
         p.quickFindUntil = findLeft ? now + std::min<uint64_t>(findLeft, scoring::kQuickFindMs) : 0;
         p.closeCallReadyAt = closeCallLeft ? now + std::min<uint64_t>(closeCallLeft, scoring::kCloseCallGapMs) : 0;
     }
@@ -826,7 +811,7 @@ void Settings::write(Writer& w) const {
     w.u16(hideSecs);
     w.u16(seekSecs);
     w.u8(hunters);
-    w.u8(static_cast<uint8_t>((foundJoinHunters ? 1 : 0) | (decoySwap ? 2 : 0) | (whistle ? 4 : 0) |
+    w.u8(static_cast<uint8_t>((foundJoinHunters ? 1 : 0) | (decoySwap ? 2 : 0) |
                               (autoNext ? 8 : 0) | (isPublic ? 16 : 0) | (trackingPulse ? 32 : 0) |
                               (treasure ? 64 : 0)));
     w.u16(idleTauntSecs);
@@ -844,7 +829,6 @@ void Settings::read(Reader& r) {
     const uint8_t f = r.u8();
     foundJoinHunters = f & 1;
     decoySwap = f & 2;
-    whistle = f & 4;
     autoNext = f & 8;
     isPublic = f & 16;
     trackingPulse = f & 32;
@@ -943,12 +927,6 @@ bool can_swap() {
         if (s_match.decoys[i].owner == self()) return true;
     }
     return false;
-}
-
-uint32_t whistle_cooldown_ms() {
-    const Player& me = P(self());
-    const uint64_t now = now_ms();
-    return static_cast<uint32_t>(me.whistleReadyAt > now ? me.whistleReadyAt - now : 0);
 }
 
 uint32_t next_clue_ms() {
@@ -1079,7 +1057,7 @@ void start_round() {
         p.finalRevealedUntil = 0;
         p.lastTauntAt = p.lastClueAt = p.lastMovedAt = p.revealedUntil = 0;
         p.decoyFools = p.closeCalls = p.taunts = p.swapsUsed = p.misses = 0;
-        p.swapReadyAt = p.whistleReadyAt = p.quickFindUntil = p.closeCallReadyAt = 0;
+        p.swapReadyAt = p.quickFindUntil = p.closeCallReadyAt = 0;
     }
 
     s_match.round += 1;
@@ -1208,19 +1186,6 @@ void request_swap() {
     }
     P(self()).swapReadyAt = now_ms() + kSwapCooldownMs;
     Writer w(MSG_SWAP);
-    w.u32(s_match.round);
-    net::send(net::kToHost, w.bytes());
-}
-
-void request_whistle() {
-    if (!s_match.settings.whistle || s_match.phase != Phase::Seek || my_role() != Role::Hunter ||
-        my_hunter_life() == 0 || whistle_cooldown_ms() != 0) return;
-    if (host()) {
-        host_whistle(self());
-        return;
-    }
-    P(self()).whistleReadyAt = now_ms() + kWhistleCooldownMs;
-    Writer w(MSG_WHISTLE);
     w.u32(s_match.round);
     net::send(net::kToHost, w.bytes());
 }
@@ -1642,26 +1607,6 @@ void on_message(uint8_t from, const uint8_t* data, size_t size) {
         P(self()).swapReadyAt = now_ms() + kSwapCooldownMs;
         if (s_hooks.teleport) s_hooks.teleport(x, y, z, yaw);
         big("SWAPPED!", 140, 220, 255);
-        break;
-    }
-
-    case MSG_WHISTLE: {
-        const uint32_t round = r.u32();
-        if (!r.ok() || round != s_match.round) break;
-        if (!fromHost) {
-            // A hunter's request to the host.
-            if (host()) host_whistle(from);
-            break;
-        }
-        const uint8_t hunter = r.u8();
-        if (!r.ok() || hunter < 1 || hunter > kMaxPlayers) break;
-        P(hunter).whistleReadyAt = now_ms() + kWhistleCooldownMs;
-        if (s_hooks.whistle) s_hooks.whistle(hunter);
-        if (my_role() == Role::Hider && !P(self()).found) {
-            notice(std::string(name_of(hunter)) + " whistled: every prop squeaked!", P(hunter).color);
-        } else if (hunter != self()) {
-            notice(std::string(name_of(hunter)) + " whistled. Listen!", P(hunter).color);
-        }
         break;
     }
 

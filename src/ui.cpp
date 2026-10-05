@@ -89,7 +89,6 @@ enum Field : intptr_t {
     F_TRACKING,
     F_TREASURE,
     F_SWAP,
-    F_WHISTLE,
     F_IDLE_TAUNT,
     F_NEXT,
     F_PUBLIC
@@ -120,7 +119,6 @@ void get_rule(ModContext*, void* user, UiControlValue* out) {
     case F_TRACKING: out->bool_value = s.trackingPulse; break;
     case F_TREASURE: out->bool_value = s.treasure; break;
     case F_SWAP: out->bool_value = s.decoySwap; break;
-    case F_WHISTLE: out->bool_value = s.whistle; break;
     case F_IDLE_TAUNT: out->int_value = idle_taunt_option(s.idleTauntSecs); break;
     case F_NEXT: out->bool_value = s.autoNext; break;
     case F_PUBLIC: out->bool_value = s.isPublic; break;
@@ -141,7 +139,6 @@ void set_rule(ModContext*, void* user, const UiControlValue* v) {
     case F_TRACKING: s.trackingPulse = v->bool_value; break;
     case F_TREASURE: s.treasure = v->bool_value; break;
     case F_SWAP: s.decoySwap = v->bool_value; break;
-    case F_WHISTLE: s.whistle = v->bool_value; break;
     case F_IDLE_TAUNT: {
         const int option = std::clamp<int>(static_cast<int>(v->int_value), 0,
             static_cast<int>(std::size(kIdleTauntValues)) - 1);
@@ -216,9 +213,6 @@ ModResult build_rules(ModContext*, UiWindowHandle, UiElementHandle left, UiEleme
     add_rule(left, UI_CONTROL_TOGGLE, "Hunter tracking",
         "D-pad down gives a three-second direction and rough range to the nearest hider. "
         "25-second cooldown; no name or exact world marker.", F_TRACKING);
-    add_rule(left, UI_CONTROL_TOGGLE, "Hunter whistle",
-        "D-pad up makes every hidden prop squeak where it is. Only the sound: no arrows, names or "
-        "markers. 40-second cooldown per hunter.", F_WHISTLE);
     add_rule(left, UI_CONTROL_TOGGLE, "Treasure rupees",
         "Up to 24 rupees spread across reachable ground. Pickups give 1 point (2 in Treasure Rush); "
         "the third adds up to 2. Loot, taunts and style awards share an 8-point round bonus limit. Each pickup "
@@ -574,8 +568,8 @@ ModResult build_help(ModContext*, UiWindowHandle, UiElementHandle left, UiElemen
         "<div class='hs-guide'><h3>Hunt</h3><p>B swings your sword; while swimming it tags a "
         "nearby prop. Misses cost half a heart by default and decoys count as misses. At zero "
         "hearts you watch until the next round; only finding a prop restores a heart. D-pad down "
-        "tracks the nearest prop (25 s). D-pad up whistles: every hidden prop squeaks where it "
-        "is (40 s). The first find of the round and quick finds earn extra points.</p></div>", nullptr);
+        "tracks the nearest prop (25 s). The first find of the round and quick finds earn extra "
+        "points.</p></div>", nullptr);
     svc_ui->pane_add_rml(mod_ctx, left,
         "<div class='hs-guide'><h3>Play again</h3><p>Props earn up to 12 points across the hunt "
         "and 6 for surviving; the last prop standing gets 2 more. Starting hunters share up to 12 "

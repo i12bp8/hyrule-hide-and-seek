@@ -33,7 +33,7 @@ bool ground_position(Point originPoint, Point& atPoint) {
     if (y == -G_CM3D_F_INF || !std::isfinite(y) || std::fabs(y - origin.y) > 260.0f ||
         dComIfG_Bgsp().GetExitId(ground) != 0x3F || dBgS_GetNY(ground) < 0.65f) return false;
     at.y = y;
-    if (arena::overlaps_loading_exit({at.x, at.y, at.z}) || arena::edge_distance(at.x, at.z) < 150.0f) return false;
+    if (arena::overlaps_loading_exit({at.x, at.y, at.z})) return false;
     dBgS_WtrChk water; water.Set(at, at.y + 100000.0f);
     if (dComIfG_Bgsp().WaterChk(&water) && water.GetHeight() > at.y + 80.0f) return false;
     // A point over a cliff/wall is a bad reward. Require a clear path at body height and

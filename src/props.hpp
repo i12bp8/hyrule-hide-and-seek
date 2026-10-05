@@ -11,7 +11,7 @@
 
 namespace hs {
 
-// Catalogue order is the wire ID (protocol 11). Append new props; never reorder.
+// Catalogue order is the wire ID (protocol 12). Append new props; never reorder.
 enum PropId : uint8_t {
     // Carryable pots, crates and barrels (daObjCarry_c)
     kPot,
@@ -57,6 +57,15 @@ enum PropId : uint8_t {
     kBoarBones,
     kOilJar,
     kBigBarrel,
+    // Every coat and feather colour of the animals; kCucco, kCat and kDog are the first of each.
+    kCuccoSecond,
+    kCuccoThird,
+    kCatSecond,
+    kCatThird,
+    kCatFourth,
+    kDogSecond,
+    kDogThird,
+    kDogFourth,
     kTreasureRupee,  // renderer-only treasure model, never a selectable disguise
     kPropCount
 };
@@ -115,7 +124,11 @@ struct PropInfo {
     PropRes idle{};      // looping BCKs (animals and people)
     PropRes move{};
     const char* animArc = nullptr;  // archive holding the BCKs, when it isn't `arc`
-    PropRes btk{};       // looping material animations, as the native actor plays them
+    // Material animations, driven the way the native actor drives them. For cats, dogs and
+    // cuccos the btk is not an animation at all: each frame is one coat or feather colour, and
+    // btkFrame picks this disguise's. A btp is the eyes: closed briefly every few seconds.
+    PropRes btk{};
+    int8_t btkFrame = -1;  // -1: the btk loops
     PropRes btp{};
     float radius = 40.0f;  // hunters' sword target
     float height = 80.0f;

@@ -236,6 +236,8 @@ private:
     bool mRupee = false;
     uint8_t mDecoyId = 0;
     uint8_t mFixedProp = 0;
+    s16 mBlinkFrame = 0;    // btp eyes: open at 0, a short blink every few seconds
+    s16 mBlinkWait = 0;
     bool mVisible = false;
     bool mDisguised = false;
     bool mHaveTarget = false;
@@ -337,6 +339,7 @@ int Puppet::create() {
     mRupee = (prm & kRupeeFlag) != 0;
     mFixedProp = static_cast<uint8_t>(prm >> kPropShift);
     mDecoyId = static_cast<uint8_t>(prm >> kDecoyIdShift);
+    mBlinkWait = static_cast<s16>(30 + cM_rndF(100.0f));
     const int maxSlot = mRupee ? match::kMaxRupees : mDecoy ? match::kMaxActiveDecoys : kMaxPlayers;
     if (mSlot < 1 || mSlot > maxSlot || (mDecoy && mDecoyId == 0) || linkkit::heap() == nullptr) {
         return cPhs_ERROR_e;
@@ -626,8 +629,16 @@ bool Puppet::updateProp(int kind, bool moving) {
 
     mDoExt_bckAnm* anm = moving && mPropMove != nullptr ? mPropMove : mPropIdle;
     if (anm != nullptr) anm->play();
-    if (mBtk != nullptr) mBtk->play();
-    if (mBtp != nullptr) mBtp->play();
+    if (mBtk != nullptr && info.btkFrame < 0) mBtk->play();
+    if (mBtp != nullptr) {
+        // daNpc_Ne/daDo/daCow/daNpcCd2: eyes stay open, then one quick blink, at random gaps.
+        if (mBlinkWait > 0) {
+            --mBlinkWait;
+        } else if (++mBlinkFrame >= mBtp->getBtpAnm()->getFrameMax()) {
+            mBlinkFrame = 0;
+            mBlinkWait = static_cast<s16>(30 + cM_rndF(100.0f));
+        }
+    }
     if (mExtraBtk != nullptr) mExtraBtk->play();
     mPropMoving = moving;
     // Calculate on the simulation tick, while our animation and callback overrides are active.
@@ -1017,8 +1028,12 @@ void Puppet::drawProp() {
         if (anm != nullptr) anm->entry(data);
         // The material animations go on the shared model data, as the native actor does it,
         // and come off again so real objects keep their own frames.
-        if (mBtk != nullptr) mBtk->entry(data);
-        if (mBtp != nullptr) mBtp->entry(data);
+        // A coat table shows the disguise's own coat; anything else loops.
+        if (mBtk != nullptr) {
+            if (info.btkFrame >= 0) mBtk->entry(data, static_cast<f32>(info.btkFrame));
+            else mBtk->entry(data);
+        }
+        if (mBtp != nullptr) mBtp->entry(data, mBlinkFrame);
         if (mRupeeColor != nullptr) mRupeeColor->entry(data, match::rupee_points() == 2 ? 4.0f : 0.0f);
         mDoExt_modelEntryDL(mPropModel);
         if (mBtk != nullptr) mBtk->remove(data);

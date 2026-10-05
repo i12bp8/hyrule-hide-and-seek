@@ -14,6 +14,4 @@ void warp(int map);
 void warp_native(const char* stage, int16_t point, int8_t room);
 bool locked();
 bool overlaps_loading_exit(Point position, float radius = 100.0f);
-// Distance to the round map's play-area edge: positive inside, negative outside.
-float edge_distance(float x, float z);
 }

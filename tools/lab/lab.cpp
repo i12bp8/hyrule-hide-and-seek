@@ -198,7 +198,7 @@ void update() {
                << static_cast<int>(match::my_role()) << ' ' << link->current.pos.x << ' '
                << link->current.pos.y << ' ' << link->current.pos.z << ' ' << link->shape_angle.y
                << ' ' << local::stage() << ' ' << static_cast<int>(m.map) << ' '
-               << arena::edge_distance(link->current.pos.x, link->current.pos.z) << ' '
+               << 0 << ' '  // the old play-area edge field, kept for lab.py
                << net::member_count() << ' ' << local::prop() << ' ' << (local::disguised() ? 1 : 0) << '\n';
     }
     if (filmCamera) {

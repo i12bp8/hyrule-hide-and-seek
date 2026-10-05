@@ -21,7 +21,7 @@ const args = Object.fromEntries(
 const server = String(args.server || "ws://127.0.0.1:8787").replace(/\/$/, "");
 const room = String(args.room || "").toUpperCase();
 const count = Number(args.count || 3);
-const PROTOCOL = 11;
+const PROTOCOL = 12;
 const ARENAS = JSON.parse(readFileSync(new URL("./arenas.json", import.meta.url), "utf8"));
 if (!room) {
   console.error("usage: node bots.mjs --room ABCDE [--count 3] [--server ws://127.0.0.1:8787]");
@@ -165,7 +165,7 @@ class Bot {
           r.u8(); r.u8(); // gross bonus and objective progress
           r.u8(); r.u16(); // hunter life and acknowledged misses
           r.u8(); r.u8(); r.u8(); r.u8(); r.u8(); // decoy fools, close calls, taunts, swaps, misses
-          r.u16(); r.u16(); r.u16(); r.u16(); // swap, whistle, quick-find and close-call timers
+          r.u16(); r.u16(); r.u16(); // swap, quick-find and close-call timers
           this.roles.set(id, role);
         }
         break;

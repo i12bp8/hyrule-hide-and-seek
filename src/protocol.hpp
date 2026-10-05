@@ -11,9 +11,10 @@
 
 namespace hs {
 
+// v12: full arenas without play-area bounds, new scenery, no hunter whistle.
 // v11: Prop Hunt only, the new disguise catalogue and arenas, decoy swaps, hunter whistles and
 // score awards.
-constexpr int kProtocolVersion = 11;
+constexpr int kProtocolVersion = 12;
 
 enum MsgType : uint8_t {
     MSG_STATE = 1,     // everyone -> everyone, 10 Hz
@@ -38,7 +39,7 @@ enum MsgType : uint8_t {
     MSG_MISS = 27,     // hunter -> host: round, cumulative missed swings (u16)
     MSG_SWAP = 28,     // hider -> host: round; swap places with my newest decoy
     MSG_TELEPORT = 29, // host -> one player: round, x, y, z, yaw (a confirmed swap)
-    MSG_WHISTLE = 30,  // hunter -> host: round. host -> all: round, hunter
+    // 30 was the v11 hunter whistle; keep the number unused.
     MSG_AWARD = 31,    // host -> all: round, player, award kind, points
 };
 

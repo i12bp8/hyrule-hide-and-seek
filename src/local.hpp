@@ -42,8 +42,6 @@ void note_hit();
 
 // Plays and records a taunt at a player's position (hooked up to match).
 void play_taunt(uint8_t from, uint8_t sound, ClueKind kind);
-// A hunter whistled: every hidden prop makes a sound where it is.
-void play_whistle(uint8_t hunter);
 // A confirmed decoy swap moves the local Link.
 void teleport(float x, float y, float z, int16_t yaw);
 

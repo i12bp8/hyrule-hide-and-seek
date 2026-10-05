@@ -24,7 +24,7 @@ Use **Dusklight 2.0.3 or newer**. Its official Linux AppImage fixes the missing 
 and HTTPS certificate issue ([release notes](https://github.com/TwilitRealm/dusklight/releases/tag/v2.0.3)).
 Linux, Windows and macOS now use the same WebSocket transport. The default public relay requires it;
 old Linux builds can still use a private Node relay's HTTPS fallback.
-Everyone in a room needs **v0.4.0 (protocol 11)**. Older rooms are incompatible.
+Everyone in a room needs **v0.4.1 (protocol 12)**. Older rooms are incompatible.
 Existing dedicated saves still work; the classic Link-only mode has been removed.
 
 ### A round
@@ -42,13 +42,14 @@ Existing dedicated saves still work; the classic Link-only mode has been removed
 | --- | --- |
 | **D-pad right** | Props: copy the pot, crate or barrel next to you (or the next prop) |
 | **D-pad left** | Props: previous prop |
-| **D-pad up** | Props: tap to place a decoy; hold for 0.45 s during Hunt to swap with your newest decoy. Hunters: whistle. |
+| **D-pad up** | Props: tap to place a decoy; hold for 0.45 s during Hunt to swap with your newest decoy. |
 | **D-pad down** | Hiders: taunt (3 s reveal, 4 s cooldown; 1–2 points every 10 s at most). Hunters: tracking pulse. |
 | **B** | Hunters: swing; while swimming, tag a nearby prop. A missed swing costs half a heart by default; zero hearts eliminates you. |
 
-There are **67 selectable disguises**: pots, crates, barrels, pumpkins and leaves, grasses,
-rocks, signs, targets, graves, furniture, animals and 30 Castle Town citizens. Each map offers a
-matching selection. Models use native lighting, shadows and looping animations; grass sways and
+There are **75 selectable disguises**: pots, crates, barrels, pumpkins and leaves, grasses,
+rocks, signs, targets, graves, furniture, animals in every coat (three cucco colours, four cats,
+four dogs) and 30 Castle Town citizens. Each map offers a matching selection; D-pad right next to
+a real cat, dog or cucco copies its exact coat. Models use native lighting, shadows and looping animations; grass sways and
 lily pads follow the water surface. The invisible crystal disguise has been removed.
 World interaction prompts are suppressed during rounds so a real pot or grass does not give away
 a nearby disguise. Solid props use native push cylinders or collision meshes.
@@ -62,15 +63,14 @@ no hunter points and deliberately count as a missed swing.
 
 A hider can swap places with their newest decoy **twice per round**, with a **15-second cooldown**.
 It costs no points and works during Hunt; the decoy moves to the hider's old position.
-Hunters can whistle every **40 seconds**. Every hidden prop makes a positional sound for hunters to listen for; the whistle
-creates no direction arrow or location marker. Tracking remains on D-pad down with a 25-second cooldown.
+Hunters track with D-pad down (25-second cooldown).
 
 ### Rules the host can change
 
 Map (or a random one every round), hiding and round time, number of
 hunters, whether found props join the hunters, the miss penalty, how long a prop may stay still
 before automatically taunting (Off by default), free decoys per hider, the final clue timer,
-hunter tracking and whistles, decoy swapping, automatic rounds, public listing and treasure. Rules are locked during a round.
+hunter tracking, decoy swapping, automatic rounds, public listing and treasure. Rules are locked during a round.
 
 The default rules give hiders a choice: stay hidden, or risk a clue to earn points from rupees
 and manual taunts. There are no recurring automatic clues. Each surviving hider gets **one exact
@@ -142,9 +142,11 @@ The **13 arenas** are Ordon Village, Ordon Ranch, Kakariko Village, Kakariko Gra
 Death Mountain, Castle Town, Sacred Grove, Hidden Village, Bulblin Camp, Telma's Bar,
 Snowpeak Ruins, Arbiter's Grounds and Hyrule Castle Grounds.
 
-Each has its own spawn, bounded play area, themed disguise pool and extra native scenery.
-Post-story layers and trigger filtering prevent quest events from starting. Loading exits and
-void boundaries block movement. Arenas use a free third-person camera. Random selects compact
+Every map is played whole: there is no invisible fence, only its loading exits are closed (and
+doors stay shut). Each has its own spawn, themed disguise pool and extra native scenery: small
+groups of real pots, crates, barrels, pumpkins, rocks or furniture that stand against walls or in
+open ground, never in a doorway, an exit, a narrow passage or water. Post-story layers and
+trigger filtering prevent quest events from starting. Arenas use a free third-person camera. Random selects compact
 arenas for fewer than six players; the Ranch, Bulblin Camp and Castle Grounds suit larger rooms.
 
 ### Scoring
