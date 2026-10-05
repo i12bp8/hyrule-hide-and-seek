@@ -100,6 +100,11 @@ void init() {
         if (s_rules != 0) svc_config->set_string(mod_ctx, s_rules, text.c_str());
         svc_config->set_int(mod_ctx, s_rulesVersion, 6);
     }
+    if (s_rulesVersion != 0 && get_int(s_rulesVersion, 0) < 7) {
+        const auto text = upgrade_map_list_rules(get_str(s_rules));
+        if (s_rules != 0) svc_config->set_string(mod_ctx, s_rules, text.c_str());
+        svc_config->set_int(mod_ctx, s_rulesVersion, 7);
+    }
 
     // v0.1.0/v0.1.1 shipped before the public relay was provisioned. Upgrade only that exact
     // placeholder, preserving custom and localhost server addresses.
@@ -158,7 +163,7 @@ bool control_hints() {
 }
 
 // Stored as "map,hide,seek,hunters,flags,idle-seconds,free-decoys,miss-quarters,final-seconds"
-// (rules version 6). init() migrates older saves.
+// (rules version 7). init() migrates older saves.
 match::Settings host_rules() {
     return parse_rules(get_str(s_rules));
 }

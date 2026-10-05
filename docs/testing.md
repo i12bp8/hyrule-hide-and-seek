@@ -4,12 +4,12 @@
 
 On official Linux Dusklight 2.0.3:
 
-- 5,847 rules/protocol/settings/interpolation/layout/RARC assertions passed.
+- 5,659 rules/protocol/settings/interpolation/layout/RARC assertions passed.
 - All 16 Node relay/bot tests passed, including protocol-12 roster parsing.
 - All 76 catalogue entries (75 selectable plus treasure) resolved: 217 resources in 70 exact-case
   archives, including models, alternate animations, secondary models and collision meshes.
-- The arena driver passed camera, event, exit and five-heart checks on all 13 whole maps with
-  their 452 added scenery objects. Exit-volume crossings were checked where those actors were loaded.
+- The arena driver passed camera, event, exit and five-heart checks on all 11 whole maps with
+  their 417 added scenery objects. Exit-volume crossings were checked where those actors were loaded.
 - The stock renderer completed all 75 disguises with 160 decoys, 24 rupees and cleanup under
   32 MiB free root-heap pressure. It checked 211,415 real draw lists and verified transient
   heap/model/animation failures, collision registration recovery and three heap destruction/recreation cycles.
@@ -141,8 +141,6 @@ real clients on separate networks. Everyone must use protocol 11.
 | Hidden Village | | | | |
 | Bulblin Camp | | | | |
 | Telma's Bar | | | | |
-| Snowpeak Ruins | | | | |
-| Arbiter's Grounds | | | | |
 | Hyrule Castle Grounds | | | | |
 
 Record per-map wins, hunt time, finds and gross points with roles exchanged; follow

@@ -24,7 +24,7 @@ from the user's extracted disc. Its checked-in outputs are `src/arena_data.inc` 
 `server/arenas.json`. The generated file includes only coordinates, actor parameters and hashes;
 models, textures and animations remain in the player's own game files.
 
-The 13 maps are played whole (every room the game loads with the spawn room; loading exits closed,
+The 11 maps are played whole (every room the game loads with the spawn room; loading exits closed,
 no invisible fence), with themed disguise palettes and selected post-story layers. Scripted actor records are filtered before creation; native clutter is added
 through the optional StageService. Arena hooks stop exits, scene changes and compulsory events,
 keep the field camera free, and prevent void transitions. Interaction attention is cleared during

@@ -138,9 +138,9 @@ Use the **Guide** tab for the controls, including the touch D-pad on mobile.
 
 ### Maps
 
-The **13 arenas** are Ordon Village, Ordon Ranch, Kakariko Village, Kakariko Graveyard,
-Death Mountain, Castle Town, Sacred Grove, Hidden Village, Bulblin Camp, Telma's Bar,
-Snowpeak Ruins, Arbiter's Grounds and Hyrule Castle Grounds.
+The **11 arenas** are Ordon Village, Ordon Ranch, Kakariko Village, Kakariko Graveyard,
+Death Mountain, Castle Town, Sacred Grove, Hidden Village, Bulblin Camp, Telma's Bar and
+Hyrule Castle Grounds.
 
 Every map is played whole: there is no invisible fence, only its loading exits are closed (and
 doors stay shut). Each has its own spawn, themed disguise pool and extra native scenery: small

@@ -771,6 +771,14 @@ static void test_balanced_rules() {
     CHECK(settings::parse_rules(explicitRules).missPenaltyQuarters == 4);
     CHECK(settings::parse_rules("255,30,180,0,111,0,3,99,999").missPenaltyQuarters == 4);
     CHECK(settings::parse_rules("255,30,180,0,111,0,3,-1,-1").finalClueSecs == 0);
+    // v0.4.1 dropped Snowpeak Ruins and Arbiter's Grounds; Hyrule Castle Grounds moved to 10.
+    CHECK(map_count() == 11 && std::strcmp(map_info(10).name, "Hyrule Castle Grounds") == 0);
+    CHECK(settings::parse_rules(settings::upgrade_map_list_rules("12,45,240,2,107,0,5,1,20")).map == 10);
+    CHECK(settings::parse_rules(settings::upgrade_map_list_rules("10,45,240,2,107,0,5,1,20")).map == kRandomMap);
+    CHECK(settings::parse_rules(settings::upgrade_map_list_rules("11,45,240,2,107,0,5,1,20")).map == kRandomMap);
+    const auto movedRules = settings::parse_rules(settings::upgrade_map_list_rules("9,45,240,2,107,0,5,1,20"));
+    CHECK(movedRules.map == 9 && movedRules.hideSecs == 45 && movedRules.hunters == 2 && movedRules.freeDecoys == 5);
+    CHECK(settings::upgrade_map_list_rules("") == "" && settings::upgrade_map_list_rules("3,1") == "3,1");
     CHECK(life_after_miss(20) == 18 && life_after_miss(2) == 0 && life_after_miss(1) == 0);
     CHECK(life_after_miss(0) == 0 && kArenaHeartPieces / 5 * 4 == kArenaLife);
     for (uint8_t penalty = 0; penalty <= 4; ++penalty) {
@@ -791,7 +799,7 @@ static void test_balanced_rules() {
         }
     }
     CHECK(recommended_hunters(4, 0) == 1 && recommended_hunters(4, 8) == 2);
-    CHECK(recommended_hunters(16, 12) == 6);
+    CHECK(recommended_hunters(16, 10) == 6);
     for (int i = 0; i < 100; ++i) {
         const int selected = random_map(0, 2);
         CHECK(selected != 0 && !map_info(selected).large);
@@ -1460,7 +1468,7 @@ static void test_interpolation_and_compact_states() {
     CHECK(interpolate_state(a, 1000, b, 1100, 1150).x == 10000); // teleports snap
     CHECK(prop_on_map(kGoat, 1) && !prop_on_map(kGoat, 10));
     CHECK(prop_on_map(kCitizenFirst, 5) && !prop_on_map(kCitizenFirst, 1));
-    CHECK(prop_on_map(kChair, 10) && !prop_on_map(kChair, 1));
+    CHECK(prop_on_map(kMapTable, 9) && !prop_on_map(kMapTable, 1));
     CHECK(!prop_on_map(kTreasureRupee, -1));
 
     // Moving players must stay smooth in the lobby as well as during rounds. Idle traffic drops.

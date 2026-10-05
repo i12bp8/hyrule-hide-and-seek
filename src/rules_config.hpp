@@ -7,7 +7,7 @@
 
 namespace hs::settings {
 
-// ---- current format (rules version 6) --------------------------------------------------------
+// ---- current format (rules versions 6-7) ------------------------------------------------------
 // "map,hide,seek,hunters,flags,idle-seconds,free-decoys,miss-quarters,final-seconds"
 // flags: 1 found hiders hunt, 2 decoy swap, 8 automatic rounds, 16 public,
 //        32 hunter tracking, 64 treasure.
@@ -139,6 +139,17 @@ inline std::string upgrade_prop_hunt_rules(const std::string& text) {
     auto s = parse_legacy_rules(text);
     s.map = kRandomMap;
     s.decoySwap = true;
+    return format_rules(s);
+}
+
+// v0.4.1: Snowpeak Ruins (10) and Arbiter's Grounds (11) left the map list, and Hyrule Castle
+// Grounds moved from 12 to 10. A saved choice of a removed map becomes Random.
+inline std::string upgrade_map_list_rules(const std::string& text) {
+    int map = 0;
+    if (std::count(text.begin(), text.end(), ',') < 8 || std::sscanf(text.c_str(), "%d,", &map) != 1) return text;
+    auto s = parse_rules(text);
+    if (map == 12) s.map = 10;
+    else if (map == 10 || map == 11) s.map = kRandomMap;
     return format_rules(s);
 }
 }  // namespace hs::settings

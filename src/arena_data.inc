@@ -465,60 +465,6 @@ constexpr uint32_t kRemoved_telmas_bar[] = {
     0x118BBEC4u, 0x18604D8Bu, 0x25E6AA0Au,
 };
 
-constexpr uint8_t kPalette_snowpeak_ruins[] = {
-    57, 58, 59, 60, 5, 6, 1, 0,
-};
-constexpr Scenery kScenery_snowpeak_ruins[] = {
-    {"carry07", 0x00003FC5u, 3872.0f, 1.0f, -5720.0f, -1, -28573, 4175, 5},  // Red Pot
-    {"HFtr", 0x00000002u, 4952.0f, 1.0f, -6906.0f, 0, -17697, 0, 5},  // Dining Table
-    {"HFtr", 0x00000000u, 4412.0f, 1.0f, -4782.0f, 0, -32216, 0, 5},  // Chair
-    {"HBarrel", 0x0000FF10u, 5138.0f, 1.0f, -5851.0f, 0, 15974, 0, 5},  // Yeto's Barrel
-    {"HBarrel", 0x0000FF10u, 5235.0f, 1.0f, -5934.0f, 0, -3882, 0, 5},  // Yeto's Barrel
-    {"HBarrel", 0x0000FF10u, 3339.0f, 1.0f, -6256.0f, 0, 25709, 0, 5},  // Yeto's Barrel
-    {"HFtr", 0x00000002u, 3992.0f, 1.0f, -6726.0f, 0, -31570, 0, 5},  // Dining Table
-    {"carry00", 0x00003FC5u, 5324.0f, 1.0f, -4884.0f, -1, -25784, 4161, 5},  // Pot
-    {"HBarrel", 0x0000FF10u, 3632.0f, 1.0f, -7746.0f, 0, -6882, 0, 5},  // Yeto's Barrel
-    {"HFtr", 0x00000001u, 4586.0f, 1.0f, -5290.0f, 0, 254, 0, 5},  // Sofa
-    {"carry07", 0x00003FC5u, 5323.0f, 1.0f, -7457.0f, -1, -5542, 4175, 5},  // Red Pot
-    {"carry07", 0x00003FC5u, 5324.0f, 1.0f, -7555.0f, -1, 2346, 4175, 5},  // Red Pot
-};
-constexpr uint32_t kRemoved_snowpeak_ruins[] = {
-    0x00B3593Cu, 0x04722B79u, 0x04A7D491u, 0x46F38070u, 0x94A239E3u, 0x9D575320u,
-    0xA9518758u, 0xBF00F276u, 0xDA7005E9u, 0xDD12DA13u,
-};
-
-constexpr uint8_t kPalette_arbiters_grounds[] = {
-    4, 1, 5, 65, 0, 15,
-};
-constexpr Scenery kScenery_arbiters_grounds[] = {
-    {"carry05", 0x00003FC0u, 339.0f, 2.0f, 5950.0f, -1, 22829, 4171, 0},  // Skull
-    {"carry07", 0x00003FC0u, 389.0f, 2.0f, 5871.0f, -1, 18483, 4175, 0},  // Red Pot
-    {"carry01", 0x00003FC0u, 1151.0f, -395.0f, 8079.0f, -1, -28825, 4163, 0},  // Big Pot
-    {"carry01", 0x00003FC0u, 1150.0f, -406.0f, 7951.0f, -1, 32573, 4163, 0},  // Big Pot
-    {"carry05", 0x00003FC0u, -1143.0f, -412.0f, 7737.0f, -1, -10394, 4171, 0},  // Skull
-    {"carry07", 0x00003FC0u, -1137.0f, -415.0f, 7830.0f, -1, 12374, 4175, 0},  // Red Pot
-    {"carry00", 0x00003FC0u, -1141.0f, -409.0f, 7928.0f, -1, -31943, 4161, 0},  // Pot
-    {"carry05", 0x00003FC0u, -311.0f, -388.0f, 12004.0f, -1, -32039, 4171, 0},  // Skull
-    {"carry05", 0x00003FC0u, -359.0f, -385.0f, 12078.0f, -1, 16197, 4171, 0},  // Skull
-    {"carry01", 0x00003FC0u, -289.0f, -418.0f, 10046.0f, -1, 6469, 4163, 0},  // Big Pot
-    {"carry05", 0x00003FC0u, -192.0f, -418.0f, 9994.0f, -1, 10081, 4171, 0},  // Skull
-    {"carry05", 0x00003FC0u, 924.0f, -418.0f, 9884.0f, -1, 14976, 4171, 0},  // Skull
-    {"carry05", 0x00003FC0u, -1055.0f, 2.0f, 6000.0f, -1, -29462, 4171, 0},  // Skull
-    {"carry05", 0x00003FC0u, -967.0f, 2.0f, 5988.0f, -1, 29737, 4171, 0},  // Skull
-    {"stone", 0x00FFFF10u, 658.0f, -415.0f, 11628.0f, 0, 12659, 0, 0},  // Small Rock
-    {"carry01", 0x00003FC0u, 216.0f, -298.0f, 13083.0f, -1, -9860, 4163, 0},  // Big Pot
-    {"carry05", 0x00003FC0u, -1110.0f, -411.0f, 11201.0f, -1, 22036, 4171, 0},  // Skull
-    {"carry05", 0x00003FC0u, -1182.0f, -404.0f, 11251.0f, -1, -8857, 4171, 0},  // Skull
-    {"carry05", 0x00003FC0u, -1168.0f, -418.0f, 9657.0f, -1, 19512, 4171, 0},  // Skull
-    {"carry07", 0x00003FC0u, -1167.0f, -418.0f, 9750.0f, -1, -11521, 4175, 0},  // Red Pot
-    {"carry00", 0x00003FC0u, -1169.0f, -418.0f, 9848.0f, -1, 15389, 4161, 0},  // Pot
-    {"carry01", 0x00003FC0u, 172.0f, -398.0f, 7668.0f, -1, -15563, 4163, 0},  // Big Pot
-    {"carry05", 0x00003FC0u, -1665.0f, 2.0f, 5235.0f, -1, -27701, 4171, 0},  // Skull
-};
-constexpr uint32_t kRemoved_arbiters_grounds[] = {
-    0x0AC5DB79u, 0x2DBF18D9u,
-};
-
 constexpr uint8_t kPalette_hyrule_castle[] = {
     3, 2, 66, 63, 56, 0, 1, 4,
 };
@@ -613,13 +559,7 @@ constexpr MapInfo kMaps[] = {
     {"Telma's Bar", "R_SP116", 5, 4, 521, 3, 3141.0f, -1145.0f, 4184.0f, -32768, 0xFF00003Fu, false, 300.0f,
         kPalette_telmas_bar, 11,
         kScenery_telmas_bar, 12, kRemoved_telmas_bar, 3},
-    {"Snowpeak Ruins", "D_MN11", 5, 0, 522, 0, 4350.0f, 5.0f, -7400.0f, 0, 0xFF00003Fu, false, 300.0f,
-        kPalette_snowpeak_ruins, 8,
-        kScenery_snowpeak_ruins, 12, kRemoved_snowpeak_ruins, 10},
-    {"Arbiter's Grounds", "D_MN10", 0, 0, 523, 2, 0.0f, 6.0f, 14600.0f, -32768, 0xFF00003Fu, false, 300.0f,
-        kPalette_arbiters_grounds, 6,
-        kScenery_arbiters_grounds, 23, kRemoved_arbiters_grounds, 2},
-    {"Hyrule Castle Grounds", "D_MN09", 11, 0, 524, 5, 0.0f, 5.0f, 9000.0f, -32768, 0xFF00003Fu, true, 600.0f,
+    {"Hyrule Castle Grounds", "D_MN09", 11, 0, 522, 5, 0.0f, 5.0f, 9000.0f, -32768, 0xFF00003Fu, true, 600.0f,
         kPalette_hyrule_castle, 8,
         kScenery_hyrule_castle, 54, kRemoved_hyrule_castle, 4},
 };

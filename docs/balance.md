@@ -48,7 +48,7 @@ it. Swapping leaves a decoy at the old location, offering an escape without unli
 
 ## Arenas and treasure
 
-The 13 arenas are whole maps with only their loading exits closed, standing spawns, prop
+The 11 arenas are whole maps with only their loading exits closed, standing spawns, prop
 palettes and added native scenery. Ordon Ranch, Bulblin Camp and Hyrule Castle Grounds are marked large. Removed open water
 and field maps are replaced by more contained outdoor and interior spaces.
 
